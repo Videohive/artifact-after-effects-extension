@@ -1,4 +1,3 @@
-import React, { useState } from 'react';
 import { SlideGenerator } from './components/SlideGenerator';
 import { Presentation } from 'lucide-react';
 

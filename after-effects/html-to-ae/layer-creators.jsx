@@ -412,8 +412,25 @@
     }
 
     if (node.font && node.font.color) {
-      doc.applyFill = true;
-      doc.fillColor = parseCssColor(node.font.color);
+      if (isTransparentColor(node.font.color) || parseCssAlpha(node.font.color) === 0) {
+        doc.applyFill = false;
+      } else {
+        doc.applyFill = true;
+        doc.fillColor = parseCssColor(node.font.color);
+      }
+    }
+
+    if (
+      node.font &&
+      node.font.strokeWidthPx &&
+      Number(node.font.strokeWidthPx) > 0 &&
+      node.font.strokeColor &&
+      !isTransparentColor(node.font.strokeColor)
+    ) {
+      doc.applyStroke = true;
+      doc.strokeWidth = Number(node.font.strokeWidthPx);
+      doc.strokeColor = parseCssColor(node.font.strokeColor);
+      doc.strokeOverFill = true;
     }
 
     doc.justification = mapTextAlign(node.font ? node.font.textAlign : null);

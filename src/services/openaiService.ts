@@ -136,8 +136,22 @@ INSTRUCTIONS:
 
 const MODEL = "gpt-4o";
 
+const getOpenAiApiKey = (): string | undefined => {
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env.REACT_APP_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  }
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      return import.meta.env.VITE_OPENAI_API_KEY || import.meta.env.OPENAI_API_KEY;
+    }
+  } catch (e) {}
+  return undefined;
+};
+
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: getOpenAiApiKey() || "",
   dangerouslyAllowBrowser: true,
 });
 

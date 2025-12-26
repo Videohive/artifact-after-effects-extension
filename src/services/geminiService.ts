@@ -16,6 +16,31 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, backoff = 200
   }
 }
 
+const getGeminiApiKey = (): string | undefined => {
+  if (typeof process !== 'undefined' && process.env) {
+    const fromProcess =
+      process.env.GEMINI_API_KEY ||
+      process.env.REACT_APP_GEMINI_API_KEY ||
+      process.env.REACT_APP_API_KEY ||
+      process.env.API_KEY;
+    if (fromProcess && fromProcess.trim()) return fromProcess;
+  }
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as {
+      GEMINI_API_KEY?: string;
+      REACT_APP_GEMINI_API_KEY?: string;
+      __ENV__?: { GEMINI_API_KEY?: string; REACT_APP_GEMINI_API_KEY?: string };
+    };
+    const fromWindow =
+      win.REACT_APP_GEMINI_API_KEY ||
+      win.GEMINI_API_KEY ||
+      win.__ENV__?.REACT_APP_GEMINI_API_KEY ||
+      win.__ENV__?.GEMINI_API_KEY;
+    if (fromWindow && fromWindow.trim()) return fromWindow;
+  }
+  return undefined;
+};
+
 // Helper to safely extract section from AI response
 const extractSection = (html: string): string => {
   try {
@@ -44,6 +69,19 @@ const getPexelsApiKey = (): string | undefined => {
     if (process.env.VITE_PEXELS_API_KEY) return process.env.VITE_PEXELS_API_KEY;
     if (process.env.REACT_APP_PEXELS_API_KEY) return process.env.REACT_APP_PEXELS_API_KEY;
     if (process.env.NEXT_PUBLIC_PEXELS_API_KEY) return process.env.NEXT_PUBLIC_PEXELS_API_KEY;
+  }
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as {
+      PEXELS_API_KEY?: string;
+      REACT_APP_PEXELS_API_KEY?: string;
+      __ENV__?: { PEXELS_API_KEY?: string; REACT_APP_PEXELS_API_KEY?: string };
+    };
+    const fromWindow =
+      win.REACT_APP_PEXELS_API_KEY ||
+      win.PEXELS_API_KEY ||
+      win.__ENV__?.REACT_APP_PEXELS_API_KEY ||
+      win.__ENV__?.PEXELS_API_KEY;
+    if (fromWindow && fromWindow.trim()) return fromWindow;
   }
   try {
     // @ts-ignore
@@ -398,7 +436,13 @@ Return ONLY the HTML for the section.
 
 export const generateSlides = async (topic: string): Promise<string> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      throw new Error(
+        'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.'
+      );
+    }
+    const ai = new GoogleGenAI({ apiKey });
     
     // We increase temperature to encourage unique Art Direction in Phase 1
     // But the prompt structure ensures Phase 2 (Consistency) is respected.
@@ -427,7 +471,13 @@ export const generateSlides = async (topic: string): Promise<string> => {
 
 export const regenerateSlide = async (topic: string, currentSlide: string, cssContext: string, excludedImages: string[] = []): Promise<string> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      throw new Error(
+        'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.'
+      );
+    }
+    const ai = new GoogleGenAI({ apiKey });
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
 
     const filledPrompt = REGENERATE_PROMPT
@@ -459,7 +509,13 @@ export const regenerateSlide = async (topic: string, currentSlide: string, cssCo
 
 export const generateNewSlide = async (topic: string, cssContext: string, excludedImages: string[] = []): Promise<string> => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      throw new Error(
+        'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.'
+      );
+    }
+    const ai = new GoogleGenAI({ apiKey });
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
     
     const filledPrompt = ADD_SLIDE_PROMPT

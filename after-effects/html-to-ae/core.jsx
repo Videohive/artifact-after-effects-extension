@@ -157,8 +157,9 @@
         }
         // 6. ����
         if (node.children && node.children.length) {
-          for (var i = 0; i < node.children.length; i++) {
-            buildNode(node.children[i], childComp, null, childOrigin, rootData, node.style);
+          var orderedChildren = orderChildrenByZIndex(node.children);
+          for (var i = 0; i < orderedChildren.length; i++) {
+            buildNode(orderedChildren[i], childComp, null, childOrigin, rootData, node.style);
           }
         }
 
@@ -201,8 +202,9 @@
       }
       // ����
       if (node.children && node.children.length) {
-        for (var j = 0; j < node.children.length; j++) {
-          buildNode(node.children[j], comp, parentLayer, origin, rootData, node.style);
+        var orderedGroupChildren = orderChildrenByZIndex(node.children);
+        for (var j = 0; j < orderedGroupChildren.length; j++) {
+          buildNode(orderedGroupChildren[j], comp, parentLayer, origin, rootData, node.style);
         }
       }
 
@@ -216,7 +218,11 @@
       var textBBox = getLocalBBox(node, origin);
       layer = createTextLayer(comp, node, textBBox);
       if (parentLayer) layer.parent = parentLayer;
-      applyOpacity(layer, node.style, parseCssAlpha(node.font ? node.font.color : null));
+      var fillAlpha = parseCssAlpha(node.font ? node.font.color : null);
+      var strokeAlpha = node.font && node.font.strokeColor ? parseCssAlpha(node.font.strokeColor) : 0;
+      var textAlpha = fillAlpha;
+      if (fillAlpha === 0 && strokeAlpha > 0) textAlpha = strokeAlpha;
+      applyOpacity(layer, node.style, textAlpha);
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, textBBox);
       applyDropShadow(layer, node.style);
@@ -297,8 +303,9 @@
     // FALLBACK: ������ ������ �����
     // ============================================================
     if (node.children && node.children.length) {
-      for (var k = 0; k < node.children.length; k++) {
-        buildNode(node.children[k], comp, parentLayer, origin, rootData, parentStyle);
+      var orderedFallbackChildren = orderChildrenByZIndex(node.children);
+      for (var k = 0; k < orderedFallbackChildren.length; k++) {
+        buildNode(orderedFallbackChildren[k], comp, parentLayer, origin, rootData, parentStyle);
       }
     }
 

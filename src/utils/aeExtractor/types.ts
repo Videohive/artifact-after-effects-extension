@@ -108,6 +108,8 @@ export interface AENode {
     color: string;
     textAlign: string;
     textTransform?: 'uppercase' | 'lowercase' | 'capitalize' | 'none';
+    strokeWidthPx?: number;
+    strokeColor?: string;
   };
 
   // assets

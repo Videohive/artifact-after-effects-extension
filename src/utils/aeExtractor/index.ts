@@ -31,6 +31,9 @@ import { buildTextExtra } from './text';
 import { extractBorder, extractOutline } from './border';
 import { AEBounds, AENode, AERenderHints, AEExportOptions, AESlideExport } from './types';
 
+const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
+  el instanceof (win as Window & typeof globalThis).HTMLElement;
+
 const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
   const clone = svgEl.cloneNode(true) as SVGElement;
   const selector = 'circle, rect, line, path, ellipse, polygon, polyline';
@@ -172,7 +175,7 @@ const extractFontData = (
     });
   });
 
-  const fontSet = Array.from(win.document.fonts as any);
+  const fontSet = Array.from(win.document.fonts as unknown as Iterable<FontFace>);
   fontSet.forEach((font: FontFace) => {
     addPostName(font.family, font.weight, font.style);
   });
@@ -186,12 +189,12 @@ const extractFontData = (
 };
 
 const resolveExportSize = (value: number | undefined, fallback: number) => {
-  const v = clampFinite(value);
+  const v = clampFinite(value ?? 0);
   return v > 0 ? v : fallback;
 };
 
 const resolveExportValue = (value: number | undefined, fallback: number) => {
-  const v = clampFinite(value);
+  const v = clampFinite(value ?? 0);
   return v > 0 ? v : fallback;
 };
 
@@ -243,6 +246,7 @@ export const extractSlideLayout = async (
     const transformValue = style.transform;
     if (!isVisible(style, rect)) return null;
 
+    const isHtmlEl = isHTMLElement(el, win);
     const rawBBox: AEBounds = {
       x: rect.left - rootRect.left,
       y: rect.top - rootRect.top,
@@ -320,7 +324,7 @@ export const extractSlideLayout = async (
       });
     }
 
-    if (!bgUrl && el instanceof win.HTMLElement && el.children.length === 0) {
+    if (!bgUrl && isHtmlEl && el.children.length === 0) {
       const textUrl = urlFromText(el.textContent || '');
       if (textUrl && type === 'group') {
         const paints = hasVisualPaint(style);
@@ -366,11 +370,9 @@ export const extractSlideLayout = async (
       }
     }
 
-    const canConsiderText =
-      type !== 'svg' && type !== 'image' && !handledTextUrl && el instanceof win.HTMLElement;
+    const canConsiderText = type !== 'svg' && type !== 'image' && !handledTextUrl && isHtmlEl;
     const hasPaintedChild =
       canConsiderText &&
-      el instanceof win.HTMLElement &&
       el.children.length > 0 &&
       Array.from(el.children).some(child => hasVisualPaint(win.getComputedStyle(child)));
     const textLike = canConsiderText && isTextLike(el, style) && !hasPaintedChild;
@@ -386,8 +388,21 @@ export const extractSlideLayout = async (
       return out;
     };
 
-    if (textLike) {
+    if (textLike && isHtmlEl) {
+      const pickInlineTextStyle = (
+        host: HTMLElement,
+        hostStyle: CSSStyleDeclaration
+      ): CSSStyleDeclaration => {
+        if (!host.children || host.children.length === 0) return hostStyle;
+        for (const child of Array.from(host.children)) {
+          if (!isHTMLElement(child, win)) continue;
+          if (!child.textContent || !child.textContent.trim()) continue;
+          return win.getComputedStyle(child);
+        }
+        return hostStyle;
+      };
       const paints = hasVisualPaint(style);
+      const textStyle = pickInlineTextStyle(el, style);
 
       if (!paints) {
         type = 'text';
@@ -395,7 +410,7 @@ export const extractSlideLayout = async (
 
         extra = {
           ...extra,
-          ...buildTextExtra(win, el, style, rootRect, scale, bbox)
+          ...buildTextExtra(win, el, textStyle, rootRect, scale, bbox)
         };
       } else {
         children.push({
@@ -411,7 +426,7 @@ export const extractSlideLayout = async (
             isAsset: false,
             isHidden: false
           },
-          ...buildTextExtra(win, el, style, rootRect, scale, bbox),
+          ...buildTextExtra(win, el, textStyle, rootRect, scale, bbox),
           border: null,
           outline: null,
           clip: {
@@ -430,8 +445,8 @@ export const extractSlideLayout = async (
       }
     }
 
-    if (canConsiderText && !textLike) {
-      const directTextNodes = getDirectTextNodes(el as HTMLElement);
+    if (canConsiderText && isHtmlEl && !textLike) {
+      const directTextNodes = getDirectTextNodes(el);
       if (directTextNodes.length) {
         children.push({
           type: 'text',
@@ -446,7 +461,7 @@ export const extractSlideLayout = async (
             isAsset: false,
             isHidden: false
           },
-          ...buildTextExtra(win, el as HTMLElement, style, rootRect, scale, bbox, directTextNodes),
+          ...buildTextExtra(win, el, style, rootRect, scale, bbox, directTextNodes),
           border: null,
           outline: null,
           clip: {

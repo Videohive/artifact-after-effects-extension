@@ -82,3 +82,33 @@
   function isValidSlide(slide) {
     return slide && slide.viewport && slide.root;
   }
+
+  function getZIndexValue(node) {
+    if (!node || !node.style) return 0;
+    var z = node.style.zIndex;
+    if (z === null || typeof z === "undefined") return 0;
+    var n = Number(z);
+    if (isNaN(n)) return 0;
+    return n;
+  }
+
+  function orderChildrenByZIndex(children) {
+    if (!children || !children.length) return children;
+
+    var list = [];
+    for (var i = 0; i < children.length; i++) {
+      list.push({ node: children[i], index: i, z: getZIndexValue(children[i]) });
+    }
+
+    list.sort(function (a, b) {
+      if (a.z < b.z) return -1;
+      if (a.z > b.z) return 1;
+      if (a.index < b.index) return -1;
+      if (a.index > b.index) return 1;
+      return 0;
+    });
+
+    var ordered = [];
+    for (var j = 0; j < list.length; j++) ordered.push(list[j].node);
+    return ordered;
+  }

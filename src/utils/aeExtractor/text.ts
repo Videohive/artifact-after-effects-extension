@@ -14,6 +14,71 @@ const splitWordsWithSpaces = (s: string): string[] => {
   return s.match(/\S+\s*/g) ?? [];
 };
 
+const parseTextStroke = (
+  style: CSSStyleDeclaration,
+  scale: number
+): { strokeWidthPx: number; strokeColor: string } | null => {
+  const widthRaw =
+    style.getPropertyValue('-webkit-text-stroke-width') ||
+    (style as any).webkitTextStrokeWidth ||
+    style.getPropertyValue('text-stroke-width') ||
+    (style as any).textStrokeWidth ||
+    '';
+  const colorRaw =
+    style.getPropertyValue('-webkit-text-stroke-color') ||
+    (style as any).webkitTextStrokeColor ||
+    style.getPropertyValue('text-stroke-color') ||
+    (style as any).textStrokeColor ||
+    '';
+  const shorthand =
+    style.getPropertyValue('-webkit-text-stroke') ||
+    (style as any).webkitTextStroke ||
+    style.getPropertyValue('text-stroke') ||
+    (style as any).textStroke ||
+    '';
+
+  const parseWidth = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^var\(/i.test(trimmed)) return null;
+    if (/^(rgb|rgba|hsl|hsla)\(/i.test(trimmed)) return null;
+    if (trimmed[0] === '#') return null;
+    if (!/^-?\d*\.?\d+(px)?$/i.test(trimmed)) return null;
+    const num = parseFloat(trimmed);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  const isColorToken = (value: string): boolean => {
+    if (!value) return false;
+    if (value[0] === '#') return true;
+    const lower = value.toLowerCase();
+    if (lower.startsWith('rgb') || lower.startsWith('hsl')) return true;
+    return /^[a-z]+$/i.test(value);
+  };
+
+  let widthPx = parseWidth(widthRaw);
+  let color = (colorRaw || '').trim();
+
+  if ((!widthPx || widthPx <= 0) || !color) {
+    const parts = shorthand.trim().split(/\s+/).filter(Boolean);
+    for (const part of parts) {
+      if ((!widthPx || widthPx <= 0) && parseWidth(part) !== null) {
+        widthPx = parseWidth(part);
+        continue;
+      }
+      if (!color && isColorToken(part)) {
+        color = part;
+      }
+    }
+  }
+
+  if (!widthPx || widthPx <= 0) return null;
+  if (!color || color === 'currentcolor') color = style.color;
+  if (!color) return null;
+
+  return { strokeWidthPx: widthPx * scale, strokeColor: color };
+};
+
 const collectTextTokens = (
   win: Window,
   el: HTMLElement,
@@ -254,6 +319,8 @@ export const buildTextExtra = (
       ? wrapped.lineBounds
       : wrapped.lines.map(() => ({ ...elementBBox }));
 
+  const stroke = parseTextStroke(style, scale);
+
   return {
     text: wrapped.text,
     lines: wrapped.lines,
@@ -268,7 +335,9 @@ export const buildTextExtra = (
       lineHeightPx: computedLineHeight,
       tracking: calculateTracking(style.letterSpacing, fontSizeSafe),
       color: style.color,
-      textAlign: style.textAlign
+      textAlign: style.textAlign,
+      strokeWidthPx: stroke ? stroke.strokeWidthPx : undefined,
+      strokeColor: stroke ? stroke.strokeColor : undefined
     }
   } as const;
 };

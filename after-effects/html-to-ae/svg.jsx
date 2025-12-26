@@ -1,0 +1,778 @@
+  // ============================================================
+  if (typeof debugLog === "undefined") {
+    function debugLog(msg) {}
+  }
+
+  function createSvgShapeLayer(comp, node, localBBox) {
+    var layer = comp.layers.addShape();
+    layer.name = safeName(node.name || "SVG");
+
+    debugLog("SVG: create layer name=" + layer.name + " bbox=" + localBBox.w + "x" + localBBox.h);
+    var svgData = parseSvgData(node.content || "");
+    debugLog("SVG: parsed viewBox=" + svgData.minX + "," + svgData.minY + " " + svgData.width + "x" + svgData.height + " elements=" + svgData.elements.length);
+    if (!svgData || svgData.width <= 0 || svgData.height <= 0) {
+      setLayerTransform(layer, localBBox);
+      return layer;
+    }
+
+    var contents = layer.property("Contents");
+    var rootGroup = contents.addProperty("ADBE Vector Group");
+    rootGroup.name = "SVG";
+
+    var rootContents = rootGroup.property("Contents");
+
+    for (var i = 0; i < svgData.elements.length; i++) {
+      var el = svgData.elements[i];
+      if (!el) continue;
+
+      if (el.tag === "circle") {
+        addSvgCircle(rootContents, el.attrs);
+      } else if (el.tag === "ellipse") {
+        addSvgEllipse(rootContents, el.attrs);
+      } else if (el.tag === "rect") {
+        addSvgRect(rootContents, el.attrs);
+      } else if (el.tag === "line") {
+        addSvgLine(rootContents, el.attrs);
+      } else if (el.tag === "polyline") {
+        addSvgPolyline(rootContents, el.attrs, false);
+      } else if (el.tag === "polygon") {
+        addSvgPolyline(rootContents, el.attrs, true);
+      } else if (el.tag === "path") {
+        addSvgPath(rootContents, el.attrs);
+      }
+    }
+
+    // Map SVG viewBox to bbox via group transform (preserve aspect ratio).
+    var scaleX = localBBox.w / svgData.width;
+    var scaleY = localBBox.h / svgData.height;
+    var preserve = String(svgData.preserveAspectRatio || "").toLowerCase();
+    var useNonUniformScale = preserve.indexOf("none") !== -1;
+    var scale = useNonUniformScale ? 1 : Math.min(scaleX, scaleY);
+    var padX = useNonUniformScale ? 0 : (localBBox.w - svgData.width * scale) / 2;
+    var padY = useNonUniformScale ? 0 : (localBBox.h - svgData.height * scale) / 2;
+    var tr = rootGroup.property("Transform");
+    tr.property("Anchor Point").setValue([0, 0]);
+    tr.property("Position").setValue([
+      -svgData.minX + padX,
+      -svgData.minY + padY
+    ]);
+    if (useNonUniformScale) {
+      tr.property("Scale").setValue([scaleX * 100, scaleY * 100]);
+    } else {
+      tr.property("Scale").setValue([scale * 100, scale * 100]);
+    }
+
+    setLayerTopLeft(layer, localBBox);
+    return layer;
+  }
+
+  function parseSvgData(svg) {
+    var out = {
+      minX: 0,
+      minY: 0,
+      width: 0,
+      height: 0,
+      elements: [],
+      preserveAspectRatio: ""
+    };
+    if (!svg) return out;
+    debugLog("SVG: parseSvgData len=" + String(svg).length);
+
+    var viewBoxMatch = svg.match(/viewBox\s*=\s*["']([^"']+)["']/i);
+    if (viewBoxMatch && viewBoxMatch[1]) {
+      var vb = viewBoxMatch[1].replace(/,/g, " ").split(/\s+/);
+      if (vb.length >= 4) {
+        out.minX = parseNumber(vb[0], 0);
+        out.minY = parseNumber(vb[1], 0);
+        out.width = parseNumber(vb[2], 0);
+        out.height = parseNumber(vb[3], 0);
+      }
+    }
+
+    if (out.width <= 0 || out.height <= 0) {
+      var wMatch = svg.match(/width\s*=\s*["']([^"']+)["']/i);
+      var hMatch = svg.match(/height\s*=\s*["']([^"']+)["']/i);
+      out.width = parseNumber(wMatch && wMatch[1], 0);
+      out.height = parseNumber(hMatch && hMatch[1], 0);
+      out.minX = 0;
+      out.minY = 0;
+    }
+
+    var preserveMatch = svg.match(/preserveAspectRatio\s*=\s*["']([^"']+)["']/i);
+    if (preserveMatch && preserveMatch[1]) {
+      out.preserveAspectRatio = preserveMatch[1];
+    }
+
+    collectSvgElements(svg, "circle", out.elements);
+    collectSvgElements(svg, "ellipse", out.elements);
+    collectSvgElements(svg, "rect", out.elements);
+    collectSvgElements(svg, "line", out.elements);
+    collectSvgElements(svg, "polyline", out.elements);
+    collectSvgElements(svg, "polygon", out.elements);
+    collectSvgElements(svg, "path", out.elements);
+
+    debugLog("SVG: elements=" + out.elements.length);
+    return out;
+  }
+
+  function collectSvgElements(svg, tag, list) {
+    var re = new RegExp("<" + tag + "\\b[^>]*>", "gi");
+    var match = null;
+    while ((match = re.exec(svg)) !== null) {
+      list.push({ tag: tag, attrs: parseSvgAttributes(match[0]) });
+    }
+  }
+
+  function parseSvgAttributes(tagText) {
+    var attrs = {};
+    var re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*["']([^"']*)["']/g;
+    var match = null;
+    while ((match = re.exec(tagText)) !== null) {
+      attrs[match[1]] = match[2];
+    }
+    return attrs;
+  }
+
+  function parseNumber(value, fallback) {
+    var n = parseFloat(value);
+    return isNaN(n) ? fallback : n;
+  }
+
+  function addSvgCircle(parentContents, attrs) {
+    var cx = parseNumber(attrs.cx, 0);
+    var cy = parseNumber(attrs.cy, 0);
+    var r = parseNumber(attrs.r, 0);
+    if (r <= 0) return;
+
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = "Circle";
+    var grpContents = grp.property("Contents");
+
+    var ellipse = grpContents.addProperty("ADBE Vector Shape - Ellipse");
+    ellipse.property("Size").setValue([r * 2, r * 2]);
+    ellipse.property("Position").setValue([cx, cy]);
+
+    applySvgPaint(grpContents, attrs, false);
+  }
+
+  function addSvgEllipse(parentContents, attrs) {
+    var cx = parseNumber(attrs.cx, 0);
+    var cy = parseNumber(attrs.cy, 0);
+    var rx = parseNumber(attrs.rx, 0);
+    var ry = parseNumber(attrs.ry, 0);
+    if (rx <= 0 || ry <= 0) return;
+
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = "Ellipse";
+    var grpContents = grp.property("Contents");
+
+    var ellipse = grpContents.addProperty("ADBE Vector Shape - Ellipse");
+    ellipse.property("Size").setValue([rx * 2, ry * 2]);
+    ellipse.property("Position").setValue([cx, cy]);
+
+    applySvgPaint(grpContents, attrs, false);
+  }
+
+  function addSvgRect(parentContents, attrs) {
+    var x = parseNumber(attrs.x, 0);
+    var y = parseNumber(attrs.y, 0);
+    var w = parseNumber(attrs.width, 0);
+    var h = parseNumber(attrs.height, 0);
+    if (w <= 0 || h <= 0) return;
+
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = "Rect";
+    var grpContents = grp.property("Contents");
+
+    var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
+    rect.property("Size").setValue([w, h]);
+    rect.property("Position").setValue([x + w / 2, y + h / 2]);
+
+    var rx = parseNumber(attrs.rx, 0);
+    var ry = parseNumber(attrs.ry, 0);
+    var r = Math.max(rx, ry);
+    if (r > 0) rect.property("Roundness").setValue(r);
+
+    applySvgPaint(grpContents, attrs, true);
+  }
+
+  function addSvgLine(parentContents, attrs) {
+    var x1 = parseNumber(attrs.x1, 0);
+    var y1 = parseNumber(attrs.y1, 0);
+    var x2 = parseNumber(attrs.x2, 0);
+    var y2 = parseNumber(attrs.y2, 0);
+
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = "Line";
+    var grpContents = grp.property("Contents");
+
+    var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
+    var shape = new Shape();
+    shape.vertices = [
+      [x1, y1],
+      [x2, y2]
+    ];
+    shape.inTangents = [
+      [0, 0],
+      [0, 0]
+    ];
+    shape.outTangents = [
+      [0, 0],
+      [0, 0]
+    ];
+    shape.closed = false;
+    pathProp.property("Path").setValue(shape);
+
+    applySvgPaint(grpContents, attrs, false);
+  }
+
+  function addSvgPolyline(parentContents, attrs, closed) {
+    var points = parseSvgPoints(attrs.points || "");
+    if (!points.length) return;
+
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = closed ? "Polygon" : "Polyline";
+    var grpContents = grp.property("Contents");
+
+    var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
+    var shape = new Shape();
+    shape.vertices = points;
+    shape.inTangents = buildTangents(points.length);
+    shape.outTangents = buildTangents(points.length);
+    shape.closed = closed;
+    pathProp.property("Path").setValue(shape);
+
+    applySvgPaint(grpContents, attrs, closed);
+  }
+
+  function addSvgPath(parentContents, attrs) {
+    var d = attrs.d;
+    if (!d) return;
+
+    debugLog("SVG: path d len=" + String(d).length + " transform=" + (attrs.transform ? "yes" : "no"));
+    var subpaths = parseSvgPathData(d);
+    var tr = parseSvgTransform(attrs.transform);
+    if (tr) {
+      for (var t = 0; t < subpaths.length; t++) {
+        applyTransformToSubpath(subpaths[t], tr);
+      }
+    }
+    debugLog("SVG: subpaths=" + subpaths.length);
+    for (var i = 0; i < subpaths.length; i++) {
+      var sp = subpaths[i];
+      if (!sp || !sp.points.length) continue;
+
+      var grp = parentContents.addProperty("ADBE Vector Group");
+      grp.name = "Path";
+      var grpContents = grp.property("Contents");
+
+      var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
+      var shape = new Shape();
+      shape.vertices = sp.points;
+      shape.inTangents = sp.inTangents || buildTangents(sp.points.length);
+      shape.outTangents = sp.outTangents || buildTangents(sp.points.length);
+      shape.closed = sp.closed;
+      pathProp.property("Path").setValue(shape);
+
+      applySvgPaint(grpContents, attrs, sp.closed);
+    }
+  }
+
+  function parseSvgPoints(value) {
+    var nums = String(value).replace(/,/g, " ").match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
+    var out = [];
+    if (!nums) return out;
+    for (var i = 0; i < nums.length; i += 2) {
+      var x = parseFloat(nums[i]);
+      var y = parseFloat(nums[i + 1]);
+      if (isNaN(x) || isNaN(y)) continue;
+      out.push([x, y]);
+    }
+    return out;
+  }
+
+  function parseSvgPathData(d) {
+    var tokens = String(d).match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g);
+    var out = [];
+    if (!tokens) return out;
+    debugLog("SVG: path tokens=" + tokens.length);
+
+    var i = 0;
+    var cmd = "";
+    var x = 0;
+    var y = 0;
+    var startX = 0;
+    var startY = 0;
+    var sub = null;
+    var lastC2 = null;
+    var lastQ = null;
+    var hasZ = /[zZ]/.test(d);
+    var safety = 0;
+
+    function startSubpath(px, py) {
+      if (sub && sub.points.length) out.push(sub);
+      sub = { points: [], inTangents: [], outTangents: [], closed: false };
+      sub.points.push([px, py]);
+      sub.inTangents.push([0, 0]);
+      sub.outTangents.push([0, 0]);
+      x = px;
+      y = py;
+      startX = px;
+      startY = py;
+      lastC2 = null;
+      lastQ = null;
+    }
+
+    function ensureSubpath() {
+      if (!sub) startSubpath(x, y);
+    }
+
+    function addLine(px, py) {
+      ensureSubpath();
+      sub.points.push([px, py]);
+      sub.inTangents.push([0, 0]);
+      sub.outTangents.push([0, 0]);
+      x = px;
+      y = py;
+      lastC2 = null;
+      lastQ = null;
+    }
+
+    function addCubic(c1x, c1y, c2x, c2y, px, py) {
+      ensureSubpath();
+      var lastIndex = sub.points.length - 1;
+      sub.outTangents[lastIndex] = [c1x - x, c1y - y];
+      sub.points.push([px, py]);
+      sub.inTangents.push([c2x - px, c2y - py]);
+      sub.outTangents.push([0, 0]);
+      x = px;
+      y = py;
+      lastC2 = [c2x, c2y];
+      lastQ = null;
+    }
+
+    function addQuadratic(q1x, q1y, px, py) {
+      var c1x = x + (2 / 3) * (q1x - x);
+      var c1y = y + (2 / 3) * (q1y - y);
+      var c2x = px + (2 / 3) * (q1x - px);
+      var c2y = py + (2 / 3) * (q1y - py);
+      addCubic(c1x, c1y, c2x, c2y, px, py);
+      lastQ = [q1x, q1y];
+    }
+
+    while (i < tokens.length) {
+      safety++;
+      if (safety > 10000) {
+        debugLog("SVG: path parse abort (safety) at i=" + i + " cmd=" + cmd);
+        break;
+      }
+      if (safety % 200 === 0) {
+        debugLog("SVG: path parse progress i=" + i + " cmd=" + cmd);
+      }
+      var prevI = i;
+      var t = tokens[i++];
+      if (/[a-zA-Z]/.test(t)) {
+        cmd = t;
+      } else {
+        i--;
+      }
+
+      if (cmd === "M" || cmd === "m") {
+        var first = true;
+        if (i + 1 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete M at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 1 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var px = parseFloat(tokens[i++]);
+          var py = parseFloat(tokens[i++]);
+          if (cmd === "m") {
+            px += x;
+            py += y;
+          }
+          if (first) {
+            startSubpath(px, py);
+            first = false;
+          } else {
+            addLine(px, py);
+          }
+        }
+      } else if (cmd === "L" || cmd === "l") {
+        if (i + 1 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete L at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 1 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var lx = parseFloat(tokens[i++]);
+          var ly = parseFloat(tokens[i++]);
+          if (cmd === "l") {
+            lx += x;
+            ly += y;
+          }
+          addLine(lx, ly);
+        }
+      } else if (cmd === "H" || cmd === "h") {
+        if (i >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete H at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var hx = parseFloat(tokens[i++]);
+          if (cmd === "h") hx += x;
+          addLine(hx, y);
+        }
+      } else if (cmd === "V" || cmd === "v") {
+        if (i >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete V at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var vy = parseFloat(tokens[i++]);
+          if (cmd === "v") vy += y;
+          addLine(x, vy);
+        }
+      } else if (cmd === "C" || cmd === "c") {
+        if (i + 5 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete C at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 5 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var c1x = parseFloat(tokens[i++]);
+          var c1y = parseFloat(tokens[i++]);
+          var c2x = parseFloat(tokens[i++]);
+          var c2y = parseFloat(tokens[i++]);
+          var cx = parseFloat(tokens[i++]);
+          var cy = parseFloat(tokens[i++]);
+          if (cmd === "c") {
+            c1x += x;
+            c1y += y;
+            c2x += x;
+            c2y += y;
+            cx += x;
+            cy += y;
+          }
+          addCubic(c1x, c1y, c2x, c2y, cx, cy);
+        }
+      } else if (cmd === "S" || cmd === "s") {
+        if (i + 3 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete S at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 3 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var s2x = parseFloat(tokens[i++]);
+          var s2y = parseFloat(tokens[i++]);
+          var sx = parseFloat(tokens[i++]);
+          var sy = parseFloat(tokens[i++]);
+          if (cmd === "s") {
+            s2x += x;
+            s2y += y;
+            sx += x;
+            sy += y;
+          }
+          var refl = lastC2 ? [2 * x - lastC2[0], 2 * y - lastC2[1]] : [x, y];
+          addCubic(refl[0], refl[1], s2x, s2y, sx, sy);
+        }
+      } else if (cmd === "Q" || cmd === "q") {
+        if (i + 3 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete Q at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 3 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var q1x = parseFloat(tokens[i++]);
+          var q1y = parseFloat(tokens[i++]);
+          var qx = parseFloat(tokens[i++]);
+          var qy = parseFloat(tokens[i++]);
+          if (cmd === "q") {
+            q1x += x;
+            q1y += y;
+            qx += x;
+            qy += y;
+          }
+          addQuadratic(q1x, q1y, qx, qy);
+        }
+      } else if (cmd === "T" || cmd === "t") {
+        if (i + 1 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete T at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 1 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var tx = parseFloat(tokens[i++]);
+          var ty = parseFloat(tokens[i++]);
+          if (cmd === "t") {
+            tx += x;
+            ty += y;
+          }
+          var tq = lastQ ? [2 * x - lastQ[0], 2 * y - lastQ[1]] : [x, y];
+          addQuadratic(tq[0], tq[1], tx, ty);
+        }
+      } else if (cmd === "Z" || cmd === "z") {
+        if (sub) {
+          sub.closed = true;
+          x = startX;
+          y = startY;
+          lastC2 = null;
+          lastQ = null;
+        }
+      } else {
+        // Unsupported path commands are ignored.
+        cmd = "";
+      }
+
+      if (i === prevI) {
+        debugLog("SVG: path parse stuck at i=" + i + " cmd=" + cmd + " token=" + tokens[i]);
+        break;
+      }
+    }
+
+    if (hasZ && sub && !sub.closed) {
+      sub.closed = true;
+    }
+    if (sub && sub.points.length) out.push(sub);
+    return out;
+  }
+
+  function buildTangents(len) {
+    var arr = [];
+    for (var i = 0; i < len; i++) arr.push([0, 0]);
+    return arr;
+  }
+
+  function applySvgPaint(grpContents, attrs, defaultFillOn) {
+    var fillColor = parseSvgColor(attrs.fill);
+    var strokeColor = parseSvgColor(attrs.stroke);
+    var strokeWidth = parseNumber(attrs["stroke-width"], 1);
+    var opacity = parseNumber(attrs.opacity, 1);
+    var fillOpacity = parseNumber(attrs["fill-opacity"], 1);
+    var strokeOpacity = parseNumber(attrs["stroke-opacity"], 1);
+    var dashArray = parseSvgDashArray(attrs["stroke-dasharray"]);
+    var dashOffset = parseNumber(attrs["stroke-dashoffset"], 0);
+
+    if (defaultFillOn && !attrs.fill) {
+      fillColor = fillColor || { rgb: [0, 0, 0], alpha: 1 };
+    }
+
+    var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
+    if (fillColor) {
+      fill.property("Color").setValue(fillColor.rgb);
+      fill.property("Opacity").setValue(opacity * fillOpacity * fillColor.alpha * 100);
+      fill.enabled = true;
+    } else {
+      fill.enabled = false;
+    }
+
+    var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
+    if (strokeColor && strokeWidth > 0) {
+      stroke.property("Color").setValue(strokeColor.rgb);
+      stroke.property("Stroke Width").setValue(strokeWidth);
+      stroke.property("Opacity").setValue(opacity * strokeOpacity * strokeColor.alpha * 100);
+      stroke.enabled = true;
+      if (dashArray) {
+        var dashes = stroke.property("ADBE Vector Stroke Dashes") || stroke.property("Dashes");
+        if (dashes) {
+          var pairCount = Math.min(3, Math.floor(dashArray.length / 2));
+          for (var i = 0; i < pairCount; i++) {
+            var dashVal = dashArray[i * 2];
+            var gapVal = dashArray[i * 2 + 1];
+            var dashMatch = "ADBE Vector Stroke Dash " + (i + 1);
+            var gapMatch = "ADBE Vector Stroke Gap " + (i + 1);
+            var dashProp = null;
+            var gapProp = null;
+            try {
+              dashProp = dashes.addProperty(dashMatch);
+            } catch (e) {
+              dashProp = dashes.property(dashMatch);
+            }
+            try {
+              gapProp = dashes.addProperty(gapMatch);
+            } catch (e2) {
+              gapProp = dashes.property(gapMatch);
+            }
+            if (dashProp) dashProp.setValue(dashVal);
+            if (gapProp && typeof gapVal === "number") gapProp.setValue(gapVal);
+          }
+          if (!isNaN(dashOffset) && dashOffset !== 0) {
+            var offsetProp = dashes.property("ADBE Vector Stroke Offset");
+            if (offsetProp) offsetProp.setValue(dashOffset);
+          }
+        }
+      }
+    } else {
+      stroke.enabled = false;
+    }
+  }
+
+  function parseSvgDashArray(value) {
+    if (!value) return null;
+    var s = String(value).trim().toLowerCase();
+    if (!s || s === "none") return null;
+    var nums = s.replace(/,/g, " ").match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
+    if (!nums || !nums.length) return null;
+    var out = [];
+    var hasPositive = false;
+    for (var i = 0; i < nums.length; i++) {
+      var v = parseFloat(nums[i]);
+      if (isNaN(v) || v < 0) continue;
+      if (v > 0) hasPositive = true;
+      out.push(v);
+    }
+    if (!out.length || !hasPositive) return null;
+    if (out.length % 2 === 1) out = out.concat(out);
+    return out;
+  }
+
+  function parseSvgColor(value) {
+    if (!value) return null;
+    var s = String(value).toLowerCase();
+    if (s === "none" || s === "transparent") return null;
+    if (s.indexOf("url(") === 0) return null;
+    if (s === "currentcolor") return null;
+    var named = namedSvgColor(s);
+    if (named) return named;
+    if (s.indexOf("rgb") === 0) return parseCssColorWithAlpha(s);
+    if (s.charAt(0) === "#") return parseHexColor(s);
+    return null;
+  }
+
+  function parseSvgTransform(value) {
+    if (!value) return null;
+    var s = String(value);
+    var re = /([a-zA-Z]+)\s*\(([^)]*)\)/g;
+    var match = null;
+    var m = [1, 0, 0, 1, 0, 0];
+    while ((match = re.exec(s)) !== null) {
+      var fn = match[1].toLowerCase();
+      var nums = String(match[2]).match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || [];
+      var t = null;
+      if (fn === "matrix" && nums.length >= 6) {
+        t = [
+          parseFloat(nums[0]),
+          parseFloat(nums[1]),
+          parseFloat(nums[2]),
+          parseFloat(nums[3]),
+          parseFloat(nums[4]),
+          parseFloat(nums[5])
+        ];
+      } else if (fn === "translate") {
+        var tx = parseFloat(nums[0] || 0);
+        var ty = parseFloat(nums[1] || 0);
+        t = [1, 0, 0, 1, tx, ty];
+      } else if (fn === "scale") {
+        var sx = parseFloat(nums[0] || 1);
+        var sy = nums.length > 1 ? parseFloat(nums[1]) : sx;
+        t = [sx, 0, 0, sy, 0, 0];
+      } else if (fn === "rotate" && nums.length >= 1) {
+        var ang = (parseFloat(nums[0]) * Math.PI) / 180;
+        var cosA = Math.cos(ang);
+        var sinA = Math.sin(ang);
+        var rot = [cosA, sinA, -sinA, cosA, 0, 0];
+        if (nums.length >= 3) {
+          var cx = parseFloat(nums[1]);
+          var cy = parseFloat(nums[2]);
+          t = multiplySvgMatrix([1, 0, 0, 1, cx, cy], multiplySvgMatrix(rot, [1, 0, 0, 1, -cx, -cy]));
+        } else {
+          t = rot;
+        }
+      } else if (fn === "skewx" && nums.length >= 1) {
+        var ax = (parseFloat(nums[0]) * Math.PI) / 180;
+        t = [1, 0, Math.tan(ax), 1, 0, 0];
+      } else if (fn === "skewy" && nums.length >= 1) {
+        var ay = (parseFloat(nums[0]) * Math.PI) / 180;
+        t = [1, Math.tan(ay), 0, 1, 0, 0];
+      }
+
+      if (t) {
+        m = multiplySvgMatrix(t, m);
+      }
+    }
+    return m;
+  }
+
+  function multiplySvgMatrix(a, b) {
+    return [
+      a[0] * b[0] + a[2] * b[1],
+      a[1] * b[0] + a[3] * b[1],
+      a[0] * b[2] + a[2] * b[3],
+      a[1] * b[2] + a[3] * b[3],
+      a[0] * b[4] + a[2] * b[5] + a[4],
+      a[1] * b[4] + a[3] * b[5] + a[5]
+    ];
+  }
+
+  function applySvgMatrixToPoint(p, m) {
+    return [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
+  }
+
+  function applySvgMatrixToVector(v, m) {
+    return [m[0] * v[0] + m[2] * v[1], m[1] * v[0] + m[3] * v[1]];
+  }
+
+  function applyTransformToSubpath(sp, m) {
+    if (!sp || !sp.points) return;
+    for (var i = 0; i < sp.points.length; i++) {
+      sp.points[i] = applySvgMatrixToPoint(sp.points[i], m);
+      if (sp.inTangents && sp.inTangents[i]) {
+        sp.inTangents[i] = applySvgMatrixToVector(sp.inTangents[i], m);
+      }
+      if (sp.outTangents && sp.outTangents[i]) {
+        sp.outTangents[i] = applySvgMatrixToVector(sp.outTangents[i], m);
+      }
+    }
+  }
+
+  function namedSvgColor(name) {
+    // Minimal named color support for common SVG values.
+    if (name === "black") return { rgb: [0, 0, 0], alpha: 1 };
+    if (name === "white") return { rgb: [1, 1, 1], alpha: 1 };
+    if (name === "red") return { rgb: [1, 0, 0], alpha: 1 };
+    if (name === "green") return { rgb: [0, 0.5, 0], alpha: 1 };
+    if (name === "blue") return { rgb: [0, 0, 1], alpha: 1 };
+    if (name === "gray" || name === "grey") return { rgb: [0.5, 0.5, 0.5], alpha: 1 };
+    return null;
+  }
+
+  function parseHexColor(hex) {
+    var h = String(hex).replace("#", "");
+    if (h.length === 3) {
+      var r = parseInt(h.charAt(0) + h.charAt(0), 16);
+      var g = parseInt(h.charAt(1) + h.charAt(1), 16);
+      var b = parseInt(h.charAt(2) + h.charAt(2), 16);
+      return { rgb: [r / 255, g / 255, b / 255], alpha: 1 };
+    }
+    if (h.length === 4) {
+      var rr4 = parseInt(h.charAt(0) + h.charAt(0), 16);
+      var gg4 = parseInt(h.charAt(1) + h.charAt(1), 16);
+      var bb4 = parseInt(h.charAt(2) + h.charAt(2), 16);
+      var aa4 = parseInt(h.charAt(3) + h.charAt(3), 16);
+      return { rgb: [rr4 / 255, gg4 / 255, bb4 / 255], alpha: aa4 / 255 };
+    }
+    if (h.length >= 6) {
+      var rr = parseInt(h.substr(0, 2), 16);
+      var gg = parseInt(h.substr(2, 2), 16);
+      var bb = parseInt(h.substr(4, 2), 16);
+      var aa = h.length >= 8 ? parseInt(h.substr(6, 2), 16) : 255;
+      return { rgb: [rr / 255, gg / 255, bb / 255], alpha: aa / 255 };
+    }
+    return null;
+  }
+
+  function parseCssColorWithAlpha(css) {
+    if (!css) return null;
+    var s = String(css).toLowerCase();
+    var m = s.match(/[\d.]+/g);
+    if (!m || m.length < 3) return null;
+    var a = m.length >= 4 ? parseFloat(m[3]) : 1;
+    if (isNaN(a)) a = 1;
+    return {
+      rgb: [Number(m[0]) / 255, Number(m[1]) / 255, Number(m[2]) / 255],
+      alpha: a
+    };
+  }
+

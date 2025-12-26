@@ -1,0 +1,702 @@
+import React, { useState, useRef } from 'react';
+import { generateSlides, regenerateSlide, generateNewSlide } from '../services/geminiService';
+import { extractSlideLayout } from '../utils/aeExtractor/index';
+import { Loader2, Sparkles, Code, Play, RefreshCw, ChevronLeft, ChevronRight, Plus, Trash2, AlertCircle, Send, Presentation, FileJson, Check } from 'lucide-react';
+
+const URL_TEXT_RE = /^https?:\/\/\S+$/i;
+
+const RESOLUTION_OPTIONS = [
+  { id: '1080p', label: 'Full HD (1920x1080)', width: 1920, height: 1080 },
+  { id: '2k', label: '2K (2560x1440)', width: 2560, height: 1440 },
+  { id: '4k', label: '4K (3840x2160)', width: 3840, height: 2160 }
+];
+
+const FPS_OPTIONS = [30, 60];
+
+const sanitizeImageAlts = (root: ParentNode) => {
+  const images = root.querySelectorAll('img');
+  images.forEach(img => {
+    if (img.alt && (img.alt.includes('http') || img.alt.includes('/') || img.alt.length > 20)) {
+      img.alt = '';
+    }
+  });
+};
+
+const fixTextUrlBlocks = (root: ParentNode) => {
+  const elements = Array.from(root.querySelectorAll('*'));
+  elements.forEach(el => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.children.length > 0) return;
+    if (el.tagName.toLowerCase() === 'a') return;
+
+    const text = (el.textContent || '').trim();
+    if (!URL_TEXT_RE.test(text)) return;
+
+    const style = el.style;
+    const hasBgImage = style.backgroundImage && style.backgroundImage !== 'none';
+
+    if (!hasBgImage) {
+      style.backgroundImage = `url("${text}")`;
+      style.backgroundSize = 'cover';
+      style.backgroundPosition = 'center';
+      style.backgroundRepeat = 'no-repeat';
+    }
+
+    el.textContent = '';
+  });
+};
+
+const normalizeSlideClassOrder = (root: HTMLElement, index: number) => {
+  const keptClasses = Array.from(root.classList).filter(
+    cls => cls !== 'slide' && !/^slide-\d+$/.test(cls)
+  );
+  root.setAttribute('class', [`slide-${index}`, 'slide', ...keptClasses].join(' '));
+};
+
+const applySlideIndexClass = (html: string, index: number) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const root = doc.querySelector('.slide') || doc.body.firstElementChild;
+  if (!root || !(root instanceof HTMLElement)) return html;
+
+  normalizeSlideClassOrder(root, index);
+  return root.outerHTML;
+};
+
+const collectSlideElements = (doc: Document) => {
+  const body = doc.body;
+  const bodySlides = Array.from(body.children).filter(
+    child => child instanceof HTMLElement && child.classList.contains('slide')
+  ) as HTMLElement[];
+  if (bodySlides.length > 0) return bodySlides;
+
+  const allSlides = Array.from(body.querySelectorAll('.slide')) as HTMLElement[];
+  if (allSlides.length > 0) return allSlides;
+
+  const container = body.querySelector('.presentation-container');
+  if (container) {
+    const containerSections = Array.from(container.children).filter(
+      child => child instanceof HTMLElement && child.tagName.toLowerCase() === 'section'
+    ) as HTMLElement[];
+    if (containerSections.length > 0) return containerSections;
+  }
+
+  const directSections = Array.from(body.children).filter(
+    child => child instanceof HTMLElement && child.tagName.toLowerCase() === 'section'
+  ) as HTMLElement[];
+  if (directSections.length > 0) return directSections;
+
+  const allSections = Array.from(body.querySelectorAll('section')) as HTMLElement[];
+  if (allSections.length > 0) return allSections;
+
+  const idSlides = Array.from(body.querySelectorAll('[id^="slide-"]')) as HTMLElement[];
+  if (idSlides.length > 0) return idSlides;
+
+  return [];
+};
+
+const reindexSlideClasses = (slideHtmls: string[]) => {
+  return slideHtmls.map((html, i) => applySlideIndexClass(html, i + 1));
+};
+
+const sanitizeLayout = (root: ParentNode) => {
+  sanitizeImageAlts(root);
+  fixTextUrlBlocks(root);
+};
+
+export const SlideGenerator: React.FC = () => {
+  const [topic, setTopic] = useState('');
+  const [headContent, setHeadContent] = useState<string>('');
+  const [slides, setSlides] = useState<string[]>([]);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [animationsEnabled, setAnimationsEnabled] = useState(false);
+  
+  const [loading, setLoading] = useState(false);
+  const [regeneratingSlide, setRegeneratingSlide] = useState(false);
+  const [addingSlide, setAddingSlide] = useState(false);
+  const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copiedJsonSlide, setCopiedJsonSlide] = useState(false);
+  const [copiedJsonProject, setCopiedJsonProject] = useState(false);
+  const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
+  const [exportFps, setExportFps] = useState<number>(30);
+  const [exportDuration, setExportDuration] = useState<number>(10);
+  
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const exportIframeRef = useRef<HTMLIFrameElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const parseAndSetHtml = (html: string) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    
+    sanitizeLayout(doc);
+
+    const sections = collectSlideElements(doc);
+    
+    // Inject global reset for strict 16:9
+    const style = doc.createElement('style');
+    style.innerHTML = `
+      body { margin: 0; padding: 0; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; } 
+      /* Ensure slides are strictly sized relative to viewport width of the iframe */
+      .slide { width: 100vw !important; height: 56.25vw !important; overflow: hidden; position: relative; }
+      /* Fallback styling for images */
+      img {
+        /* Hide alt text by making it transparent */
+        color: transparent; 
+        /* Ensure there is a background if image fails to load immediately */
+        background-color: #262626;
+        /* Hide the broken image icon in some browsers */
+        text-indent: -10000px;
+      }
+    `;
+    doc.head.appendChild(style);
+
+    // Inject error handling script for images (Runtime fallback)
+    const script = doc.createElement('script');
+    script.innerHTML = `
+      // Capture error events on images during the loading phase
+      window.addEventListener('error', function(e) {
+        if (e.target.tagName === 'IMG') {
+          // Prevent infinite loop if the placeholder fails (unlikely for data URI)
+          e.target.onerror = null;
+          
+          // Replace source with a generated SVG placeholder
+          e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100%25" height="100%25" preserveAspectRatio="none"%3E%3Crect width="100%25" height="100%25" fill="%23262626"/%3E%3Ctext x="50%25" y="50%25" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" fill="%23525252" font-size="14" font-weight="bold"%3EIMAGE%3C/text%3E%3C/svg%3E';
+          
+          // Ensure styles match a "filled" block
+          e.target.style.display = 'block';
+          e.target.style.objectFit = 'cover';
+          e.target.style.width = '100%';
+          e.target.style.height = '100%';
+          e.target.style.minHeight = '100%';
+          
+          // Clear alt text to ensure no text overlay
+          e.target.alt = '';
+        }
+      }, true);
+    `;
+    doc.head.appendChild(script);
+
+    if (sections.length > 0) {
+      setHeadContent(doc.head.innerHTML);
+      const slideHtmls = sections.map((section, i) => {
+        normalizeSlideClassOrder(section, i + 1);
+        return section.outerHTML;
+      });
+      setSlides(slideHtmls);
+      setCurrentSlideIndex(0);
+    } else {
+      setHeadContent(doc.head.innerHTML);
+      setSlides([doc.body.innerHTML]);
+      setCurrentSlideIndex(0);
+    }
+  };
+
+  const getUsedImageUrls = () => {
+    if (slides.length === 0) return [];
+    const allHtml = slides.join('');
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(allHtml, 'text/html');
+    const imgs = Array.from(doc.querySelectorAll('img')).map(img => img.src);
+    const elementsWithStyle = doc.querySelectorAll('[style*="background-image"]');
+    const bgImages = Array.from(elementsWithStyle).map(el => {
+       const style = el.getAttribute('style');
+       const match = style?.match(/url\(['"]?(.*?)['"]?\)/);
+       return match ? match[1] : null;
+    }).filter(Boolean) as string[];
+    return [...new Set([...imgs, ...bgImages])];
+  };
+
+  const handleGenerate = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!topic.trim()) return;
+
+    setLoading(true);
+    setSlides([]);
+    setHeadContent('');
+    setErrorMsg(null);
+    try {
+      const generatedHtml = await generateSlides(topic);
+      parseAndSetHtml(generatedHtml);
+    } catch (error: any) {
+      console.error(error);
+      if (error?.status === 429 || error?.message?.includes('429')) {
+        setErrorMsg("We're experiencing high traffic. Please wait a moment and try again.");
+      } else {
+        setErrorMsg("Failed to generate slides. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleGenerate();
+    }
+  };
+
+  const handleRegenerateCurrentSlide = async () => {
+    if (slides.length === 0) return;
+    setRegeneratingSlide(true);
+    try {
+      const currentContent = slides[currentSlideIndex];
+      const excluded = getUsedImageUrls();
+      const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+      const cssContext = styleMatch ? styleMatch[1] : '';
+      
+      const newSlideHtml = await regenerateSlide(topic, currentContent, cssContext, excluded);
+      const newSlides = [...slides];
+      newSlides[currentSlideIndex] = newSlideHtml;
+      // Simple sanitization
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = newSlideHtml;
+      sanitizeLayout(tempDiv);
+      newSlides[currentSlideIndex] = tempDiv.innerHTML;
+      
+      setSlides(reindexSlideClasses(newSlides));
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setRegeneratingSlide(false);
+    }
+  };
+
+  const handleAddSlide = async () => {
+    if (slides.length === 0) return;
+    setAddingSlide(true);
+    try {
+      const excluded = getUsedImageUrls();
+      const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+      const cssContext = styleMatch ? styleMatch[1] : '';
+
+      const newSlideHtml = await generateNewSlide(topic, cssContext, excluded);
+      
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = newSlideHtml;
+      sanitizeLayout(tempDiv);
+      
+      const newSlides = reindexSlideClasses([...slides, tempDiv.innerHTML]);
+      setSlides(newSlides);
+      setCurrentSlideIndex(newSlides.length - 1);
+      
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setAddingSlide(false);
+    }
+  };
+
+  const handleDeleteSlide = () => {
+    if (slides.length <= 1) return;
+    const newSlides = reindexSlideClasses(slides.filter((_, i) => i !== currentSlideIndex));
+    setSlides(newSlides);
+    if (currentSlideIndex >= newSlides.length) {
+      setCurrentSlideIndex(newSlides.length - 1);
+    }
+  };
+
+  const getSlideHtmlByIndex = (index: number) => {
+    if (slides.length === 0) return '';
+    const disableAnimations = !animationsEnabled;
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          ${headContent}
+          ${disableAnimations ? `
+          <style>
+            /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
+            *, *::before, *::after {
+              animation: none !important;
+              transition: none !important;
+            }
+          </style>` : ''}
+        </head>
+        <body>
+          ${slides[index]}
+        </body>
+      </html>
+    `;
+  };
+
+  const loadSlideIntoExportIframe = (index: number) => {
+    return new Promise<Window>((resolve, reject) => {
+      const iframe = exportIframeRef.current;
+      if (!iframe) {
+        reject(new Error('Missing export iframe.'));
+        return;
+      }
+
+      const handleLoad = () => {
+        iframe.removeEventListener('load', handleLoad);
+        if (!iframe.contentWindow) {
+          reject(new Error('Missing iframe contentWindow.'));
+          return;
+        }
+
+        requestAnimationFrame(() => {
+          resolve(iframe.contentWindow as Window);
+        });
+      };
+
+      iframe.addEventListener('load', handleLoad);
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            ${headContent}
+            <style>
+              /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
+              *, *::before, *::after {
+                animation: none !important;
+                transition: none !important;
+              }
+            </style>
+          </head>
+          <body>
+            ${slides[index]}
+          </body>
+        </html>
+      `;
+      iframe.srcdoc = html;
+    });
+  };
+
+  const extractJsonFromIframe = async (win: Window) => {
+    const doc = win.document;
+    const slideElement = doc.querySelector('.slide') || doc.body;
+
+    if (!slideElement) {
+      throw new Error('Could not find slide content to export.');
+    }
+
+    sanitizeLayout(slideElement);
+    return extractSlideLayout(slideElement as HTMLElement, win, {
+      targetWidth: exportResolution.width,
+      targetHeight: exportResolution.height,
+      fps: exportFps,
+      duration: exportDuration,
+      resolutionLabel: exportResolution.label
+    });
+  };
+
+  const handleExportSlideJSON = async () => {
+    if (slides.length === 0) return;
+    
+    try {
+      const win = await loadSlideIntoExportIframe(currentSlideIndex);
+      const jsonStructure = await extractJsonFromIframe(win);
+
+      const jsonString = JSON.stringify(jsonStructure, null, 2);
+      await navigator.clipboard.writeText(jsonString);
+      
+      setCopiedJsonSlide(true);
+      setTimeout(() => setCopiedJsonSlide(false), 2000);
+    } catch (err) {
+      console.error("Export failed:", err);
+      setErrorMsg("Failed to export JSON structure.");
+    }
+  };
+
+  const handleExportProjectJSON = async () => {
+    if (slides.length === 0) return;
+
+    try {
+      const results = [];
+      for (let i = 0; i < slides.length; i += 1) {
+        const win = await loadSlideIntoExportIframe(i);
+        const jsonStructure = await extractJsonFromIframe(win);
+        results.push(jsonStructure);
+      }
+
+      const jsonString = JSON.stringify(results, null, 2);
+      await navigator.clipboard.writeText(jsonString);
+
+      setCopiedJsonProject(true);
+      setTimeout(() => setCopiedJsonProject(false), 2000);
+    } catch (err) {
+      console.error("Export failed:", err);
+      setErrorMsg("Failed to export JSON project.");
+    }
+  };
+
+  const getCurrentFullHtml = () => {
+    return getSlideHtmlByIndex(currentSlideIndex);
+  };
+
+  const getAllSlidesHtml = () => {
+     const disableAnimations = !animationsEnabled;
+     return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          ${headContent}
+          ${disableAnimations ? `
+          <style>
+            /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
+            *, *::before, *::after {
+              animation: none !important;
+              transition: none !important;
+            }
+          </style>` : ''}
+        </head>
+        <body>
+          ${slides.join('\n')}
+        </body>
+      </html>
+    `;
+  };
+
+  return (
+    <div className="flex flex-col h-full gap-4">
+      {/* Main Content Area */}
+      <div className="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scrollbar" ref={scrollContainerRef}>
+        {slides.length > 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-4 min-h-0">
+             <div className="w-full max-w-6xl flex flex-col gap-4">
+              
+              {/* Slide Preview - Centered */}
+              <div className="relative aspect-video w-full bg-neutral-950 rounded-xl border border-neutral-800 shadow-2xl overflow-hidden group">
+                  {viewMode === 'preview' ? (
+                    <iframe
+                      ref={iframeRef}
+                      srcDoc={getCurrentFullHtml()}
+                      title="Slide Preview"
+                      className="w-full h-full border-0"
+                      sandbox="allow-scripts allow-same-origin" 
+                    />
+                  ) : (
+                    <div className="w-full h-full overflow-auto bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300 custom-scrollbar">
+                      <pre>{getAllSlidesHtml()}</pre>
+                    </div>
+                  )}
+              </div>
+
+              {/* Toolbar - Grid Layout for Center Alignment */}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
+                
+                {/* Left: View Mode */}
+                <div className="flex items-center gap-2 bg-neutral-950 rounded-lg p-1 border border-neutral-800 justify-self-start">
+                  <button
+                    onClick={() => setViewMode('preview')}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === 'preview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Play className="w-4 h-4" /> Preview
+                  </button>
+                  <button
+                    onClick={() => setViewMode('code')}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === 'code' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Code className="w-4 h-4" /> Code
+                  </button>
+                  {/* <button
+                    onClick={() => setAnimationsEnabled(prev => !prev)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      animationsEnabled ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+                    }`}
+                    title="Toggle animations"
+                  >
+                    <Sparkles className="w-4 h-4" /> {animationsEnabled ? 'Anim On' : 'Anim Off'}
+                  </button> */}
+                </div>
+
+                {/* Center: Navigation Controls */}
+                <div className="flex items-center gap-4 px-4 py-2 bg-neutral-950 rounded-lg border border-neutral-800 justify-self-center w-full sm:w-auto justify-center">
+                   <button
+                      onClick={() => setCurrentSlideIndex(prev => (prev === 0 ? slides.length - 1 : prev - 1))}
+                      disabled={slides.length <= 1}
+                      className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <span className="text-sm font-medium text-white min-w-[3rem] text-center select-none">
+                      {currentSlideIndex + 1} / {slides.length}
+                    </span>
+                    <button
+                      onClick={() => setCurrentSlideIndex(prev => (prev === slides.length - 1 ? 0 : prev + 1))}
+                      disabled={slides.length <= 1}
+                      className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {/* Right: Actions */}
+                <div className="flex items-center gap-2 justify-self-end w-full sm:w-auto justify-end">
+                  <button
+                    onClick={handleRegenerateCurrentSlide}
+                    disabled={regeneratingSlide}
+                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {regeneratingSlide ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Regenerate
+                  </button>
+                  <button
+                    onClick={handleAddSlide}
+                    disabled={addingSlide}
+                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {addingSlide ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    Add Slide
+                  </button>
+                  
+                  <div className="h-6 w-px bg-neutral-800 mx-2" />
+                  
+                  <button
+                    onClick={handleDeleteSlide}
+                    disabled={slides.length <= 1}
+                    className="p-2 text-red-400 hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50"
+                    title="Delete Slide"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[auto_1fr] sm:items-center">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleExportSlideJSON}
+                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border ${
+                      copiedJsonSlide 
+                        ? 'bg-emerald-950/50 text-emerald-400 border-emerald-900' 
+                        : 'text-neutral-300 hover:text-white hover:bg-neutral-800 border-transparent'
+                    }`}
+                    title="Copy AE JSON to Clipboard"
+                  >
+                    {copiedJsonSlide ? <Check className="w-4 h-4" /> : <FileJson className="w-4 h-4" />}
+                    {copiedJsonSlide ? 'Copied' : 'JSON Slide'}
+                  </button>
+                  <button
+                    onClick={handleExportProjectJSON}
+                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border ${
+                      copiedJsonProject 
+                        ? 'bg-emerald-950/50 text-emerald-400 border-emerald-900' 
+                        : 'text-neutral-300 hover:text-white hover:bg-neutral-800 border-transparent'
+                    }`}
+                    title="Copy AE JSON Project to Clipboard"
+                  >
+                    {copiedJsonProject ? <Check className="w-4 h-4" /> : <FileJson className="w-4 h-4" />}
+                    {copiedJsonProject ? 'Copied' : 'JSON Project'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                    <label className="mb-2 block text-xs font-medium text-neutral-400">FPS</label>
+                    <div className="inline-flex w-full rounded-md border border-neutral-800 bg-neutral-900 p-1">
+                      {FPS_OPTIONS.map(option => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => setExportFps(option)}
+                          className={`flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
+                            exportFps === option
+                              ? 'bg-indigo-600 text-white shadow-sm'
+                              : 'text-neutral-300 hover:text-white'
+                          }`}
+                        >
+                          {option} fps
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                    <label className="mb-2 block text-xs font-medium text-neutral-400">Resolution</label>
+                    <select
+                      value={exportResolution.id}
+                      onChange={(e) => {
+                        const next = RESOLUTION_OPTIONS.find(option => option.id === e.target.value);
+                        if (next) setExportResolution(next);
+                      }}
+                      className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
+                    >
+                      {RESOLUTION_OPTIONS.map(option => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                    <label className="mb-2 block text-xs font-medium text-neutral-400">
+                      Duration: {exportDuration}s
+                    </label>
+                    <input
+                      type="range"
+                      min={5}
+                      max={15}
+                      step={1}
+                      value={exportDuration}
+                      onChange={(e) => setExportDuration(Number(e.target.value))}
+                      className="w-full accent-indigo-500"
+                    />
+                    <div className="mt-1 flex justify-between text-[11px] text-neutral-500">
+                      <span>5s</span>
+                      <span>15s</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-neutral-400 bg-neutral-900/20 border border-neutral-800/50 rounded-2xl border-dashed">
+            <div className="w-20 h-20 bg-neutral-900 rounded-3xl flex items-center justify-center mb-6 ring-1 ring-neutral-800 shadow-xl shadow-black/50">
+              <Presentation className="w-10 h-10 text-indigo-500" />
+            </div>
+            <h2 className="text-2xl font-bold text-neutral-200 mb-3">
+              Muse — turning inspiration into clear ideas.
+            </h2>
+            <p className="max-w-md text-neutral-500 text-lg leading-relaxed">
+              A space where thoughts take shape and ideas become easy to understand.
+            </p>
+          </div>
+        )}
+      </div>
+      <iframe
+        ref={exportIframeRef}
+        title="AE Export Frame"
+        className="absolute -left-[10000px] top-0 w-[1280px] h-[720px] opacity-0 pointer-events-none"
+        sandbox="allow-scripts allow-same-origin"
+      />
+
+      {/* Input Area (Bottom) */}
+      <div className="shrink-0 max-w-4xl mx-auto w-full">
+        {errorMsg && (
+          <div className="mb-4 p-3 bg-red-900/20 border border-red-800/50 rounded-lg text-red-200 text-sm flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
+            <AlertCircle className="w-4 h-4" />
+            {errorMsg}
+          </div>
+        )}
+        
+        <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">
+          <textarea
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Describe your presentation... (e.g. 'A futuristic pitch deck for a quantum computing startup with dark aesthetic')"
+            className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none px-4 py-3 pr-14 resize-none min-h-[60px] max-h-[200px] text-lg"
+            rows={2}
+          />
+          <button
+            onClick={() => handleGenerate()}
+            disabled={loading || !topic.trim()}
+            className="absolute right-2 bottom-2 p-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20"
+          >
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+          </button>
+        </div>
+        <div className="text-center mt-3 text-xs text-neutral-500 font-medium">
+          Press <span className="text-neutral-400 font-bold">Enter</span> to generate
+        </div>
+      </div>
+    </div>
+  );
+};

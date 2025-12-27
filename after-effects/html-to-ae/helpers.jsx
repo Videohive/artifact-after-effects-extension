@@ -39,6 +39,28 @@
     if (!css) return 1;
     var s = String(css).toLowerCase();
     if (s === "transparent") return 0;
+    if (s.charAt(0) === "#") {
+      var hex = s.slice(1);
+      if (hex.length === 4) {
+        var a4 = parseInt(hex.charAt(3) + hex.charAt(3), 16);
+        if (!isNaN(a4)) return a4 / 255;
+      }
+      if (hex.length === 8) {
+        var a8 = parseInt(hex.slice(6, 8), 16);
+        if (!isNaN(a8)) return a8 / 255;
+      }
+      return 1;
+    }
+    var slash = s.match(/\/\s*([0-9.]+%?)/);
+    if (slash && slash[1]) {
+      var raw = slash[1];
+      if (raw.indexOf("%") > -1) {
+        var pct = parseFloat(raw);
+        if (!isNaN(pct)) return Math.max(0, Math.min(1, pct / 100));
+      }
+      var num = parseFloat(raw);
+      if (!isNaN(num)) return Math.max(0, Math.min(1, num));
+    }
     if (s.indexOf("rgba") === 0 || s.indexOf("hsla") === 0) {
       var m = s.match(/[\d.]+/g);
       if (m && m.length >= 4) return Math.max(0, Math.min(1, Number(m[3])));

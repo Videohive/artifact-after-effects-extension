@@ -67,7 +67,12 @@
       var colorProp = effect.property("Shadow Color") || effect.property("Color");
       if (colorProp) colorProp.setValue(parseCssColor(color));
       var opacityProp = effect.property("Opacity");
-      if (opacityProp) opacityProp.setValue(Math.round(parseCssAlpha(color) * 100));
+      if (opacityProp) {
+        var alpha = parseCssAlpha(color);
+        var maxOpacity = opacityProp.maxValue;
+        if (!isFinite(maxOpacity) || maxOpacity <= 0) maxOpacity = 100;
+        opacityProp.setValue(Math.round(alpha * maxOpacity));
+      }
       var directionProp = effect.property("Direction");
       if (directionProp) directionProp.setValue(direction);
       var distanceProp = effect.property("Distance");

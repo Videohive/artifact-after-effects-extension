@@ -189,7 +189,7 @@
       ) {
         var bgBBox = getLocalBBox(node, origin);
         bgShape = createRectShape(comp, node, bgBBox);
-        if (CFG.placeShapesBelowChildren) bgShape.moveToEnd();
+        // Background is created before children, so it will already sit below them.
         if (parentLayer) bgShape.parent = parentLayer;
         applyDropShadow(bgShape, node.style);
       }

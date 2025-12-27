@@ -559,14 +559,59 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
    - Prefer scale, positioning, and contrast over heavy shadows.
    - ::before and ::after are encouraged for "fine details" (hairlines, coordinates, UI markers).
 
-3. **SVG DESIGN LAYER**
-   - You MAY use inline SVG for:
-     - Background shapes
-     - Section dividers
-     - Abstract patterns
-     - Accent graphics
-   - SVG colors MUST use CSS variables only.
-   - SVG is a design tool, not decoration.
+3. **SVG DESIGN LAYER (ART-DIRECTED, CONTEXT-AWARE)**
+   - Treat SVG as **primary art direction**, like a studio Illustrator file exported to code.
+   - SVG must look **commissioned**, not “stock”, not “UI garnish”.
+   - Every SVG element must have a **reason tied to TOPIC**:
+     - Extract 2–3 visual metaphors from the TOPIC (e.g., signal/noise, tension/release, craft/precision, nature/structure)
+     - Encode them into shapes, rhythm, and composition (not literal icons unless the topic requires it).
+
+   **AESTHETIC RULES (HIGH-END STUDIO QUALITY)**
+   - Prefer **graphic design primitives**:
+     - Bold geometric silhouettes, cropped forms, oversized fields, cutouts
+     - Tension lines, coordinates, measurement ticks, registration marks
+     - Editorial dividers, modular grids, poster-like slabs
+   - Avoid generic patterns:
+     - No random blobs, no wavy hero lines, no “tech circuit” clichés, no dribbble gradients.
+   - Use **intentional imperfection** when relevant:
+     - Slight misregistration, asymmetric balance, micro-tilts, purposeful crop
+     - But never messy: it’s controlled craft.
+
+   **SYSTEM BEHAVIOR**
+   - Build a **cohesive motif system** across slides:
+     - Define 1–2 recurring SVG “motifs” (e.g., corner marks + orbit arcs; or cutout windows + hairline grid)
+     - Vary scale, crop, and placement per slide so layouts stay unique but related.
+   - Each slide must include **at least one SVG anchor**:
+     - A large vector field, a strong divider, or a signature mark that competes with typography (in a good way).
+
+   **COMPOSITION & LAYERING (EDITORIAL)**
+   - SVG should integrate with layout:
+     - Use overlap with type blocks (behind / intersect / frame)
+     - Use masks/clipPaths for **structured cutouts** (windows, slices, portals), not decorative clipping.
+   - Use depth via:
+     - Layer order, scale contrast, negative space, hairlines—**not shadows**.
+
+   **TECHNICAL CONSTRAINTS (STRICT)**
+   - SVG must be **inline** and authored cleanly (no embedded images, no base64).
+   - Use **CSS variables only** for fills/strokes:
+     - fill="var(--brand-color)" / stroke="var(--text-secondary)" etc.
+     - No hardcoded hex in SVG.
+   - Prefer strokes with:
+     - vector-effect="non-scaling-stroke" for hairlines when scaling is used.
+     - stroke-linecap/linejoin chosen intentionally (round for organic, square for mechanical).
+   - Keep SVG lightweight:
+     - Avoid excessive path noise. Use fewer, stronger paths.
+     - If you need texture, imply it with sparse marks (ticks, dots, short dashes), not full noise fields.
+
+   **FORBIDDEN / ANTI-PATTERNS**
+   - No icon packs, no emoji-like pictograms, no literal illustrations unless TOPIC demands it.
+   - No “decorative background squiggles”.
+   - No gradients unless they are conceptually essential and still feel premium + restrained.
+   - No blend modes reliance (mix-blend-mode is forbidden anyway).
+
+   **QUALITY BAR**
+   - Ask internally: “Would this pass as a studio artboard from an art director?”
+   - If the SVG doesn’t add meaning, remove it or redesign it.
 
 4. **IMAGES**
    - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.
@@ -608,28 +653,53 @@ HARD CONSTRAINT: TEXT ORIENTATION (NON-NEGOTIABLE)
 PHASE 4: TECHNICAL EXECUTION
 
 1. **OUTPUT**
-   - Return a SINGLE HTML block with embedded CSS.
-   - Include a complete HTML document with <head> and <body>.
-   - In <head>, include:
-     - <title> with a generated project name derived from the TOPIC.
-     - <meta name="project-title" content="..."> matching the title.
-     - <meta name="tags" content="tag1, tag2, tag3, ..."> with 20 concise tags.
-     - <meta name="keywords" content="same as tags">.
+- Return a SINGLE HTML block with embedded CSS.
+- Include a complete HTML document with <html>, <head>, and <body>.
+- Output ONLY raw HTML (no markdown, no explanations, no comments).
+
+- In <head>, include:
+  - <title>
+    • Stock-ready Motion Template name derived from the TOPIC
+    • English only
+    • SEO-friendly and appropriate for Motion Array, VideoHive, Adobe Stock
+    • Clear commercial intent (opener, promo, slideshow, titles, etc.)
+  - <meta name="project-title" content="...">
+    • Must EXACTLY match the <title>
+  - <meta name="tags" content="tag1, tag2, tag3, ...">
+    • EXACTLY 20 concise SEO tags
+    • lowercase
+    • comma-separated
+    • no duplicates
+    • avoid filler words
+    • optimized for motion templates and stock search
+  - <meta name="keywords" content="same as tags">
+    • Must be IDENTICAL to the tags list (same order, same commas)
+  - <meta name="description" content="...">
+    • Clear SEO-friendly 1–2 sentence summary
+    • 120–160 characters (target range)
+    • Describe what the template is and how it’s used
+    • Include primary keywords naturally, no stuffing
 
 2. **LAYOUT**
-   - Width: 100vw
-   - Height: 56.25vw (16:9)
-   - Slides must be visible by default with no user interaction.
-   - Do NOT use radio inputs or CSS that hides slides by default (no opacity: 0 or visibility: hidden on .slide).
-   - **PRO DIRECTION:** Do not feel constrained by standard flow. Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the "web-page" feel. 
-   - Feel free to use negative margins, calc-based offsets, and intentional overlapping to achieve a high-end editorial composition.
+- Width: 100vw
+- Height: 56.25vw (16:9)
+- Slides must be visible by default with no user interaction.
+- Do NOT use radio inputs or CSS that hides slides by default
+  (no opacity: 0 or visibility: hidden on .slide).
+- **PRO DIRECTION:**
+  - Do not feel constrained by standard flow.
+  - Use any combination of CSS Grid, Flexbox, and Absolute Positioning
+    to break the “web-page” feel.
+  - Feel free to use negative margins, calc-based offsets,
+    and intentional overlapping for high-end editorial composition.
 
 3. **CREATIVE MODE**
-   - Bolder is better. Aim for a layout that looks like a custom-coded site, not a CMS template.
-   - If the topic allows:
-     - Prefer bold compositions.
-     - Slight asymmetry > perfect symmetry.
-     - Avoid template-looking layouts.
+- Bolder is better.
+- Aim for a layout that looks like a custom-coded site, not a CMS template.
+- If the topic allows:
+  - Prefer bold compositions.
+  - Slight asymmetry > perfect symmetry.
+  - Avoid template-looking layouts.
 
 PHASE 5: GENERATION
 

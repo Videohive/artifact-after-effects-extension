@@ -126,13 +126,15 @@ const parseHeadMetadata = (headHtml: string) => {
   );
   const metaTitle = doc.querySelector('meta[name="project-title"]') as HTMLMetaElement | null;
   const metaTags = doc.querySelector('meta[name="tags"]') as HTMLMetaElement | null;
+  const metaDescription = doc.querySelector('meta[name="description"]') as HTMLMetaElement | null;
   const titleEl = doc.querySelector('title');
   const title = (metaTitle?.content || titleEl?.textContent || '').trim();
   const tags = (metaTags?.content || '').trim();
-  return { title, tags };
+  const description = (metaDescription?.content || '').trim();
+  return { title, tags, description };
 };
 
-const updateHeadMetadata = (headHtml: string, title: string, tags: string) => {
+const updateHeadMetadata = (headHtml: string, title: string, tags: string, description: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
     `<html><head>${headHtml}</head><body></body></html>`,
@@ -141,6 +143,7 @@ const updateHeadMetadata = (headHtml: string, title: string, tags: string) => {
   const head = doc.head;
   const titleValue = title.trim();
   const tagsValue = normalizeTags(tags);
+  const descriptionValue = description.trim();
   const titleEl = head.querySelector('title') || head.appendChild(doc.createElement('title'));
   titleEl.textContent = titleValue;
 
@@ -157,6 +160,7 @@ const updateHeadMetadata = (headHtml: string, title: string, tags: string) => {
   ensureMeta('project-title', titleValue);
   ensureMeta('tags', tagsValue);
   ensureMeta('keywords', tagsValue);
+  ensureMeta('description', descriptionValue);
   return head.innerHTML;
 };
 
@@ -184,10 +188,13 @@ export const SlideGenerator: React.FC = () => {
   const [exportDuration, setExportDuration] = useState<number>(10);
   const [projectTitle, setProjectTitle] = useState('');
   const [projectTags, setProjectTags] = useState('');
+  const [projectDescription, setProjectDescription] = useState('');
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingTags, setEditingTags] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [tagsDraft, setTagsDraft] = useState('');
+  const [descriptionDraft, setDescriptionDraft] = useState('');
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -220,7 +227,7 @@ export const SlideGenerator: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const { title, tags } = parseHeadMetadata(headContent);
+    const { title, tags, description } = parseHeadMetadata(headContent);
     if (!editingTitle) {
       setProjectTitle(title);
       setTitleDraft(title);
@@ -229,7 +236,11 @@ export const SlideGenerator: React.FC = () => {
       setProjectTags(tags);
       setTagsDraft(tags);
     }
-  }, [headContent, editingTitle, editingTags]);
+    if (!editingDescription) {
+      setProjectDescription(description);
+      setDescriptionDraft(description);
+    }
+  }, [headContent, editingTitle, editingTags, editingDescription]);
 
   const parseAndSetHtml = (html: string) => {
     const parser = new DOMParser();
@@ -589,8 +600,8 @@ export const SlideGenerator: React.FC = () => {
     setTimeout(() => setCopiedHtml(false), 2000);
   };
 
-  const applyHeadUpdates = (nextTitle: string, nextTags: string) => {
-    const newHead = updateHeadMetadata(headContent, nextTitle, nextTags);
+  const applyHeadUpdates = (nextTitle: string, nextTags: string, nextDescription: string) => {
+    const newHead = updateHeadMetadata(headContent, nextTitle, nextTags, nextDescription);
     setHeadContent(newHead);
     if (viewMode === 'code' && !isCodeDirty) {
       setCodeDraft(getAllSlidesHtml(newHead));
@@ -601,14 +612,21 @@ export const SlideGenerator: React.FC = () => {
     const nextTitle = titleDraft.trim();
     setEditingTitle(false);
     setProjectTitle(nextTitle);
-    applyHeadUpdates(nextTitle, projectTags);
+    applyHeadUpdates(nextTitle, projectTags, projectDescription);
   };
 
   const saveProjectTags = () => {
     const nextTags = normalizeTags(tagsDraft);
     setEditingTags(false);
     setProjectTags(nextTags);
-    applyHeadUpdates(projectTitle, nextTags);
+    applyHeadUpdates(projectTitle, nextTags, projectDescription);
+  };
+
+  const saveProjectDescription = () => {
+    const nextDescription = descriptionDraft.trim();
+    setEditingDescription(false);
+    setProjectDescription(nextDescription);
+    applyHeadUpdates(projectTitle, projectTags, nextDescription);
   };
 
   return (
@@ -679,6 +697,40 @@ export const SlideGenerator: React.FC = () => {
                     className="text-left text-sm text-neutral-300 hover:text-indigo-300"
                   >
                     {projectTags || 'Add tags'}
+                  </button>
+                )}
+              </div>
+              <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Description</div>
+              <div className="mt-1">
+                {editingDescription ? (
+                  <textarea
+                    value={descriptionDraft}
+                    onChange={(e) => setDescriptionDraft(e.target.value)}
+                    onBlur={saveProjectDescription}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.currentTarget.blur();
+                      }
+                      if (e.key === 'Escape') {
+                        setDescriptionDraft(projectDescription);
+                        setEditingDescription(false);
+                      }
+                    }}
+                    rows={3}
+                    placeholder="Short SEO description for stock listing"
+                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDescriptionDraft(projectDescription);
+                      setEditingDescription(true);
+                    }}
+                    className="text-left text-sm text-neutral-300 hover:text-indigo-300"
+                  >
+                    {projectDescription || 'Add description'}
                   </button>
                 )}
               </div>

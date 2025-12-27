@@ -34,11 +34,104 @@ import { AEBounds, AENode, AERenderHints, AEExportOptions, AESlideExport } from 
 const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
   el instanceof (win as Window & typeof globalThis).HTMLElement;
 
+const getSvgViewport = (svgEl: SVGElement): { width: number; height: number } | null => {
+  const viewBox = (svgEl as SVGSVGElement).viewBox?.baseVal;
+  if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+    return { width: viewBox.width, height: viewBox.height };
+  }
+
+  const widthAttr = svgEl.getAttribute('width');
+  const heightAttr = svgEl.getAttribute('height');
+  const width = widthAttr ? parseFloat(widthAttr) : NaN;
+  const height = heightAttr ? parseFloat(heightAttr) : NaN;
+  if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+    return { width, height };
+  }
+
+  const rect = svgEl.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    return { width: rect.width, height: rect.height };
+  }
+
+  try {
+    const bbox = (svgEl as SVGGraphicsElement).getBBox();
+    if (bbox.width > 0 && bbox.height > 0) {
+      return { width: bbox.width, height: bbox.height };
+    }
+  } catch {
+    // Ignore getBBox failures on detached or non-rendered SVGs.
+  }
+
+  return null;
+};
+
+const sanitizePathPercentages = (d: string, width: number, height: number): string => {
+  if (!/%/.test(d) || !(width > 0) || !(height > 0)) return d;
+
+  const commandMap: Record<string, Array<'x' | 'y' | 'none'>> = {
+    M: ['x', 'y'],
+    L: ['x', 'y'],
+    T: ['x', 'y'],
+    S: ['x', 'y', 'x', 'y'],
+    Q: ['x', 'y', 'x', 'y'],
+    C: ['x', 'y', 'x', 'y', 'x', 'y'],
+    H: ['x'],
+    V: ['y'],
+    A: ['x', 'y', 'none', 'none', 'none', 'x', 'y']
+  };
+
+  const tokens: string[] = [];
+  const re = /([a-zA-Z])|([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?%?)/g;
+  let match: RegExpExecArray | null;
+  let cmd = '';
+  let paramIndex = 0;
+
+  while ((match = re.exec(d)) !== null) {
+    if (match[1]) {
+      cmd = match[1];
+      paramIndex = 0;
+      tokens.push(cmd);
+      continue;
+    }
+
+    const raw = match[2];
+    if (!raw) continue;
+
+    let value = raw;
+    if (raw.endsWith('%')) {
+      const pct = parseFloat(raw);
+      const pattern = commandMap[cmd.toUpperCase()] || [];
+      const axis = pattern.length ? pattern[paramIndex % pattern.length] : 'none';
+      const basis = axis === 'x' ? width : axis === 'y' ? height : 1;
+      if (Number.isFinite(pct)) {
+        value = String((pct / 100) * basis);
+      } else {
+        value = String(parseFloat(raw));
+      }
+    }
+
+    tokens.push(value);
+    paramIndex += 1;
+  }
+
+  return tokens.join(' ');
+};
+
 const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
   const clone = svgEl.cloneNode(true) as SVGElement;
-  const selector = 'circle, rect, line, path, ellipse, polygon, polyline';
+  const selector = 'circle, rect, line, path, ellipse, polygon, polyline, text';
   const originals = Array.from(svgEl.querySelectorAll(selector));
   const copies = Array.from(clone.querySelectorAll(selector));
+
+  const viewport = getSvgViewport(svgEl);
+  if (viewport) {
+    const paths = Array.from(clone.querySelectorAll('path'));
+    for (const path of paths) {
+      const d = path.getAttribute('d');
+      if (!d || d.indexOf('%') === -1) continue;
+      path.setAttribute('d', sanitizePathPercentages(d, viewport.width, viewport.height));
+    }
+  }
 
   originals.forEach((original, index) => {
     const copy = copies[index];
@@ -52,14 +145,17 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
     const opacity = style.getPropertyValue('opacity') || style.opacity;
     const strokeOpacity = style.getPropertyValue('stroke-opacity') || (style as any).strokeOpacity;
     const fillOpacity = style.getPropertyValue('fill-opacity') || (style as any).fillOpacity;
+    const fontFamily = style.getPropertyValue('font-family') || style.fontFamily;
+    const fontSize = style.getPropertyValue('font-size') || style.fontSize;
+    const fontWeight = style.getPropertyValue('font-weight') || style.fontWeight;
+    const fontStyle = style.getPropertyValue('font-style') || style.fontStyle;
+    const letterSpacing = style.getPropertyValue('letter-spacing') || style.letterSpacing;
+    const textAnchor = style.getPropertyValue('text-anchor') || (style as any).textAnchor;
+    const dominantBaseline =
+      style.getPropertyValue('dominant-baseline') || (style as any).dominantBaseline;
 
-    const origStroke = copy.getAttribute('stroke');
-    const origFill = copy.getAttribute('fill');
-    const shouldOverrideStroke = !origStroke || origStroke.indexOf('var(') !== -1;
-    const shouldOverrideFill = !origFill || origFill.indexOf('var(') !== -1;
-
-    if (shouldOverrideStroke && stroke) copy.setAttribute('stroke', stroke);
-    if (shouldOverrideFill && fill) copy.setAttribute('fill', fill);
+    if (stroke) copy.setAttribute('stroke', stroke);
+    if (fill) copy.setAttribute('fill', fill);
     if (!copy.getAttribute('stroke-width') && strokeWidth)
       copy.setAttribute('stroke-width', strokeWidth);
     if (!copy.getAttribute('opacity') && opacity) copy.setAttribute('opacity', opacity);
@@ -67,6 +163,20 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
       copy.setAttribute('stroke-opacity', strokeOpacity);
     if (!copy.getAttribute('fill-opacity') && fillOpacity)
       copy.setAttribute('fill-opacity', fillOpacity);
+
+    if (!copy.getAttribute('font-family') && fontFamily)
+      copy.setAttribute('font-family', fontFamily);
+    if (!copy.getAttribute('font-size') && fontSize) copy.setAttribute('font-size', fontSize);
+    if (!copy.getAttribute('font-weight') && fontWeight)
+      copy.setAttribute('font-weight', fontWeight);
+    if (!copy.getAttribute('font-style') && fontStyle)
+      copy.setAttribute('font-style', fontStyle);
+    if (!copy.getAttribute('letter-spacing') && letterSpacing)
+      copy.setAttribute('letter-spacing', letterSpacing);
+    if (!copy.getAttribute('text-anchor') && textAnchor)
+      copy.setAttribute('text-anchor', textAnchor);
+    if (!copy.getAttribute('dominant-baseline') && dominantBaseline)
+      copy.setAttribute('dominant-baseline', dominantBaseline);
   });
 
   return clone.outerHTML;

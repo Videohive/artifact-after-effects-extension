@@ -21,8 +21,8 @@
 
   function createPrecompLayer(node, parentComp, localBBox, rootData) {
     var preName = safeName(node.name || "Precomp");
-    var w = Math.max(1, Math.round(localBBox.w));
-    var h = Math.max(1, Math.round(localBBox.h));
+    var w = Math.min(30000, Math.max(4, Math.round(localBBox.w)));
+    var h = Math.min(30000, Math.max(4, Math.round(localBBox.h)));
 
     var precomp = app.project.items.addComp(
       preName,

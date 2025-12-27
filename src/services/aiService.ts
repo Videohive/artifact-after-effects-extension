@@ -116,7 +116,6 @@ const createResponseText = async (provider: AiProviderName, prompt: string, temp
 };
 
 const FALLBACK_IMAGE_URL = 'https://placehold.co/1920x1080/1a1a1a/666666?text=Image';
-const imageSearchCache = new Map<string, string[]>();
 
 // Helper to safely extract section from AI response
 const extractSection = (html: string): string => {
@@ -297,25 +296,6 @@ const searchWithVariants = async (
   return await searchFn(randomGeneric);
 };
 
-const pickFromCache = (cacheKey: string, usedUrls: Set<string>): string | null => {
-  const cached = imageSearchCache.get(cacheKey);
-  if (!cached || cached.length === 0) return null;
-
-  const available = cached.filter(url => !usedUrls.has(url));
-  const pool = available.length > 0 ? available : cached;
-  const randomIndex = Math.floor(Math.random() * pool.length);
-  const url = pool[randomIndex];
-  if (url) usedUrls.add(url);
-  return url || null;
-};
-
-const writeCache = (cacheKey: string, urls: string[]) => {
-  if (!urls || urls.length === 0) return;
-  const existing = imageSearchCache.get(cacheKey) || [];
-  const merged = [...new Set([...existing, ...urls])];
-  imageSearchCache.set(cacheKey, merged);
-};
-
 // Pexels API Integration
 async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: string): Promise<string> {
   const apiKey = getPexelsApiKey();
@@ -327,10 +307,6 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
 
   const searchPexels = async (query: string): Promise<string | null> => {
     try {
-      const cacheKey = `pexels::${query}::${color || ''}`;
-      const cachedPick = pickFromCache(cacheKey, usedUrls);
-      if (cachedPick) return cachedPick;
-
       const colorParam = color ? `&color=${encodeURIComponent(color)}` : '';
       const response = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=40&orientation=landscape&size=large${colorParam}`, {
         headers: { Authorization: apiKey }
@@ -338,11 +314,6 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
       if (!response.ok) return null;
       const data = await response.json();
       if (data.photos && data.photos.length > 0) {
-        const urls = data.photos
-          .map((p: any) => p.src?.large2x || p.src?.large)
-          .filter(Boolean);
-        writeCache(cacheKey, urls);
-
         // Filter out photos that have already been used
         const availablePhotos = data.photos.filter((p: any) =>
           !usedUrls.has(p.src.large2x) && !usedUrls.has(p.src.large)
@@ -379,10 +350,6 @@ async function fetchUnsplashImage(term: string, usedUrls: Set<string>): Promise<
 
   const searchUnsplash = async (query: string): Promise<string | null> => {
     try {
-      const cacheKey = `unsplash::${query}`;
-      const cachedPick = pickFromCache(cacheKey, usedUrls);
-      if (cachedPick) return cachedPick;
-
       const response = await fetch(
         `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=30&orientation=landscape`,
         { headers: { Authorization: `Client-ID ${apiKey}` } }
@@ -390,11 +357,6 @@ async function fetchUnsplashImage(term: string, usedUrls: Set<string>): Promise<
       if (!response.ok) return null;
       const data = await response.json();
       if (data.results && data.results.length > 0) {
-        const urls = data.results
-          .map((p: any) => p.urls?.regular || p.urls?.full)
-          .filter(Boolean);
-        writeCache(cacheKey, urls);
-
         const available = data.results.filter((p: any) =>
           !usedUrls.has(p.urls?.regular) && !usedUrls.has(p.urls?.full)
         );
@@ -425,21 +387,12 @@ async function fetchPixabayImage(term: string, usedUrls: Set<string>): Promise<s
 
   const searchPixabay = async (query: string): Promise<string | null> => {
     try {
-      const cacheKey = `pixabay::${query}`;
-      const cachedPick = pickFromCache(cacheKey, usedUrls);
-      if (cachedPick) return cachedPick;
-
       const response = await fetch(
         `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(query)}&image_type=photo&orientation=horizontal&per_page=40&safesearch=true`
       );
       if (!response.ok) return null;
       const data = await response.json();
       if (data.hits && data.hits.length > 0) {
-        const urls = data.hits
-          .map((p: any) => p.largeImageURL || p.webformatURL)
-          .filter(Boolean);
-        writeCache(cacheKey, urls);
-
         const available = data.hits.filter((p: any) =>
           !usedUrls.has(p.largeImageURL) && !usedUrls.has(p.webformatURL)
         );
@@ -656,6 +609,12 @@ PHASE 4: TECHNICAL EXECUTION
 
 1. **OUTPUT**
    - Return a SINGLE HTML block with embedded CSS.
+   - Include a complete HTML document with <head> and <body>.
+   - In <head>, include:
+     - <title> with a generated project name derived from the TOPIC.
+     - <meta name="project-title" content="..."> matching the title.
+     - <meta name="tags" content="tag1, tag2, tag3, ..."> with 20 concise tags.
+     - <meta name="keywords" content="same as tags">.
 
 2. **LAYOUT**
    - Width: 100vw

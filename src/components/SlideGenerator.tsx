@@ -110,6 +110,56 @@ const sanitizeLayout = (root: ParentNode) => {
   fixTextUrlBlocks(root);
 };
 
+const normalizeTags = (value: string) => {
+  const parts = value
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  return parts.join(', ');
+};
+
+const parseHeadMetadata = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const metaTitle = doc.querySelector('meta[name="project-title"]') as HTMLMetaElement | null;
+  const metaTags = doc.querySelector('meta[name="tags"]') as HTMLMetaElement | null;
+  const titleEl = doc.querySelector('title');
+  const title = (metaTitle?.content || titleEl?.textContent || '').trim();
+  const tags = (metaTags?.content || '').trim();
+  return { title, tags };
+};
+
+const updateHeadMetadata = (headHtml: string, title: string, tags: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const head = doc.head;
+  const titleValue = title.trim();
+  const tagsValue = normalizeTags(tags);
+  const titleEl = head.querySelector('title') || head.appendChild(doc.createElement('title'));
+  titleEl.textContent = titleValue;
+
+  const ensureMeta = (name: string, content: string) => {
+    let meta = head.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
+    if (!meta) {
+      meta = doc.createElement('meta');
+      meta.setAttribute('name', name);
+      head.appendChild(meta);
+    }
+    meta.setAttribute('content', content);
+  };
+
+  ensureMeta('project-title', titleValue);
+  ensureMeta('tags', tagsValue);
+  ensureMeta('keywords', tagsValue);
+  return head.innerHTML;
+};
+
 export const SlideGenerator: React.FC = () => {
   const [topic, setTopic] = useState('');
   const [headContent, setHeadContent] = useState<string>('');
@@ -128,14 +178,58 @@ export const SlideGenerator: React.FC = () => {
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [imageProvider, setImageProvider] = useState<ImageProviderName>('random');
   const [codeDraft, setCodeDraft] = useState('');
+  const [isCodeDirty, setIsCodeDirty] = useState(false);
   const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
   const [exportFps, setExportFps] = useState<number>(30);
   const [exportDuration, setExportDuration] = useState<number>(10);
+  const [projectTitle, setProjectTitle] = useState('');
+  const [projectTags, setProjectTags] = useState('');
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingTags, setEditingTags] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [tagsDraft, setTagsDraft] = useState('');
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const previewStageRef = useRef<HTMLDivElement>(null);
   const prevViewModeRef = useRef<'preview' | 'code'>(viewMode);
+
+  useEffect(() => {
+    const container = previewStageRef.current;
+    if (!container) return;
+
+    const aspectRatio = 16 / 9;
+
+    const updateScale = () => {
+      const { width, height } = container.getBoundingClientRect();
+      if (width <= 0 || height <= 0) return;
+      let nextWidth = width;
+      let nextHeight = width / aspectRatio;
+      if (nextHeight > height) {
+        nextHeight = height;
+        nextWidth = height * aspectRatio;
+      }
+      setPreviewSize({ width: nextWidth, height: nextHeight });
+    };
+
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const { title, tags } = parseHeadMetadata(headContent);
+    if (!editingTitle) {
+      setProjectTitle(title);
+      setTitleDraft(title);
+    }
+    if (!editingTags) {
+      setProjectTags(tags);
+      setTagsDraft(tags);
+    }
+  }, [headContent, editingTitle, editingTags]);
 
   const parseAndSetHtml = (html: string) => {
     const parser = new DOMParser();
@@ -148,9 +242,10 @@ export const SlideGenerator: React.FC = () => {
     // Inject global reset for strict 16:9
     const style = doc.createElement('style');
     style.innerHTML = `
-      body { margin: 0; padding: 0; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; } 
-      /* Ensure slides are strictly sized relative to viewport width of the iframe */
-      .slide { width: 100vw !important; height: 56.25vw !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
+      html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+      body { background: #000; display: flex; align-items: center; justify-content: center; }
+      /* Ensure slides fit the iframe bounds (container already keeps 16:9). */
+      .slide { width: 100% !important; height: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
       /* Fallback styling for images */
       img {
         /* Hide alt text by making it transparent */
@@ -438,13 +533,13 @@ export const SlideGenerator: React.FC = () => {
     return getSlideHtmlByIndex(currentSlideIndex);
   };
 
-  const getAllSlidesHtml = () => {
+  const getAllSlidesHtml = (headOverride = headContent) => {
      const disableAnimations = !animationsEnabled;
      return `
       <!DOCTYPE html>
       <html>
         <head>
-          ${headContent}
+          ${headOverride}
           ${disableAnimations ? `
           <style>
             /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
@@ -462,10 +557,16 @@ export const SlideGenerator: React.FC = () => {
   };
 
   useEffect(() => {
-    if (viewMode === 'code') {
+    if (viewMode !== 'code') return;
+    if (prevViewModeRef.current !== 'code') {
+      setCodeDraft(getAllSlidesHtml());
+      setIsCodeDirty(false);
+      return;
+    }
+    if (!isCodeDirty) {
       setCodeDraft(getAllSlidesHtml());
     }
-  }, [viewMode, headContent, slides, animationsEnabled]);
+  }, [viewMode, headContent, slides, animationsEnabled, isCodeDirty]);
 
   useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode === 'preview') {
@@ -478,6 +579,7 @@ export const SlideGenerator: React.FC = () => {
 
   const handleCodeChange = (value: string) => {
     setCodeDraft(value);
+    setIsCodeDirty(true);
   };
 
   const handleCopyHtml = async () => {
@@ -487,36 +589,142 @@ export const SlideGenerator: React.FC = () => {
     setTimeout(() => setCopiedHtml(false), 2000);
   };
 
+  const applyHeadUpdates = (nextTitle: string, nextTags: string) => {
+    const newHead = updateHeadMetadata(headContent, nextTitle, nextTags);
+    setHeadContent(newHead);
+    if (viewMode === 'code' && !isCodeDirty) {
+      setCodeDraft(getAllSlidesHtml(newHead));
+    }
+  };
+
+  const saveProjectTitle = () => {
+    const nextTitle = titleDraft.trim();
+    setEditingTitle(false);
+    setProjectTitle(nextTitle);
+    applyHeadUpdates(nextTitle, projectTags);
+  };
+
+  const saveProjectTags = () => {
+    const nextTags = normalizeTags(tagsDraft);
+    setEditingTags(false);
+    setProjectTags(nextTags);
+    applyHeadUpdates(projectTitle, nextTags);
+  };
+
   return (
     <div className="flex flex-col h-full gap-4">
       {/* Main Content Area */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scrollbar" ref={scrollContainerRef}>
-        {slides.length > 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-4 min-h-0">
-             <div className="w-full max-w-6xl flex flex-col gap-4">
-              
-              {/* Slide Preview - Centered */}
-              <div className="relative aspect-video w-full bg-neutral-950 rounded-xl border border-neutral-800 shadow-2xl overflow-hidden group">
-                  {viewMode === 'preview' ? (
-                    <iframe
-                      ref={iframeRef}
-                      srcDoc={getCurrentFullHtml()}
-                      title="Slide Preview"
-                      className="w-full h-full border-0"
-                      sandbox="allow-scripts allow-same-origin" 
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
-                      <textarea
-                        value={codeDraft}
-                        onChange={(e) => handleCodeChange(e.target.value)}
-                        className="w-full h-full bg-transparent text-neutral-300 resize-none focus:outline-none custom-scrollbar"
-                        spellCheck={false}
-                      />
-                    </div>
-                  )}
+      {slides.length > 0 ? (
+        <div className="flex-1 min-h-0 flex flex-col gap-4">
+          <div className="shrink-0 w-full flex justify-center px-4">
+            <div
+              className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4"
+              style={{ width: previewSize.width || '100%' }}
+            >
+              <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Project</div>
+              <div className="mt-2">
+                {editingTitle ? (
+                  <input
+                    value={titleDraft}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onBlur={saveProjectTitle}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      if (e.key === 'Escape') {
+                        setTitleDraft(projectTitle);
+                        setEditingTitle(false);
+                      }
+                    }}
+                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-lg font-semibold text-white focus:border-indigo-500 focus:outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTitleDraft(projectTitle);
+                      setEditingTitle(true);
+                    }}
+                    className="text-left text-lg font-semibold text-white hover:text-indigo-300"
+                  >
+                    {projectTitle || 'Untitled Project'}
+                  </button>
+                )}
               </div>
+              <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Tags</div>
+              <div className="mt-1">
+                {editingTags ? (
+                  <input
+                    value={tagsDraft}
+                    onChange={(e) => setTagsDraft(e.target.value)}
+                    onBlur={saveProjectTags}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      if (e.key === 'Escape') {
+                        setTagsDraft(projectTags);
+                        setEditingTags(false);
+                      }
+                    }}
+                    placeholder="tag1, tag2, tag3"
+                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTagsDraft(projectTags);
+                      setEditingTags(true);
+                    }}
+                    className="text-left text-sm text-neutral-300 hover:text-indigo-300"
+                  >
+                    {projectTags || 'Add tags'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
 
+          <div
+            className="flex-1 min-h-0 overflow-hidden flex flex-col items-center justify-center p-4"
+            ref={previewStageRef}
+          >
+            {/* Slide Preview - Centered */}
+            <div className="w-full max-w-6xl h-full flex items-center justify-center">
+              <div
+                className="relative bg-neutral-950 rounded-xl border border-neutral-800 shadow-2xl overflow-hidden group"
+                style={{
+                  width: previewSize.width || '100%',
+                  height: previewSize.height || '100%'
+                }}
+              >
+                {viewMode === 'preview' ? (
+                  <iframe
+                    ref={iframeRef}
+                    srcDoc={getCurrentFullHtml()}
+                    title="Slide Preview"
+                    className="w-full h-full border-0"
+                    sandbox="allow-scripts allow-same-origin"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
+                    <textarea
+                      value={codeDraft}
+                      onChange={(e) => handleCodeChange(e.target.value)}
+                      className="w-full h-full bg-transparent text-neutral-300 resize-none focus:outline-none custom-scrollbar"
+                      spellCheck={false}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="shrink-0 w-full flex justify-center px-4 pb-4">
+            <div
+              className="flex flex-col gap-3"
+              style={{ width: previewSize.width || '100%' }}
+            >
               {/* Toolbar - Grid Layout for Center Alignment */}
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
                 
@@ -702,8 +910,9 @@ export const SlideGenerator: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-neutral-400 bg-neutral-900/20 border border-neutral-800/50 rounded-2xl border-dashed">
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center p-8 text-neutral-400 bg-neutral-900/20 border border-neutral-800/50 rounded-2xl border-dashed">
             <div className="w-20 h-20 bg-neutral-900 rounded-3xl flex items-center justify-center mb-6 ring-1 ring-neutral-800 shadow-xl shadow-black/50">
               <Presentation className="w-10 h-10 text-indigo-500" />
             </div>
@@ -714,8 +923,7 @@ export const SlideGenerator: React.FC = () => {
               A space where thoughts take shape and ideas become easy to understand.
             </p>
           </div>
-        )}
-      </div>
+      )}
       <iframe
         ref={exportIframeRef}
         title="AE Export Frame"

@@ -291,7 +291,7 @@
     // ============================================================
     if (node.type === "svg") {
       var svgBBox = getLocalBBox(node, origin);
-      layer = createSvgShapeLayer(comp, node, svgBBox);
+      layer = createSvgShapeLayer(comp, node, svgBBox, rootData);
       if (parentLayer) layer.parent = parentLayer;
       applyOpacity(layer, node.style);
       applyBlendMode(layer, node.style);

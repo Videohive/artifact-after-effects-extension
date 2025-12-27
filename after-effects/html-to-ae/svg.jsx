@@ -3,12 +3,22 @@
     function debugLog(msg) {}
   }
 
-  function createSvgShapeLayer(comp, node, localBBox) {
+  function createSvgShapeLayer(comp, node, localBBox, rootData) {
     var layer = comp.layers.addShape();
     layer.name = safeName(node.name || "SVG");
 
     debugLog("SVG: create layer name=" + layer.name + " bbox=" + localBBox.w + "x" + localBBox.h);
     var svgData = parseSvgData(node.content || "");
+    if (svgData && (svgData.width <= 0 || svgData.height <= 0)) {
+      var fallback = getSvgFallbackSize(localBBox, rootData);
+      if (fallback.w > 0 && fallback.h > 0) {
+        // Fallback to source viewport size when SVG lacks viewBox/width/height.
+        svgData.minX = 0;
+        svgData.minY = 0;
+        svgData.width = fallback.w;
+        svgData.height = fallback.h;
+      }
+    }
     debugLog("SVG: parsed viewBox=" + svgData.minX + "," + svgData.minY + " " + svgData.width + "x" + svgData.height + " elements=" + svgData.elements.length);
     if (!svgData || svgData.width <= 0 || svgData.height <= 0) {
       setLayerTransform(layer, localBBox);
@@ -16,6 +26,7 @@
     }
 
     var contents = layer.property("Contents");
+    var scaleData = getSvgScaleData(svgData, localBBox);
     var rootGroup = contents.addProperty("ADBE Vector Group");
     rootGroup.name = "SVG";
 
@@ -26,19 +37,21 @@
       if (!el) continue;
 
       if (el.tag === "circle") {
-        addSvgCircle(rootContents, el.attrs);
+        addSvgCircle(rootContents, el.attrs, svgData, scaleData);
       } else if (el.tag === "ellipse") {
-        addSvgEllipse(rootContents, el.attrs);
+        addSvgEllipse(rootContents, el.attrs, svgData, scaleData);
       } else if (el.tag === "rect") {
-        addSvgRect(rootContents, el.attrs);
+        addSvgRect(rootContents, el.attrs, svgData, scaleData);
       } else if (el.tag === "line") {
-        addSvgLine(rootContents, el.attrs);
+        addSvgLine(rootContents, el.attrs, svgData, scaleData);
       } else if (el.tag === "polyline") {
-        addSvgPolyline(rootContents, el.attrs, false);
+        addSvgPolyline(rootContents, el.attrs, false, svgData, scaleData);
       } else if (el.tag === "polygon") {
-        addSvgPolyline(rootContents, el.attrs, true);
+        addSvgPolyline(rootContents, el.attrs, true, svgData, scaleData);
       } else if (el.tag === "path") {
-        addSvgPath(rootContents, el.attrs);
+        addSvgPath(rootContents, el.attrs, svgData, scaleData);
+      } else if (el.tag === "text") {
+        addSvgTextLayer(comp, layer, el, svgData, localBBox);
       }
     }
 
@@ -60,6 +73,12 @@
       tr.property("Scale").setValue([scaleX * 100, scaleY * 100]);
     } else {
       tr.property("Scale").setValue([scale * 100, scale * 100]);
+    }
+
+    if (svgData && svgData.textElements && svgData.textElements.length) {
+      for (var t = 0; t < svgData.textElements.length; t++) {
+        addSvgTextLayer(comp, layer, svgData.textElements[t], svgData, localBBox);
+      }
     }
 
     setLayerTopLeft(layer, localBBox);
@@ -110,6 +129,8 @@
     collectSvgElements(svg, "polyline", out.elements);
     collectSvgElements(svg, "polygon", out.elements);
     collectSvgElements(svg, "path", out.elements);
+    out.textElements = [];
+    collectSvgTextElements(svg, out.textElements);
 
     debugLog("SVG: elements=" + out.elements.length);
     return out;
@@ -133,15 +154,43 @@
     return attrs;
   }
 
+  function collectSvgTextElements(svg, list) {
+    if (!svg) return;
+    var re = /<text\b[\s\S]*?<\/text>/gi;
+    var match = null;
+    while ((match = re.exec(svg)) !== null) {
+      var block = match[0];
+      var openTagMatch = block.match(/<text\b[^>]*>/i);
+      var openTag = openTagMatch ? openTagMatch[0] : "<text>";
+      var attrs = parseSvgAttributes(openTag);
+      var textContent = block.replace(/<text\b[^>]*>/i, "").replace(/<\/text>/i, "");
+      textContent = stripSvgTags(textContent);
+      list.push({ tag: "text", attrs: attrs, text: decodeSvgEntities(textContent) });
+    }
+  }
+
+  function stripSvgTags(text) {
+    return String(text).replace(/<[^>]*>/g, "");
+  }
+
+  function decodeSvgEntities(text) {
+    return String(text)
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, "\"")
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  }
+
   function parseNumber(value, fallback) {
     var n = parseFloat(value);
     return isNaN(n) ? fallback : n;
   }
 
-  function addSvgCircle(parentContents, attrs) {
-    var cx = parseNumber(attrs.cx, 0);
-    var cy = parseNumber(attrs.cy, 0);
-    var r = parseNumber(attrs.r, 0);
+  function addSvgCircle(parentContents, attrs, svgData, scaleData) {
+    var cx = parseSvgLength(attrs.cx, svgData.width, 0);
+    var cy = parseSvgLength(attrs.cy, svgData.height, 0);
+    var r = parseSvgLength(attrs.r, Math.min(svgData.width, svgData.height), 0);
     if (r <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
@@ -155,11 +204,11 @@
     applySvgPaint(grpContents, attrs, false);
   }
 
-  function addSvgEllipse(parentContents, attrs) {
-    var cx = parseNumber(attrs.cx, 0);
-    var cy = parseNumber(attrs.cy, 0);
-    var rx = parseNumber(attrs.rx, 0);
-    var ry = parseNumber(attrs.ry, 0);
+  function addSvgEllipse(parentContents, attrs, svgData, scaleData) {
+    var cx = parseSvgLength(attrs.cx, svgData.width, 0);
+    var cy = parseSvgLength(attrs.cy, svgData.height, 0);
+    var rx = parseSvgLength(attrs.rx, svgData.width, 0);
+    var ry = parseSvgLength(attrs.ry, svgData.height, 0);
     if (rx <= 0 || ry <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
@@ -173,11 +222,11 @@
     applySvgPaint(grpContents, attrs, false);
   }
 
-  function addSvgRect(parentContents, attrs) {
-    var x = parseNumber(attrs.x, 0);
-    var y = parseNumber(attrs.y, 0);
-    var w = parseNumber(attrs.width, 0);
-    var h = parseNumber(attrs.height, 0);
+  function addSvgRect(parentContents, attrs, svgData, scaleData) {
+    var x = parseSvgLength(attrs.x, svgData.width, 0);
+    var y = parseSvgLength(attrs.y, svgData.height, 0);
+    var w = parseSvgLength(attrs.width, svgData.width, 0);
+    var h = parseSvgLength(attrs.height, svgData.height, 0);
     if (w <= 0 || h <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
@@ -196,11 +245,11 @@
     applySvgPaint(grpContents, attrs, true);
   }
 
-  function addSvgLine(parentContents, attrs) {
-    var x1 = parseNumber(attrs.x1, 0);
-    var y1 = parseNumber(attrs.y1, 0);
-    var x2 = parseNumber(attrs.x2, 0);
-    var y2 = parseNumber(attrs.y2, 0);
+  function addSvgLine(parentContents, attrs, svgData, scaleData) {
+    var x1 = parseSvgLength(attrs.x1, svgData.width, 0);
+    var y1 = parseSvgLength(attrs.y1, svgData.height, 0);
+    var x2 = parseSvgLength(attrs.x2, svgData.width, 0);
+    var y2 = parseSvgLength(attrs.y2, svgData.height, 0);
 
     var grp = parentContents.addProperty("ADBE Vector Group");
     grp.name = "Line";
@@ -226,8 +275,8 @@
     applySvgPaint(grpContents, attrs, false);
   }
 
-  function addSvgPolyline(parentContents, attrs, closed) {
-    var points = parseSvgPoints(attrs.points || "");
+  function addSvgPolyline(parentContents, attrs, closed, svgData, scaleData) {
+    var points = parseSvgPoints(attrs.points || "", svgData.width, svgData.height);
     if (!points.length) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
@@ -245,12 +294,12 @@
     applySvgPaint(grpContents, attrs, closed);
   }
 
-  function addSvgPath(parentContents, attrs) {
+  function addSvgPath(parentContents, attrs, svgData, scaleData) {
     var d = attrs.d;
     if (!d) return;
 
     debugLog("SVG: path d len=" + String(d).length + " transform=" + (attrs.transform ? "yes" : "no"));
-    var subpaths = parseSvgPathData(d);
+    var subpaths = parseSvgPathData(d, svgData);
     var tr = parseSvgTransform(attrs.transform);
     if (tr) {
       for (var t = 0; t < subpaths.length; t++) {
@@ -261,6 +310,22 @@
     for (var i = 0; i < subpaths.length; i++) {
       var sp = subpaths[i];
       if (!sp || !sp.points.length) continue;
+      if (AE2_DEBUG) {
+        var p0 = sp.points[0];
+        var pLast = sp.points[sp.points.length - 1];
+        debugLog(
+          "SVG: path points=" +
+            sp.points.length +
+            " first=" +
+            (p0 ? p0[0] + "," + p0[1] : "n/a") +
+            " last=" +
+            (pLast ? pLast[0] + "," + pLast[1] : "n/a")
+        );
+      }
+      if (!allSvgPointsFinite(sp.points)) {
+        debugLog("SVG: skipping path with invalid points");
+        continue;
+      }
 
       var grp = parentContents.addProperty("ADBE Vector Group");
       grp.name = "Path";
@@ -278,21 +343,34 @@
     }
   }
 
-  function parseSvgPoints(value) {
-    var nums = String(value).replace(/,/g, " ").match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
+  function parseSvgPoints(value, width, height) {
+    var nums = String(value).replace(/,/g, " ").match(/-?\d*\.?\d+(?:e[-+]?\d+)?%?/gi);
     var out = [];
     if (!nums) return out;
     for (var i = 0; i < nums.length; i += 2) {
-      var x = parseFloat(nums[i]);
-      var y = parseFloat(nums[i + 1]);
+      var x = parseSvgLength(nums[i], width, NaN);
+      var y = parseSvgLength(nums[i + 1], height, NaN);
       if (isNaN(x) || isNaN(y)) continue;
       out.push([x, y]);
     }
     return out;
   }
 
-  function parseSvgPathData(d) {
-    var tokens = String(d).match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g);
+  function parseSvgPathNumber(token, axisLength) {
+    if (token === undefined || token === null) return 0;
+    var s = String(token);
+    if (s.indexOf("%") !== -1) {
+      var pct = parseFloat(s);
+      if (isNaN(pct)) return 0;
+      if (axisLength > 0) return (pct / 100) * axisLength;
+      return 0;
+    }
+    var n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function parseSvgPathData(d, svgData) {
+    var tokens = tokenizeSvgPathData(d);
     var out = [];
     if (!tokens) return out;
     debugLog("SVG: path tokens=" + tokens.length);
@@ -385,8 +463,8 @@
           break;
         }
         while (i + 1 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var px = parseFloat(tokens[i++]);
-          var py = parseFloat(tokens[i++]);
+          var px = parseSvgPathNumber(tokens[i++], svgData.width);
+          var py = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "m") {
             px += x;
             py += y;
@@ -405,8 +483,8 @@
           break;
         }
         while (i + 1 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var lx = parseFloat(tokens[i++]);
-          var ly = parseFloat(tokens[i++]);
+          var lx = parseSvgPathNumber(tokens[i++], svgData.width);
+          var ly = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "l") {
             lx += x;
             ly += y;
@@ -420,7 +498,7 @@
           break;
         }
         while (i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var hx = parseFloat(tokens[i++]);
+          var hx = parseSvgPathNumber(tokens[i++], svgData.width);
           if (cmd === "h") hx += x;
           addLine(hx, y);
         }
@@ -431,7 +509,7 @@
           break;
         }
         while (i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var vy = parseFloat(tokens[i++]);
+          var vy = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "v") vy += y;
           addLine(x, vy);
         }
@@ -442,12 +520,12 @@
           break;
         }
         while (i + 5 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var c1x = parseFloat(tokens[i++]);
-          var c1y = parseFloat(tokens[i++]);
-          var c2x = parseFloat(tokens[i++]);
-          var c2y = parseFloat(tokens[i++]);
-          var cx = parseFloat(tokens[i++]);
-          var cy = parseFloat(tokens[i++]);
+          var c1x = parseSvgPathNumber(tokens[i++], svgData.width);
+          var c1y = parseSvgPathNumber(tokens[i++], svgData.height);
+          var c2x = parseSvgPathNumber(tokens[i++], svgData.width);
+          var c2y = parseSvgPathNumber(tokens[i++], svgData.height);
+          var cx = parseSvgPathNumber(tokens[i++], svgData.width);
+          var cy = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "c") {
             c1x += x;
             c1y += y;
@@ -465,10 +543,10 @@
           break;
         }
         while (i + 3 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var s2x = parseFloat(tokens[i++]);
-          var s2y = parseFloat(tokens[i++]);
-          var sx = parseFloat(tokens[i++]);
-          var sy = parseFloat(tokens[i++]);
+          var s2x = parseSvgPathNumber(tokens[i++], svgData.width);
+          var s2y = parseSvgPathNumber(tokens[i++], svgData.height);
+          var sx = parseSvgPathNumber(tokens[i++], svgData.width);
+          var sy = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "s") {
             s2x += x;
             s2y += y;
@@ -485,10 +563,10 @@
           break;
         }
         while (i + 3 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var q1x = parseFloat(tokens[i++]);
-          var q1y = parseFloat(tokens[i++]);
-          var qx = parseFloat(tokens[i++]);
-          var qy = parseFloat(tokens[i++]);
+          var q1x = parseSvgPathNumber(tokens[i++], svgData.width);
+          var q1y = parseSvgPathNumber(tokens[i++], svgData.height);
+          var qx = parseSvgPathNumber(tokens[i++], svgData.width);
+          var qy = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "q") {
             q1x += x;
             q1y += y;
@@ -504,8 +582,8 @@
           break;
         }
         while (i + 1 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-          var tx = parseFloat(tokens[i++]);
-          var ty = parseFloat(tokens[i++]);
+          var tx = parseSvgPathNumber(tokens[i++], svgData.width);
+          var ty = parseSvgPathNumber(tokens[i++], svgData.height);
           if (cmd === "t") {
             tx += x;
             ty += y;
@@ -539,10 +617,94 @@
     return out;
   }
 
+  function tokenizeSvgPathData(d) {
+    var s = String(d);
+    var tokens = [];
+    var i = 0;
+    var len = s.length;
+
+    function isSpace(ch) {
+      return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+    }
+
+    function isDigit(ch) {
+      return ch >= "0" && ch <= "9";
+    }
+
+    function isLetter(ch) {
+      return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z");
+    }
+
+    while (i < len) {
+      var ch = s.charAt(i);
+      if (isSpace(ch) || ch === ",") {
+        i++;
+        continue;
+      }
+      if (isLetter(ch)) {
+        tokens.push(ch);
+        i++;
+        continue;
+      }
+
+      var start = i;
+      if (ch === "+" || ch === "-") i++;
+      var hasDot = false;
+      while (i < len) {
+        var c = s.charAt(i);
+        if (isDigit(c)) {
+          i++;
+          continue;
+        }
+        if (c === "." && !hasDot) {
+          hasDot = true;
+          i++;
+          continue;
+        }
+        break;
+      }
+      if (i < len && (s.charAt(i) === "e" || s.charAt(i) === "E")) {
+        i++;
+        if (i < len && (s.charAt(i) === "+" || s.charAt(i) === "-")) i++;
+        while (i < len && isDigit(s.charAt(i))) i++;
+      }
+      if (i < len && s.charAt(i) === "%") i++;
+
+      if (i > start) {
+        tokens.push(s.substring(start, i));
+      } else {
+        i++;
+      }
+    }
+
+    return tokens;
+  }
+
+  function allSvgPointsFinite(points) {
+    for (var i = 0; i < points.length; i++) {
+      var p = points[i];
+      if (!p || p.length < 2) return false;
+      if (!isFinite(p[0]) || !isFinite(p[1])) return false;
+    }
+    return true;
+  }
+
   function buildTangents(len) {
     var arr = [];
     for (var i = 0; i < len; i++) arr.push([0, 0]);
     return arr;
+  }
+
+  function parseSvgLength(value, axisLength, fallback) {
+    if (value === undefined || value === null || value === "") return fallback;
+    var s = String(value);
+    if (s.indexOf("%") !== -1) {
+      var pct = parseFloat(s);
+      if (isNaN(pct)) return fallback;
+      if (axisLength > 0) return (pct / 100) * axisLength;
+    }
+    var n = parseFloat(s);
+    return isNaN(n) ? fallback : n;
   }
 
   function applySvgPaint(grpContents, attrs, defaultFillOn) {
@@ -607,6 +769,157 @@
     } else {
       stroke.enabled = false;
     }
+  }
+
+  function parseSvgStyleAttributes(attrs) {
+    if (!attrs || !attrs.style) return attrs || {};
+    var styleText = String(attrs.style);
+    var out = {};
+    for (var k in attrs) out[k] = attrs[k];
+    var parts = styleText.split(";");
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      if (!part) continue;
+      var idx = part.indexOf(":");
+      if (idx === -1) continue;
+      var key = trim(part.substring(0, idx)).toLowerCase();
+      var val = trim(part.substring(idx + 1));
+      if (!key) continue;
+      out[key] = val;
+    }
+    return out;
+  }
+
+  function parseSvgLengthList(value, axisLength, fallback) {
+    if (value === undefined || value === null || value === "") return fallback;
+    var m = String(value).match(/-?\d*\.?\d+(?:e[-+]?\d+)?%?/i);
+    if (!m) return fallback;
+    return parseSvgLength(m[0], axisLength, fallback);
+  }
+
+  function getSvgScaleData(svgData, localBBox) {
+    var scaleX = localBBox.w / svgData.width;
+    var scaleY = localBBox.h / svgData.height;
+    var preserve = String(svgData.preserveAspectRatio || "").toLowerCase();
+    var useNonUniformScale = preserve.indexOf("none") !== -1;
+    var scale = useNonUniformScale ? 1 : Math.min(scaleX, scaleY);
+    var padX = useNonUniformScale ? 0 : (localBBox.w - svgData.width * scale) / 2;
+    var padY = useNonUniformScale ? 0 : (localBBox.h - svgData.height * scale) / 2;
+    return {
+      scaleX: scaleX,
+      scaleY: scaleY,
+      scale: scale,
+      padX: padX,
+      padY: padY,
+      useNonUniformScale: useNonUniformScale
+    };
+  }
+
+  function mapSvgPoint(x, y, svgData, localBBox, scaleData) {
+    var sd = scaleData || getSvgScaleData(svgData, localBBox);
+    var mx = sd.useNonUniformScale ? (x - svgData.minX) * sd.scaleX + sd.padX : (x - svgData.minX) * sd.scale + sd.padX;
+    var my = sd.useNonUniformScale ? (y - svgData.minY) * sd.scaleY + sd.padY : (y - svgData.minY) * sd.scale + sd.padY;
+    return { x: mx, y: my };
+  }
+
+  function normalizeSvgTextContent(text, attrs) {
+    var content = String(text || "");
+    var space = attrs && attrs["xml:space"] ? String(attrs["xml:space"]).toLowerCase() : "";
+    if (space === "preserve") return content;
+    return content.replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
+  }
+
+  function mapSvgTextAnchor(value) {
+    var v = String(value || "").toLowerCase();
+    if (v === "middle" || v === "center") return "center";
+    if (v === "end" || v === "right") return "right";
+    return "left";
+  }
+
+  function applySvgTextBaseline(layer, attrs) {
+    var r = layer.sourceRectAtTime(0, false);
+    var anchorY = r.top + r.height;
+    var baseline = attrs && (attrs["dominant-baseline"] || attrs["alignment-baseline"]);
+    var b = String(baseline || "").toLowerCase();
+    if (b === "middle" || b === "central") {
+      anchorY = r.top + r.height / 2;
+    } else if (b === "hanging" || b === "text-before-edge") {
+      anchorY = r.top;
+    }
+    return anchorY;
+  }
+
+  function addSvgTextLayer(comp, parentLayer, el, svgData, localBBox) {
+    if (!el || !el.text) return;
+    var attrs = parseSvgStyleAttributes(el.attrs || {});
+    var text = normalizeSvgTextContent(el.text, attrs);
+    if (!text) return;
+
+    var x = parseSvgLengthList(attrs.x, svgData.width, 0);
+    var y = parseSvgLengthList(attrs.y, svgData.height, 0);
+    var scaleData = getSvgScaleData(svgData, localBBox);
+    var pos = mapSvgPoint(x, y, svgData, localBBox, scaleData);
+
+    var layer = comp.layers.addText(text);
+    layer.name = safeName("svg-text");
+
+    var textProp = layer.property("Text").property("Source Text");
+    var doc = textProp.value;
+    if (doc && doc.resetCharStyle) doc.resetCharStyle();
+
+    var family = attrs["font-family"];
+    var weight = attrs["font-weight"];
+    var style = attrs["font-style"] || "normal";
+    if (family) {
+      var candidates = buildFontCandidates(family, weight, style);
+      applyFontWithFallback(doc, candidates);
+    }
+
+    var sizePx = parseSvgLength(attrs["font-size"], svgData.height, null);
+    if (sizePx !== null) {
+      var scaledSize = sizePx * (scaleData.useNonUniformScale ? scaleData.scaleY : scaleData.scale);
+      var clamped = clampFontSize(scaledSize);
+      if (clamped !== null) doc.fontSize = clamped;
+    }
+
+    var letterSpacing = parseSvgLength(attrs["letter-spacing"], doc.fontSize || 0, null);
+    if (letterSpacing !== null) {
+      var scaledSpacing = letterSpacing * (scaleData.useNonUniformScale ? scaleData.scaleX : scaleData.scale);
+      doc.tracking = toAETracking(scaledSpacing);
+    }
+
+    var fillColor = parseSvgColor(attrs.fill) || parseSvgColor(attrs.color);
+    if (fillColor) {
+      doc.applyFill = true;
+      doc.fillColor = fillColor.rgb;
+    } else {
+      doc.applyFill = true;
+    }
+
+    doc.justification = mapTextAlign(mapSvgTextAnchor(attrs["text-anchor"]));
+    textProp.setValue(doc);
+
+    layer.property("Transform").property("Anchor Point").setValue([0, 0]);
+    layer.property("Transform").property("Position").setValue([pos.x, pos.y]);
+
+    var opacity = parseNumber(attrs.opacity, 1);
+    var fillOpacity = parseNumber(attrs["fill-opacity"], 1);
+    layer.property("Transform").property("Opacity").setValue(opacity * fillOpacity * 100);
+
+    // Do not parent SVG text to avoid double transforms; position is absolute in comp space.
+  }
+
+  function getSvgFallbackSize(localBBox, rootData) {
+    var vbW = 0;
+    var vbH = 0;
+    if (rootData && rootData.viewport) {
+      vbW = Number(rootData.viewport.sourceWidth) || 0;
+      vbH = Number(rootData.viewport.sourceHeight) || 0;
+    }
+    if (vbW > 0 && vbH > 0) return { w: vbW, h: vbH };
+    var w = localBBox && localBBox.w ? localBBox.w : 0;
+    var h = localBBox && localBBox.h ? localBBox.h : 0;
+    return { w: w, h: h };
   }
 
   function parseSvgDashArray(value) {

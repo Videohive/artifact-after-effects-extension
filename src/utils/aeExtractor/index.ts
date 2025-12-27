@@ -760,7 +760,16 @@ export const extractSlideLayout = async (
       canConsiderText &&
       el.children.length > 0 &&
       Array.from(el.children).some(child => hasVisualPaint(win.getComputedStyle(child)));
-    const textLike = canConsiderText && isTextLike(el, style) && !hasPaintedChild;
+    const textChildElements = canConsiderText
+      ? Array.from(el.children).filter(child => {
+          if (!isHTMLElement(child, win)) return false;
+          const childText = (child.textContent || '').trim();
+          return !!childText;
+        })
+      : [];
+    const hasMultipleTextChildren = textChildElements.length > 1;
+    const textLike =
+      canConsiderText && isTextLike(el, style) && !hasPaintedChild && !hasMultipleTextChildren;
 
     const getDirectTextNodes = (host: HTMLElement): Text[] => {
       const out: Text[] = [];

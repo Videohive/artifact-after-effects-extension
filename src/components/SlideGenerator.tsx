@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
-import { generateSlides, regenerateSlide, generateNewSlide } from '../services/geminiService';
+import React, { useState, useRef, useEffect } from 'react';
+import { generateSlides, regenerateSlide, generateNewSlide } from '../services/aiService';
 import { extractSlideLayout } from '../utils/aeExtractor/index';
-import { Loader2, Sparkles, Code, Play, RefreshCw, ChevronLeft, ChevronRight, Plus, Trash2, AlertCircle, Send, Presentation, FileJson, Check } from 'lucide-react';
+import { Loader2, Sparkles, Code, Play, RefreshCw, ChevronLeft, ChevronRight, Plus, Trash2, AlertCircle, Send, Presentation, FileJson, Check, Copy } from 'lucide-react';
 
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
 
@@ -110,6 +110,7 @@ export const SlideGenerator: React.FC = () => {
   const [slides, setSlides] = useState<string[]>([]);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [animationsEnabled, setAnimationsEnabled] = useState(false);
+  const provider = 'gemini' as const;
   
   const [loading, setLoading] = useState(false);
   const [regeneratingSlide, setRegeneratingSlide] = useState(false);
@@ -118,6 +119,8 @@ export const SlideGenerator: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedJsonSlide, setCopiedJsonSlide] = useState(false);
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
+  const [copiedHtml, setCopiedHtml] = useState(false);
+  const [codeDraft, setCodeDraft] = useState('');
   const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
   const [exportFps, setExportFps] = useState<number>(30);
   const [exportDuration, setExportDuration] = useState<number>(10);
@@ -125,6 +128,7 @@ export const SlideGenerator: React.FC = () => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const prevViewModeRef = useRef<'preview' | 'code'>(viewMode);
 
   const parseAndSetHtml = (html: string) => {
     const parser = new DOMParser();
@@ -139,7 +143,7 @@ export const SlideGenerator: React.FC = () => {
     style.innerHTML = `
       body { margin: 0; padding: 0; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; height: 100vh; } 
       /* Ensure slides are strictly sized relative to viewport width of the iframe */
-      .slide { width: 100vw !important; height: 56.25vw !important; overflow: hidden; position: relative; }
+      .slide { width: 100vw !important; height: 56.25vw !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
       /* Fallback styling for images */
       img {
         /* Hide alt text by making it transparent */
@@ -217,7 +221,7 @@ export const SlideGenerator: React.FC = () => {
     setHeadContent('');
     setErrorMsg(null);
     try {
-      const generatedHtml = await generateSlides(topic);
+      const generatedHtml = await generateSlides(provider, topic);
       parseAndSetHtml(generatedHtml);
     } catch (error: any) {
       console.error(error);
@@ -247,7 +251,7 @@ export const SlideGenerator: React.FC = () => {
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
       
-      const newSlideHtml = await regenerateSlide(topic, currentContent, cssContext, excluded);
+      const newSlideHtml = await regenerateSlide(provider, topic, currentContent, cssContext, excluded);
       const newSlides = [...slides];
       newSlides[currentSlideIndex] = newSlideHtml;
       // Simple sanitization
@@ -272,7 +276,7 @@ export const SlideGenerator: React.FC = () => {
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
 
-      const newSlideHtml = await generateNewSlide(topic, cssContext, excluded);
+      const newSlideHtml = await generateNewSlide(provider, topic, cssContext, excluded);
       
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = newSlideHtml;
@@ -450,6 +454,32 @@ export const SlideGenerator: React.FC = () => {
     `;
   };
 
+  useEffect(() => {
+    if (viewMode === 'code') {
+      setCodeDraft(getAllSlidesHtml());
+    }
+  }, [viewMode, headContent, slides, animationsEnabled]);
+
+  useEffect(() => {
+    if (prevViewModeRef.current === 'code' && viewMode === 'preview') {
+      if (codeDraft.trim()) {
+        parseAndSetHtml(codeDraft);
+      }
+    }
+    prevViewModeRef.current = viewMode;
+  }, [viewMode, codeDraft]);
+
+  const handleCodeChange = (value: string) => {
+    setCodeDraft(value);
+  };
+
+  const handleCopyHtml = async () => {
+    const html = getAllSlidesHtml();
+    await navigator.clipboard.writeText(html);
+    setCopiedHtml(true);
+    setTimeout(() => setCopiedHtml(false), 2000);
+  };
+
   return (
     <div className="flex flex-col h-full gap-4">
       {/* Main Content Area */}
@@ -469,8 +499,13 @@ export const SlideGenerator: React.FC = () => {
                       sandbox="allow-scripts allow-same-origin" 
                     />
                   ) : (
-                    <div className="w-full h-full overflow-auto bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300 custom-scrollbar">
-                      <pre>{getAllSlidesHtml()}</pre>
+                    <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
+                      <textarea
+                        value={codeDraft}
+                        onChange={(e) => handleCodeChange(e.target.value)}
+                        className="w-full h-full bg-transparent text-neutral-300 resize-none focus:outline-none custom-scrollbar"
+                        spellCheck={false}
+                      />
                     </div>
                   )}
               </div>
@@ -479,22 +514,36 @@ export const SlideGenerator: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
                 
                 {/* Left: View Mode */}
-                <div className="flex items-center gap-2 bg-neutral-950 rounded-lg p-1 border border-neutral-800 justify-self-start">
+                <div className="flex items-center gap-3 justify-self-start">
+                  <div className="flex items-center gap-2 bg-neutral-950 rounded-lg p-1 border border-neutral-800">
+                    <button
+                      onClick={() => setViewMode('preview')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                        viewMode === 'preview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Play className="w-4 h-4" /> Preview
+                    </button>
+                    <button
+                      onClick={() => setViewMode('code')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                        viewMode === 'code' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Code className="w-4 h-4" /> Code
+                    </button>
+                  </div>
                   <button
-                    onClick={() => setViewMode('preview')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                      viewMode === 'preview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+                    onClick={handleCopyHtml}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border border-neutral-800 bg-neutral-950 ${
+                      copiedHtml
+                        ? 'text-emerald-400'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
                     }`}
+                    title="Copy HTML"
                   >
-                    <Play className="w-4 h-4" /> Preview
-                  </button>
-                  <button
-                    onClick={() => setViewMode('code')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                      viewMode === 'code' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
-                    }`}
-                  >
-                    <Code className="w-4 h-4" /> Code
+                    {copiedHtml ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copiedHtml ? 'Copied' : 'Copy HTML'}
                   </button>
                   {/* <button
                     onClick={() => setAnimationsEnabled(prev => !prev)}
@@ -675,7 +724,7 @@ export const SlideGenerator: React.FC = () => {
             {errorMsg}
           </div>
         )}
-        
+
         <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">
           <textarea
             value={topic}

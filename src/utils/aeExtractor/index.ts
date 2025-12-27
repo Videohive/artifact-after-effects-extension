@@ -72,6 +72,103 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
   return clone.outerHTML;
 };
 
+const parsePseudoContent = (content: string): string | null => {
+  const raw = (content || '').trim();
+  if (!raw || raw === 'none' || raw === 'normal') return null;
+  if (/^attr\(/i.test(raw)) return null;
+  if (/^url\(/i.test(raw)) return null;
+  if (raw === '""' || raw === "''") return '';
+
+  const unquoted = raw.replace(/^['"]|['"]$/g, '');
+  return unquoted
+    .replace(/\\00000a/gi, '\n')
+    .replace(/\\a/gi, '\n')
+    .replace(/\\A/g, '\n');
+};
+
+const parsePseudoLength = (value: string, reference: number): number | null => {
+  const trimmed = (value || '').trim();
+  if (!trimmed || trimmed === 'auto' || trimmed === 'none') return null;
+  if (trimmed.endsWith('%')) {
+    const pct = parseFloat(trimmed);
+    return Number.isFinite(pct) ? (pct / 100) * reference : null;
+  }
+  const px = parseFloat(trimmed);
+  return Number.isFinite(px) ? px : null;
+};
+
+const resolvePseudoBox = (
+  win: Window,
+  pseudoStyle: CSSStyleDeclaration,
+  hostRect: DOMRect,
+  rootRect: DOMRect
+): { x: number; y: number; w: number; h: number } => {
+  const pos = pseudoStyle.position;
+  const baseW = pos === 'fixed' ? win.innerWidth : hostRect.width;
+  const baseH = pos === 'fixed' ? win.innerHeight : hostRect.height;
+  const baseX = pos === 'fixed' ? -rootRect.left : hostRect.left - rootRect.left;
+  const baseY = pos === 'fixed' ? -rootRect.top : hostRect.top - rootRect.top;
+
+  const left = parsePseudoLength(pseudoStyle.left, baseW);
+  const right = parsePseudoLength(pseudoStyle.right, baseW);
+  const top = parsePseudoLength(pseudoStyle.top, baseH);
+  const bottom = parsePseudoLength(pseudoStyle.bottom, baseH);
+
+  let w = parsePseudoLength(pseudoStyle.width, baseW) ?? 0;
+  let h = parsePseudoLength(pseudoStyle.height, baseH) ?? 0;
+
+  if (w <= 0 && left !== null && right !== null) w = Math.max(0, baseW - left - right);
+  if (h <= 0 && top !== null && bottom !== null) h = Math.max(0, baseH - top - bottom);
+
+  let x = baseX + (left !== null ? left : 0);
+  let y = baseY + (top !== null ? top : 0);
+
+  if (left === null && right !== null && w > 0) x = baseX + baseW - right - w;
+  if (top === null && bottom !== null && h > 0) y = baseY + baseH - bottom - h;
+
+  return { x, y, w, h };
+};
+
+const createPseudoTextElement = (
+  doc: Document,
+  content: string,
+  pseudoStyle: CSSStyleDeclaration,
+  rootRect: DOMRect,
+  rawBox: { x: number; y: number; w: number; h: number }
+) => {
+  const el = doc.createElement('span');
+  el.textContent = content;
+
+  const s = el.style;
+  s.position = 'fixed';
+  s.left = `${rootRect.left + rawBox.x}px`;
+  s.top = `${rootRect.top + rawBox.y}px`;
+  s.display = pseudoStyle.display === 'none' ? 'inline-block' : pseudoStyle.display;
+  s.whiteSpace = pseudoStyle.whiteSpace;
+  s.fontFamily = pseudoStyle.fontFamily;
+  s.fontSize = pseudoStyle.fontSize;
+  s.fontWeight = pseudoStyle.fontWeight;
+  s.fontStyle = pseudoStyle.fontStyle;
+  s.letterSpacing = pseudoStyle.letterSpacing;
+  s.lineHeight = pseudoStyle.lineHeight;
+  s.textAlign = pseudoStyle.textAlign;
+  s.textTransform = pseudoStyle.textTransform as string;
+  s.color = pseudoStyle.color;
+  s.boxSizing = pseudoStyle.boxSizing;
+  s.padding = pseudoStyle.padding;
+  s.margin = '0';
+  if (rawBox.w > 0) s.width = `${rawBox.w}px`;
+  if (rawBox.h > 0) s.height = `${rawBox.h}px`;
+  s.visibility = 'hidden';
+  s.pointerEvents = 'none';
+  s.zIndex = '-9999';
+
+  doc.body.appendChild(el);
+  return () => {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  };
+};
+
 const extractFontData = (
   doc: Document,
   win: Window
@@ -324,6 +421,184 @@ export const extractSlideLayout = async (
       });
     }
 
+    const buildPseudoNode = (which: '::before' | '::after'): AENode | null => {
+      const pseudoStyle = win.getComputedStyle(el, which as any);
+      const contentText = parsePseudoContent(pseudoStyle.content);
+      const hasPaint = hasVisualPaint(pseudoStyle) || !!safeBgUrl(pseudoStyle.backgroundImage);
+
+      if (!contentText && !hasPaint) return null;
+      if (!isVisible(pseudoStyle, rect)) return null;
+
+      let rawBox = resolvePseudoBox(win, pseudoStyle, rect, rootRect);
+
+      if ((rawBox.w <= 0 || rawBox.h <= 0) && contentText) {
+        const cleanup = createPseudoTextElement(win.document, contentText, pseudoStyle, rootRect, rawBox);
+        try {
+          const measureEl = win.document.body.lastElementChild as HTMLElement;
+          const m = measureEl.getBoundingClientRect();
+          if (rawBox.w <= 0) rawBox.w = m.width;
+          if (rawBox.h <= 0) rawBox.h = m.height;
+        } finally {
+          cleanup();
+        }
+      }
+
+      const pseudoBBox = scaleBounds(rawBox, scale);
+      const pseudoBorder = extractBorder(pseudoStyle, scale, rawBox);
+      const pseudoOutline = extractOutline(pseudoStyle, scale, rawBox);
+      const pseudoShadow = extractBoxShadow(pseudoStyle, scale);
+
+      const { clip } = detectPrecomp(el, pseudoStyle, rawBox, scale);
+      const zFallback = which === '::before' ? -1 : 1;
+      const zValue = Number.isFinite(parseFloat(pseudoStyle.zIndex))
+        ? parseFloat(pseudoStyle.zIndex)
+        : zFallback;
+
+      const baseNode: Omit<AENode, 'type'> = {
+        name: `${getName(el)}${which}`,
+        bbox: pseudoBBox,
+        bboxSpace: 'global',
+        style: {
+          backgroundColor: pseudoStyle.backgroundColor,
+          backgroundGradients: extractBackgroundGradients(pseudoStyle.backgroundImage) || undefined,
+          opacity: pseudoStyle.opacity,
+          transform: pseudoStyle.transform,
+          zIndex: zValue,
+          boxShadow: pseudoShadow || undefined
+        },
+        renderHints: {
+          needsPrecomp:
+            clip.enabled || pseudoStyle.transform !== 'none' || parseFloat(pseudoStyle.opacity) < 1,
+          isMask: false,
+          isText: false,
+          isAsset: false,
+          isHidden: false,
+          semanticZ: which === '::before' ? 'background' : 'overlay'
+        },
+        border: pseudoBorder,
+        outline: pseudoOutline,
+        clip
+      };
+
+      const bgUrl = safeBgUrl(pseudoStyle.backgroundImage);
+      const pseudoChildren: AENode[] = [];
+      if (bgUrl) {
+        pseudoChildren.push({
+          type: 'image',
+          name: `${getName(el)}${which}__bg`,
+          bbox: { ...pseudoBBox },
+          bboxSpace: 'global',
+          style: {},
+          renderHints: {
+            needsPrecomp: false,
+            isAsset: true,
+            isText: false,
+            isMask: false,
+            isHidden: false
+          },
+          src: bgUrl,
+          assetType: 'url',
+          border: null,
+          outline: null,
+          clip: {
+            enabled: false,
+            borderRadius: {
+              topLeft: { x: 0, y: 0 },
+              topRight: { x: 0, y: 0 },
+              bottomRight: { x: 0, y: 0 },
+              bottomLeft: { x: 0, y: 0 }
+            },
+            borderRadiusPx: 0,
+            overflow: 'visible'
+          }
+        });
+      }
+
+      if (contentText) {
+        const cleanup = createPseudoTextElement(win.document, contentText, pseudoStyle, rootRect, rawBox);
+        let textExtra: ReturnType<typeof buildTextExtra> | null = null;
+        try {
+          const textEl = win.document.body.lastElementChild as HTMLElement;
+          textExtra = buildTextExtra(
+            win,
+            textEl,
+            win.getComputedStyle(textEl),
+            rootRect,
+            scale,
+            pseudoBBox
+          );
+        } finally {
+          cleanup();
+        }
+
+        if (textExtra) {
+          if (hasPaint) {
+            pseudoChildren.push({
+              type: 'text',
+              name: `${getName(el)}${which}__text`,
+              bbox: { ...pseudoBBox },
+              bboxSpace: 'global',
+              style: {},
+              renderHints: {
+                needsPrecomp: false,
+                isMask: false,
+                isText: true,
+                isAsset: false,
+                isHidden: false
+              },
+              ...textExtra,
+              border: null,
+              outline: null,
+              clip: {
+                enabled: false,
+                borderRadius: {
+                  topLeft: { x: 0, y: 0 },
+                  topRight: { x: 0, y: 0 },
+                  bottomRight: { x: 0, y: 0 },
+                  bottomLeft: { x: 0, y: 0 }
+                },
+                borderRadiusPx: 0,
+                overflow: 'visible'
+              }
+            });
+          } else {
+            const textNode: AENode = {
+              type: 'text',
+              ...baseNode,
+              renderHints: { ...baseNode.renderHints, isText: true },
+              ...textExtra
+            };
+            return textNode;
+          }
+        }
+      }
+
+      const groupNode: AENode = {
+        type: 'group',
+        ...baseNode,
+        children: pseudoChildren.length ? pseudoChildren : undefined
+      };
+      return groupNode;
+    };
+
+    const beforeNode = isHtmlEl ? buildPseudoNode('::before') : null;
+    const afterNode = isHtmlEl ? buildPseudoNode('::after') : null;
+    let beforeAdded = false;
+    let afterAdded = false;
+
+    const pushBefore = () => {
+      if (beforeNode && !beforeAdded) {
+        children.push(beforeNode);
+        beforeAdded = true;
+      }
+    };
+    const pushAfter = () => {
+      if (afterNode && !afterAdded) {
+        children.push(afterNode);
+        afterAdded = true;
+      }
+    };
+
     if (!bgUrl && isHtmlEl && el.children.length === 0) {
       const textUrl = urlFromText(el.textContent || '');
       if (textUrl && type === 'group') {
@@ -388,6 +663,7 @@ export const extractSlideLayout = async (
       return out;
     };
 
+    const hasPseudo = !!beforeNode || !!afterNode;
     if (textLike && isHtmlEl) {
       const pickInlineTextStyle = (
         host: HTMLElement,
@@ -404,7 +680,7 @@ export const extractSlideLayout = async (
       const paints = hasVisualPaint(style);
       const textStyle = pickInlineTextStyle(el, style);
 
-      if (!paints) {
+      if (!paints && !hasPseudo) {
         type = 'text';
         renderHints.isText = true;
 
@@ -413,6 +689,7 @@ export const extractSlideLayout = async (
           ...buildTextExtra(win, el, textStyle, rootRect, scale, bbox)
         };
       } else {
+        pushBefore();
         children.push({
           type: 'text',
           name: `${getName(el)}__text`,
@@ -441,6 +718,7 @@ export const extractSlideLayout = async (
             overflow: 'visible'
           }
         });
+        pushAfter();
         skipChildTraversal = true;
       }
     }
@@ -448,6 +726,7 @@ export const extractSlideLayout = async (
     if (canConsiderText && isHtmlEl && !textLike) {
       const directTextNodes = getDirectTextNodes(el);
       if (directTextNodes.length) {
+        pushBefore();
         children.push({
           type: 'text',
           name: `${getName(el)}__text`,
@@ -476,14 +755,17 @@ export const extractSlideLayout = async (
             overflow: 'visible'
           }
         });
+        pushAfter();
       }
     }
 
     if (type !== 'svg' && type !== 'text' && !skipChildTraversal) {
+      pushBefore();
       for (const c of Array.from(el.children)) {
         const child = process(c);
         if (child) children.push(child);
       }
+      pushAfter();
     }
 
     const shouldExpandGroupBounds =

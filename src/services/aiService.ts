@@ -1,4 +1,7 @@
+import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
+
+export type AiProviderName = 'gemini' | 'openai';
 
 // Helper: Exponential backoff for 429 errors
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -41,6 +44,83 @@ const getGeminiApiKey = (): string | undefined => {
   return undefined;
 };
 
+const getOpenAiApiKey = (): string | undefined => {
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env.REACT_APP_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  }
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as {
+      OPENAI_API_KEY?: string;
+      REACT_APP_OPENAI_API_KEY?: string;
+      __ENV__?: { OPENAI_API_KEY?: string; REACT_APP_OPENAI_API_KEY?: string };
+    };
+    const fromWindow =
+      win.REACT_APP_OPENAI_API_KEY ||
+      win.OPENAI_API_KEY ||
+      win.__ENV__?.REACT_APP_OPENAI_API_KEY ||
+      win.__ENV__?.OPENAI_API_KEY;
+    if (fromWindow && fromWindow.trim()) return fromWindow;
+  }
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      return import.meta.env.VITE_OPENAI_API_KEY || import.meta.env.OPENAI_API_KEY;
+    }
+  } catch (e) {}
+  return undefined;
+};
+
+const getProviderError = (provider: AiProviderName) => {
+  if (provider === 'gemini') {
+    return 'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.';
+  }
+  return 'API key is missing. Set REACT_APP_OPENAI_API_KEY in .env.local and restart `npm start`.';
+};
+
+const cleanResponseText = (text: string) =>
+  text.replace(/```html/g, "").replace(/```/g, "");
+
+const createResponseText = async (provider: AiProviderName, prompt: string, temperature: number) => {
+  return callWithRetry(async () => {
+    if (provider === 'gemini') {
+      const apiKey = getGeminiApiKey();
+      if (!apiKey) throw new Error(getProviderError(provider));
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          thinkingConfig: { thinkingBudget: 0 },
+          temperature,
+        }
+      });
+      return cleanResponseText(response.text || '');
+    }
+
+    const apiKey = getOpenAiApiKey();
+    if (!apiKey) throw new Error(getProviderError(provider));
+    const client = new OpenAI({
+      apiKey,
+      dangerouslyAllowBrowser: true,
+    });
+    const model: string = 'gpt-5-mini';
+    const payload: {
+      model: string;
+      input: string;
+      temperature?: number;
+    } = {
+      model,
+      input: prompt,
+    };
+    if (model !== 'gpt-5-mini' && model !== 'gpt-5-nano') {
+      payload.temperature = temperature;
+    }
+    const response = await client.responses.create(payload);
+    return cleanResponseText(response.output_text || "");
+  });
+};
+
 // Helper to safely extract section from AI response
 const extractSection = (html: string): string => {
   try {
@@ -52,7 +132,7 @@ const extractSection = (html: string): string => {
         section.classList.add('slide');
       }
       // CRITICAL: Strip any inline styles that might mess up fonts/layout consistency
-      section.removeAttribute('style'); 
+      section.removeAttribute('style');
       return section.outerHTML;
     }
     const match = html.match(/<section[\s\S]*?<\/section>/i);
@@ -152,11 +232,11 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
       const data = await response.json();
       if (data.photos && data.photos.length > 0) {
         // Filter out photos that have already been used
-        const availablePhotos = data.photos.filter((p: any) => 
+        const availablePhotos = data.photos.filter((p: any) =>
           !usedUrls.has(p.src.large2x) && !usedUrls.has(p.src.large)
         );
 
-        // If all photos for this term are used, we might have to reuse one, 
+        // If all photos for this term are used, we might have to reuse one,
         // or just pick from the full list to avoid breaking.
         // Let's prefer available, but fallback to any if pool is empty.
         const pool = availablePhotos.length > 0 ? availablePhotos : data.photos;
@@ -164,7 +244,7 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
         const randomIndex = Math.floor(Math.random() * pool.length);
         const photo = pool[randomIndex];
         const url = photo.src.large2x || photo.src.large;
-        
+
         usedUrls.add(url); // Mark as used
         return url;
       }
@@ -197,7 +277,7 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
       if (imageUrl) return imageUrl;
     }
   }
-  
+
   // Fallback to abstract if specific fails
   const genericTerms = ["abstract texture", "minimal background", "light gradient"];
   const randomGeneric = genericTerms[Math.floor(Math.random() * genericTerms.length)];
@@ -215,20 +295,20 @@ const replaceImagePlaceholders = async (html: string, excludedUrls: string[] = [
 
   let newHtml = html;
   const paletteColor = extractPaletteColor(paletteSource || html);
-  
+
   // Process sequentially to ensure we track used URLs effectively within this batch
   for (const match of matches) {
     const term = match[1];
     // We pass the Set by reference, so it gets updated inside (or we update it here)
     // fetchPexelsImage updates the set inside.
     const url = await fetchPexelsImage(term, usedUrls, paletteColor);
-    
+
     // Replace ONLY the first occurrence of this specific match string in the current html state
     // This handles cases where {{IMAGE:cat}} appears twice; the first loop replaces the first one,
     // the second loop replaces the second one (which is now the first one remaining).
     newHtml = newHtml.replace(match[0], url);
   }
-  
+
   return newHtml;
 };
 
@@ -236,14 +316,12 @@ const replaceImagePlaceholders = async (html: string, excludedUrls: string[] = [
 
 const BASE_PROMPT = `
 Role: World-Class Art Director & Frontend Engineer.
-Mindset: Think like a creative agency, not a template generator.
+Mindset: Think like a high-end creative agency. Reference the visual standards of: **Active Theory, Resn, Hello Monday, Fantasy, Locomotive, Huge, and Jam3**. Avoid "safe", "default", or "corporate-template" choices.
 Task: Create a distinctive visual identity and a set of HTML slides for the User's Topic.
 
 TOPIC: "{topic}"
 
-==================================================
 PHASE 1: ART DIRECTION (INTERNAL – THINK FIRST)
-==================================================
 
 1. **MOOD & EMOTION**
    - Analyze the TOPIC deeply.
@@ -272,9 +350,7 @@ PHASE 1: ART DIRECTION (INTERNAL – THINK FIRST)
      - Use dramatic scale
      - Act as graphic elements, not just readable text
 
-==================================================
 PHASE 2: NARRATIVE & STRUCTURE (INTERNAL)
-==================================================
 
 1. **CONSTRAINT CHECK**
    - Quantity:
@@ -301,9 +377,7 @@ PHASE 2: NARRATIVE & STRUCTURE (INTERNAL)
      - Informational → structured grids
      - Inspirational → image-led compositions
 
-==================================================
 PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
-==================================================
 
 1. **CSS VARIABLES**
    - Define ALL colors and fonts in :root.
@@ -323,7 +397,7 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
      - Large typographic elements
      - Overlapping sections
    - Prefer scale, positioning, and contrast over heavy shadows.
-   - ::before and ::after pseudo-elements are encouraged.
+   - ::before and ::after are encouraged for "fine details" (hairlines, coordinates, UI markers).
 
 3. **SVG DESIGN LAYER**
    - You MAY use inline SVG for:
@@ -356,25 +430,22 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
 7. **DESIGN DISCIPLINE**
    - One strong idea per slide.
 
-   ==================================================
 HARD CONSTRAINT: TEXT ORIENTATION (NON-NEGOTIABLE)
-==================================================
 
-- writing-mode is STRICTLY FORBIDDEN.
-- text-orientation is STRICTLY FORBIDDEN.
+1. **TEXT ORIENTATION**
+   - writing-mode is STRICTLY FORBIDDEN.
+   - text-orientation is STRICTLY FORBIDDEN.
+   - For vertical text, use ONLY: transform: rotate(...) and transform-origin.
+   - text-align: right; is STRICTLY FORBIDDEN for paragraphs and body text. Use left alignment or sophisticated centered compositions.
 
-- Vertical or side-oriented text is allowed ONLY if:
-  - The text remains technically horizontal
-  - Visual orientation is achieved exclusively via:
-    - transform: rotate(...)
-    - transform-origin
+2. **BLEND MODES**
+   - mix-blend-mode: difference; is STRICTLY FORBIDDEN.
+   - Contrast must be achieved through color selection and spatial layering, not blending effects.
 
-- Any use of writing-mode or text-orientation
-  is a critical violation and invalidates the output.
+3. **VIOLATION POLICY**
+   - Any use of forbidden properties invalidates the output.
 
-==================================================
 PHASE 4: TECHNICAL EXECUTION
-==================================================
 
 1. **OUTPUT**
    - Return a SINGLE HTML block with embedded CSS.
@@ -382,17 +453,19 @@ PHASE 4: TECHNICAL EXECUTION
 2. **LAYOUT**
    - Width: 100vw
    - Height: 56.25vw (16:9)
-   - Use CSS Grid and/or Flexbox.
+   - Slides must be visible by default with no user interaction.
+   - Do NOT use radio inputs or CSS that hides slides by default (no opacity: 0 or visibility: hidden on .slide).
+   - **PRO DIRECTION:** Do not feel constrained by standard flow. Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the "web-page" feel. 
+   - Feel free to use negative margins, calc-based offsets, and intentional overlapping to achieve a high-end editorial composition.
 
 3. **CREATIVE MODE**
+   - Bolder is better. Aim for a layout that looks like a custom-coded site, not a CMS template.
    - If the topic allows:
      - Prefer bold compositions.
      - Slight asymmetry > perfect symmetry.
      - Avoid template-looking layouts.
 
-==================================================
 PHASE 5: GENERATION
-==================================================
 
 Generate the final HTML.
 `;
@@ -434,50 +507,25 @@ INSTRUCTIONS:
 Return ONLY the HTML for the section.
 `;
 
-export const generateSlides = async (topic: string): Promise<string> => {
+export const generateSlides = async (provider: AiProviderName, topic: string): Promise<string> => {
   try {
-    const apiKey = getGeminiApiKey();
-    if (!apiKey) {
-      throw new Error(
-        'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.'
-      );
-    }
-    const ai = new GoogleGenAI({ apiKey });
-    
-    // We increase temperature to encourage unique Art Direction in Phase 1
-    // But the prompt structure ensures Phase 2 (Consistency) is respected.
     const finalPrompt = BASE_PROMPT.replace(/{topic}/g, topic);
-
-    return await callWithRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-        config: {
-          thinkingConfig: { thinkingBudget: 0 },
-          temperature: 1.4, // High temperature for creative font/color choices
-        }
-      });
-      let text = response.text || '';
-      text = text.replace(/```html/g, '').replace(/```/g, '');
-      
-      return await replaceImagePlaceholders(text);
-    });
-
+    const text = await createResponseText(provider, finalPrompt, 1.5);
+    return await replaceImagePlaceholders(text);
   } catch (error) {
     console.error("Error generating slides:", error);
     throw error;
   }
 };
 
-export const regenerateSlide = async (topic: string, currentSlide: string, cssContext: string, excludedImages: string[] = []): Promise<string> => {
+export const regenerateSlide = async (
+  provider: AiProviderName,
+  topic: string,
+  currentSlide: string,
+  cssContext: string,
+  excludedImages: string[] = []
+): Promise<string> => {
   try {
-    const apiKey = getGeminiApiKey();
-    if (!apiKey) {
-      throw new Error(
-        'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.'
-      );
-    }
-    const ai = new GoogleGenAI({ apiKey });
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
 
     const filledPrompt = REGENERATE_PROMPT
@@ -485,59 +533,31 @@ export const regenerateSlide = async (topic: string, currentSlide: string, cssCo
       .replace('{cssContext}', truncatedCss)
       .replace('{currentSlide}', currentSlide);
 
-    return await callWithRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: filledPrompt }] }],
-        config: {
-          thinkingConfig: { thinkingBudget: 0 },
-          temperature: 0.7, // Lower temperature to strictly adhere to existing CSS
-        }
-      });
-
-      let text = response.text || '';
-      text = text.replace(/```html/g, '').replace(/```/g, '');
-      
-      const sectionHtml = extractSection(text);
-      return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext);
-    });
+    const text = await createResponseText(provider, filledPrompt, 0.7);
+    const sectionHtml = extractSection(text);
+    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext);
   } catch (error) {
     console.error("Error regenerating slide:", error);
     throw error;
   }
 };
 
-export const generateNewSlide = async (topic: string, cssContext: string, excludedImages: string[] = []): Promise<string> => {
+export const generateNewSlide = async (
+  provider: AiProviderName,
+  topic: string,
+  cssContext: string,
+  excludedImages: string[] = []
+): Promise<string> => {
   try {
-    const apiKey = getGeminiApiKey();
-    if (!apiKey) {
-      throw new Error(
-        'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.'
-      );
-    }
-    const ai = new GoogleGenAI({ apiKey });
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
-    
+
     const filledPrompt = ADD_SLIDE_PROMPT
       .replace('{topic}', topic)
       .replace('{cssContext}', truncatedCss);
 
-    return await callWithRetry(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: filledPrompt }] }],
-        config: {
-          thinkingConfig: { thinkingBudget: 0 },
-          temperature: 0.7, // Lower temperature to strictly adhere to existing CSS
-        }
-      });
-
-      let text = response.text || '';
-      text = text.replace(/```html/g, '').replace(/```/g, '');
-      
-      const sectionHtml = extractSection(text);
-      return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext);
-    });
+    const text = await createResponseText(provider, filledPrompt, 0.7);
+    const sectionHtml = extractSection(text);
+    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext);
   } catch (error) {
     console.error("Error adding slide:", error);
     throw error;

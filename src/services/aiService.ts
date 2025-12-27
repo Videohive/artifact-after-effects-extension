@@ -559,25 +559,39 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
    - Prefer scale, positioning, and contrast over heavy shadows.
    - ::before and ::after are encouraged for "fine details" (hairlines, coordinates, UI markers).
 
-3. SVG DESIGN LAYER (MEANING-FIRST)
+3. SVG DESIGN LAYER (MEANING-FIRST, DESCRIPTION-LED)
 
 SVG is a primary explanatory medium, not decoration.
 
-Before authoring SVG:
-- Identify the governing logic or behavior of the TOPIC.
-- Determine how relationships, flow, constraints, or systems operate.
+If the prompt includes any SVG description, metaphor, behavior, or logic,
+it MUST be treated as the authoritative source for SVG design.
+Do not reinterpret, replace, or invent an alternative logic.
 
-Translate this logic into SVG behavior:
+Before authoring SVG:
+
+1. Check for an explicit or implicit SVG description in the prompt.
+   If present:
+   - Extract its governing idea, behavior, or structure.
+   - Preserve its intent exactly.
+   - Translate it faithfully into SVG behavior.
+
+2. Only if NO SVG description is provided:
+   - Identify the governing logic or behavior of the TOPIC.
+   - Determine how relationships, flow, constraints, or systems operate.
+
+Translate meaning into SVG behavior through:
 - Spatial relationships
 - Rhythm, repetition, interruption
 - Framing, alignment, hierarchy
+- Continuity or rupture across slides
 
 Rules:
-- SVG must be semantically bound to the TOPIC.
-- If the same SVG could work for a different topic, it is INVALID.
+- SVG must be semantically bound to the TOPIC or to the provided SVG description.
+- If the same SVG could work for a different topic or contradict the given description, it is INVALID.
 - SVG must interact with layout: guiding flow, framing content, encoding meaning.
-- SVGs across slides should share an authored logic, even if forms differ.
-- If SVG does not add understanding, remove it.
+- SVG across slides must share a coherent authored logic, even if visual forms evolve.
+- SVG is subordinate to meaning, not aesthetics.
+- If SVG does not add understanding, it must be removed.
 
 4. **IMAGES**
    - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.

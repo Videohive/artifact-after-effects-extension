@@ -3,7 +3,7 @@ import { Presentation } from 'lucide-react';
 
 export default function App() {
   return (
-    <div className="h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-indigo-500 selection:text-white flex flex-col overflow-hidden">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-indigo-500 selection:text-white flex flex-col">
       <header className="shrink-0 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur-md z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -18,8 +18,8 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden relative">
-        <div className="h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 relative">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <SlideGenerator />
         </div>
       </main>

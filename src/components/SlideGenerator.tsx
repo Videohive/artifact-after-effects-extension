@@ -18,6 +18,8 @@ const IMAGE_PROVIDER_OPTIONS: { id: ImageProviderName; label: string }[] = [
   { id: 'unsplash', label: 'Unsplash' },
   { id: 'pixabay', label: 'Pixabay' }
 ];
+const PREVIEW_BASE_WIDTH = 1280;
+const PREVIEW_BASE_HEIGHT = 720;
 
 const sanitizeImageAlts = (root: ParentNode) => {
   const images = root.querySelectorAll('img');
@@ -195,7 +197,11 @@ export const SlideGenerator: React.FC = () => {
   const [titleDraft, setTitleDraft] = useState('');
   const [tagsDraft, setTagsDraft] = useState('');
   const [descriptionDraft, setDescriptionDraft] = useState('');
-  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+  const [previewSize, setPreviewSize] = useState({
+    width: PREVIEW_BASE_WIDTH,
+    height: PREVIEW_BASE_HEIGHT
+  });
+  const [previewScale, setPreviewScale] = useState(1);
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
@@ -206,25 +212,22 @@ export const SlideGenerator: React.FC = () => {
     const container = previewStageRef.current;
     if (!container) return;
 
-    const aspectRatio = 16 / 9;
-
     const updateScale = () => {
-      const { width, height } = container.getBoundingClientRect();
-      if (width <= 0 || height <= 0) return;
-      let nextWidth = width;
-      let nextHeight = width / aspectRatio;
-      if (nextHeight > height) {
-        nextHeight = height;
-        nextWidth = height * aspectRatio;
-      }
-      setPreviewSize({ width: nextWidth, height: nextHeight });
+      const { width } = container.getBoundingClientRect();
+      if (width <= 0) return;
+      const nextScale = Math.min(width / PREVIEW_BASE_WIDTH, 1);
+      setPreviewScale(nextScale);
+      setPreviewSize({
+        width: PREVIEW_BASE_WIDTH * nextScale,
+        height: PREVIEW_BASE_HEIGHT * nextScale
+      });
     };
 
     updateScale();
     const observer = new ResizeObserver(updateScale);
     observer.observe(container);
     return () => observer.disconnect();
-  }, []);
+  }, [slides.length]);
 
   useEffect(() => {
     const { title, tags, description } = parseHeadMetadata(headContent);
@@ -629,11 +632,13 @@ export const SlideGenerator: React.FC = () => {
     applyHeadUpdates(projectTitle, projectTags, nextDescription);
   };
 
+  const isEmpty = slides.length === 0;
+
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className={`flex flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
       {/* Main Content Area */}
       {slides.length > 0 ? (
-        <div className="flex-1 min-h-0 flex flex-col gap-4">
+        <div className="flex flex-col gap-4">
           <div className="shrink-0 w-full flex justify-center px-4">
             <div
               className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4"
@@ -737,12 +742,9 @@ export const SlideGenerator: React.FC = () => {
             </div>
           </div>
 
-          <div
-            className="flex-1 min-h-0 overflow-hidden flex flex-col items-center justify-center p-4"
-            ref={previewStageRef}
-          >
+          <div className="w-full flex flex-col items-center justify-center p-4">
             {/* Slide Preview - Centered */}
-            <div className="w-full max-w-6xl h-full flex items-center justify-center">
+            <div className="w-full max-w-6xl flex items-center justify-center" ref={previewStageRef}>
               <div
                 className="relative bg-neutral-950 rounded-xl border border-neutral-800 shadow-2xl overflow-hidden group"
                 style={{
@@ -751,13 +753,23 @@ export const SlideGenerator: React.FC = () => {
                 }}
               >
                 {viewMode === 'preview' ? (
-                  <iframe
-                    ref={iframeRef}
-                    srcDoc={getCurrentFullHtml()}
-                    title="Slide Preview"
-                    className="w-full h-full border-0"
-                    sandbox="allow-scripts allow-same-origin"
-                  />
+                  <div
+                    className="origin-top-left"
+                    style={{
+                      width: PREVIEW_BASE_WIDTH,
+                      height: PREVIEW_BASE_HEIGHT,
+                      transform: `scale(${previewScale})`
+                    }}
+                  >
+                    <iframe
+                      ref={iframeRef}
+                      srcDoc={getCurrentFullHtml()}
+                      title="Slide Preview"
+                      className="border-0"
+                      style={{ width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT }}
+                      sandbox="allow-scripts allow-same-origin"
+                    />
+                  </div>
                 ) : (
                   <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
                     <textarea
@@ -984,7 +996,7 @@ export const SlideGenerator: React.FC = () => {
       />
 
       {/* Input Area (Bottom) */}
-      <div className="shrink-0 max-w-4xl mx-auto w-full">
+      <div className={`shrink-0 max-w-4xl mx-auto w-full${isEmpty ? ' mt-auto' : ''}`}>
         {errorMsg && (
           <div className="mb-4 p-3 bg-red-900/20 border border-red-800/50 rounded-lg text-red-200 text-sm flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
             <AlertCircle className="w-4 h-4" />

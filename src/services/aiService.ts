@@ -559,59 +559,25 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
    - Prefer scale, positioning, and contrast over heavy shadows.
    - ::before and ::after are encouraged for "fine details" (hairlines, coordinates, UI markers).
 
-3. **SVG DESIGN LAYER (ART-DIRECTED, CONTEXT-AWARE)**
-   - Treat SVG as **primary art direction**, like a studio Illustrator file exported to code.
-   - SVG must look **commissioned**, not “stock”, not “UI garnish”.
-   - Every SVG element must have a **reason tied to TOPIC**:
-     - Extract 2–3 visual metaphors from the TOPIC (e.g., signal/noise, tension/release, craft/precision, nature/structure)
-     - Encode them into shapes, rhythm, and composition (not literal icons unless the topic requires it).
+3. SVG DESIGN LAYER (MEANING-FIRST)
 
-   **AESTHETIC RULES (HIGH-END STUDIO QUALITY)**
-   - Prefer **graphic design primitives**:
-     - Bold geometric silhouettes, cropped forms, oversized fields, cutouts
-     - Tension lines, coordinates, measurement ticks, registration marks
-     - Editorial dividers, modular grids, poster-like slabs
-   - Avoid generic patterns:
-     - No random blobs, no wavy hero lines, no “tech circuit” clichés, no dribbble gradients.
-   - Use **intentional imperfection** when relevant:
-     - Slight misregistration, asymmetric balance, micro-tilts, purposeful crop
-     - But never messy: it’s controlled craft.
+SVG is a primary explanatory medium, not decoration.
 
-   **SYSTEM BEHAVIOR**
-   - Build a **cohesive motif system** across slides:
-     - Define 1–2 recurring SVG “motifs” (e.g., corner marks + orbit arcs; or cutout windows + hairline grid)
-     - Vary scale, crop, and placement per slide so layouts stay unique but related.
-   - Each slide must include **at least one SVG anchor**:
-     - A large vector field, a strong divider, or a signature mark that competes with typography (in a good way).
+Before authoring SVG:
+- Identify the governing logic or behavior of the TOPIC.
+- Determine how relationships, flow, constraints, or systems operate.
 
-   **COMPOSITION & LAYERING (EDITORIAL)**
-   - SVG should integrate with layout:
-     - Use overlap with type blocks (behind / intersect / frame)
-     - Use masks/clipPaths for **structured cutouts** (windows, slices, portals), not decorative clipping.
-   - Use depth via:
-     - Layer order, scale contrast, negative space, hairlines—**not shadows**.
+Translate this logic into SVG behavior:
+- Spatial relationships
+- Rhythm, repetition, interruption
+- Framing, alignment, hierarchy
 
-   **TECHNICAL CONSTRAINTS (STRICT)**
-   - SVG must be **inline** and authored cleanly (no embedded images, no base64).
-   - Use **CSS variables only** for fills/strokes:
-     - fill="var(--brand-color)" / stroke="var(--text-secondary)" etc.
-     - No hardcoded hex in SVG.
-   - Prefer strokes with:
-     - vector-effect="non-scaling-stroke" for hairlines when scaling is used.
-     - stroke-linecap/linejoin chosen intentionally (round for organic, square for mechanical).
-   - Keep SVG lightweight:
-     - Avoid excessive path noise. Use fewer, stronger paths.
-     - If you need texture, imply it with sparse marks (ticks, dots, short dashes), not full noise fields.
-
-   **FORBIDDEN / ANTI-PATTERNS**
-   - No icon packs, no emoji-like pictograms, no literal illustrations unless TOPIC demands it.
-   - No “decorative background squiggles”.
-   - No gradients unless they are conceptually essential and still feel premium + restrained.
-   - No blend modes reliance (mix-blend-mode is forbidden anyway).
-
-   **QUALITY BAR**
-   - Ask internally: “Would this pass as a studio artboard from an art director?”
-   - If the SVG doesn’t add meaning, remove it or redesign it.
+Rules:
+- SVG must be semantically bound to the TOPIC.
+- If the same SVG could work for a different topic, it is INVALID.
+- SVG must interact with layout: guiding flow, framing content, encoding meaning.
+- SVGs across slides should share an authored logic, even if forms differ.
+- If SVG does not add understanding, remove it.
 
 4. **IMAGES**
    - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.
@@ -621,9 +587,28 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
    - Photography must stay clean and natural.
 
 5. **IMAGE SHAPING (ADVANCED)**
-   - You MAY use clip-path (polygon, circle, ellipse).
-   - Use clip-path only when it strengthens storytelling.
-   - Limit shaped images to 1–2 per deck.
+Image shaping is a semantic action, not a stylistic choice.
+
+Any form may be used if it emerges from the meaning of the slide
+and strengthens how the idea is perceived.
+
+Before shaping an image, internally determine:
+- What aspect of the idea requires visual constraint, focus, or framing?
+- What would be lost if the image remained unshaped?
+- How does the shape alter attention, proximity, or rhythm?
+
+Shaping should originate from context:
+- narrowing attention
+- marking a threshold or transition
+- introducing tension or pause
+- isolating presence
+- expressing partiality or incompleteness
+
+If the image communicates the same meaning without shaping,
+shaping must not be applied.
+
+Shaping must respond to the slide’s narrative role,
+not to visual balance or decoration.
 
 6. **VISUAL ANCHORS**
    - Every slide MUST contain at least ONE strong visual anchor:

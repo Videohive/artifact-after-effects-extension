@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { generateSlides, regenerateSlide, generateNewSlide } from '../services/aiService';
+import { generateSlides, regenerateSlide, generateNewSlide, ImageProviderName } from '../services/aiService';
 import { extractSlideLayout } from '../utils/aeExtractor/index';
 import { Loader2, Sparkles, Code, Play, RefreshCw, ChevronLeft, ChevronRight, Plus, Trash2, AlertCircle, Send, Presentation, FileJson, Check, Copy } from 'lucide-react';
 
@@ -12,6 +12,12 @@ const RESOLUTION_OPTIONS = [
 ];
 
 const FPS_OPTIONS = [30, 60];
+const IMAGE_PROVIDER_OPTIONS: { id: ImageProviderName; label: string }[] = [
+  { id: 'random', label: 'Random (All)' },
+  { id: 'pexels', label: 'Pexels' },
+  { id: 'unsplash', label: 'Unsplash' },
+  { id: 'pixabay', label: 'Pixabay' }
+];
 
 const sanitizeImageAlts = (root: ParentNode) => {
   const images = root.querySelectorAll('img');
@@ -120,6 +126,7 @@ export const SlideGenerator: React.FC = () => {
   const [copiedJsonSlide, setCopiedJsonSlide] = useState(false);
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
+  const [imageProvider, setImageProvider] = useState<ImageProviderName>('random');
   const [codeDraft, setCodeDraft] = useState('');
   const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
   const [exportFps, setExportFps] = useState<number>(30);
@@ -221,7 +228,7 @@ export const SlideGenerator: React.FC = () => {
     setHeadContent('');
     setErrorMsg(null);
     try {
-      const generatedHtml = await generateSlides(provider, topic);
+      const generatedHtml = await generateSlides(provider, topic, imageProvider);
       parseAndSetHtml(generatedHtml);
     } catch (error: any) {
       console.error(error);
@@ -251,7 +258,7 @@ export const SlideGenerator: React.FC = () => {
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
       
-      const newSlideHtml = await regenerateSlide(provider, topic, currentContent, cssContext, excluded);
+      const newSlideHtml = await regenerateSlide(provider, topic, currentContent, cssContext, excluded, imageProvider);
       const newSlides = [...slides];
       newSlides[currentSlideIndex] = newSlideHtml;
       // Simple sanitization
@@ -276,7 +283,7 @@ export const SlideGenerator: React.FC = () => {
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
 
-      const newSlideHtml = await generateNewSlide(provider, topic, cssContext, excluded);
+      const newSlideHtml = await generateNewSlide(provider, topic, cssContext, excluded, imageProvider);
       
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = newSlideHtml;
@@ -724,6 +731,21 @@ export const SlideGenerator: React.FC = () => {
             {errorMsg}
           </div>
         )}
+
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
+          <span className="font-medium">Image source</span>
+          <select
+            value={imageProvider}
+            onChange={(e) => setImageProvider(e.target.value as ImageProviderName)}
+            className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
+          >
+            {IMAGE_PROVIDER_OPTIONS.map(option => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">
           <textarea

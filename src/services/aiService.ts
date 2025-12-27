@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
 
 export type AiProviderName = 'gemini' | 'openai';
+export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay';
 
 // Helper: Exponential backoff for 429 errors
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -61,13 +62,6 @@ const getOpenAiApiKey = (): string | undefined => {
       win.__ENV__?.OPENAI_API_KEY;
     if (fromWindow && fromWindow.trim()) return fromWindow;
   }
-  try {
-    // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      // @ts-ignore
-      return import.meta.env.VITE_OPENAI_API_KEY || import.meta.env.OPENAI_API_KEY;
-    }
-  } catch (e) {}
   return undefined;
 };
 
@@ -121,6 +115,9 @@ const createResponseText = async (provider: AiProviderName, prompt: string, temp
   });
 };
 
+const FALLBACK_IMAGE_URL = 'https://placehold.co/1920x1080/1a1a1a/666666?text=Image';
+const imageSearchCache = new Map<string, string[]>();
+
 // Helper to safely extract section from AI response
 const extractSection = (html: string): string => {
   try {
@@ -163,15 +160,70 @@ const getPexelsApiKey = (): string | undefined => {
       win.__ENV__?.PEXELS_API_KEY;
     if (fromWindow && fromWindow.trim()) return fromWindow;
   }
-  try {
-    // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      // @ts-ignore
-      if (import.meta.env.VITE_PEXELS_API_KEY) return import.meta.env.VITE_PEXELS_API_KEY;
-      // @ts-ignore
-      if (import.meta.env.PEXELS_API_KEY) return import.meta.env.PEXELS_API_KEY;
-    }
-  } catch (e) {}
+  return undefined;
+};
+
+const getUnsplashApiKey = (): string | undefined => {
+  if (typeof process !== 'undefined' && process.env) {
+    return (
+      process.env.UNSPLASH_ACCESS_KEY ||
+      process.env.UNSPLASH_API_KEY ||
+      process.env.VITE_UNSPLASH_ACCESS_KEY ||
+      process.env.VITE_UNSPLASH_API_KEY ||
+      process.env.REACT_APP_UNSPLASH_ACCESS_KEY ||
+      process.env.REACT_APP_UNSPLASH_API_KEY ||
+      process.env.NEXT_PUBLIC_UNSPLASH_ACCESS_KEY
+    );
+  }
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as {
+      UNSPLASH_ACCESS_KEY?: string;
+      UNSPLASH_API_KEY?: string;
+      REACT_APP_UNSPLASH_ACCESS_KEY?: string;
+      REACT_APP_UNSPLASH_API_KEY?: string;
+      __ENV__?: {
+        UNSPLASH_ACCESS_KEY?: string;
+        UNSPLASH_API_KEY?: string;
+        REACT_APP_UNSPLASH_ACCESS_KEY?: string;
+        REACT_APP_UNSPLASH_API_KEY?: string;
+      };
+    };
+    const fromWindow =
+      win.REACT_APP_UNSPLASH_API_KEY ||
+      win.REACT_APP_UNSPLASH_ACCESS_KEY ||
+      win.UNSPLASH_API_KEY ||
+      win.UNSPLASH_ACCESS_KEY ||
+      win.__ENV__?.REACT_APP_UNSPLASH_API_KEY ||
+      win.__ENV__?.REACT_APP_UNSPLASH_ACCESS_KEY ||
+      win.__ENV__?.UNSPLASH_API_KEY ||
+      win.__ENV__?.UNSPLASH_ACCESS_KEY;
+    if (fromWindow && fromWindow.trim()) return fromWindow;
+  }
+  return undefined;
+};
+
+const getPixabayApiKey = (): string | undefined => {
+  if (typeof process !== 'undefined' && process.env) {
+    return (
+      process.env.PIXABAY_API_KEY ||
+      process.env.VITE_PIXABAY_API_KEY ||
+      process.env.REACT_APP_PIXABAY_API_KEY ||
+      process.env.NEXT_PUBLIC_PIXABAY_API_KEY
+    );
+  }
+  if (typeof window !== 'undefined') {
+    const win = window as unknown as {
+      PIXABAY_API_KEY?: string;
+      REACT_APP_PIXABAY_API_KEY?: string;
+      __ENV__?: { PIXABAY_API_KEY?: string; REACT_APP_PIXABAY_API_KEY?: string };
+    };
+    const fromWindow =
+      win.REACT_APP_PIXABAY_API_KEY ||
+      win.PIXABAY_API_KEY ||
+      win.__ENV__?.REACT_APP_PIXABAY_API_KEY ||
+      win.__ENV__?.PIXABAY_API_KEY;
+    if (fromWindow && fromWindow.trim()) return fromWindow;
+  }
   return undefined;
 };
 
@@ -211,19 +263,74 @@ const extractPaletteColor = (html: string): string | undefined => {
   return undefined;
 };
 
+const searchWithVariants = async (
+  term: string,
+  searchFn: (query: string) => Promise<string | null>
+): Promise<string | null> => {
+  const cleanTerm = term.trim();
+  const keywordList = cleanTerm
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const queries = keywordList.length > 0 ? keywordList : [cleanTerm];
+
+  for (const q of queries) {
+    if (q.split(' ').length <= 3) {
+      const imageUrl = await searchFn(q);
+      if (imageUrl) return imageUrl;
+    }
+    const keywordQuery = extractKeywords(q);
+    if (keywordQuery !== q.toLowerCase()) {
+      const imageUrl = await searchFn(keywordQuery);
+      if (imageUrl) return imageUrl;
+    }
+    const words = q.split(/\s+/);
+    const lastWord = words[words.length - 1];
+    if (lastWord.length > 3 && lastWord !== keywordQuery) {
+      const imageUrl = await searchFn(lastWord);
+      if (imageUrl) return imageUrl;
+    }
+  }
+
+  const genericTerms = ['abstract texture', 'minimal background', 'light gradient'];
+  const randomGeneric = genericTerms[Math.floor(Math.random() * genericTerms.length)];
+  return await searchFn(randomGeneric);
+};
+
+const pickFromCache = (cacheKey: string, usedUrls: Set<string>): string | null => {
+  const cached = imageSearchCache.get(cacheKey);
+  if (!cached || cached.length === 0) return null;
+
+  const available = cached.filter(url => !usedUrls.has(url));
+  const pool = available.length > 0 ? available : cached;
+  const randomIndex = Math.floor(Math.random() * pool.length);
+  const url = pool[randomIndex];
+  if (url) usedUrls.add(url);
+  return url || null;
+};
+
+const writeCache = (cacheKey: string, urls: string[]) => {
+  if (!urls || urls.length === 0) return;
+  const existing = imageSearchCache.get(cacheKey) || [];
+  const merged = [...new Set([...existing, ...urls])];
+  imageSearchCache.set(cacheKey, merged);
+};
+
 // Pexels API Integration
 async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: string): Promise<string> {
   const apiKey = getPexelsApiKey();
-  let cleanTerm = term.trim();
-  const fallbackUrl = `https://placehold.co/1920x1080/1a1a1a/666666?text=Image`;
 
   if (!apiKey) {
     console.warn("Pexels API Key not found. Using placeholder.");
-    return fallbackUrl;
+    return FALLBACK_IMAGE_URL;
   }
 
   const searchPexels = async (query: string): Promise<string | null> => {
     try {
+      const cacheKey = `pexels::${query}::${color || ''}`;
+      const cachedPick = pickFromCache(cacheKey, usedUrls);
+      if (cachedPick) return cachedPick;
+
       const colorParam = color ? `&color=${encodeURIComponent(color)}` : '';
       const response = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=40&orientation=landscape&size=large${colorParam}`, {
         headers: { Authorization: apiKey }
@@ -231,6 +338,11 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
       if (!response.ok) return null;
       const data = await response.json();
       if (data.photos && data.photos.length > 0) {
+        const urls = data.photos
+          .map((p: any) => p.src?.large2x || p.src?.large)
+          .filter(Boolean);
+        writeCache(cacheKey, urls);
+
         // Filter out photos that have already been used
         const availablePhotos = data.photos.filter((p: any) =>
           !usedUrls.has(p.src.large2x) && !usedUrls.has(p.src.large)
@@ -254,40 +366,135 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
     }
   };
 
-  const keywordList = cleanTerm
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-  const queries = keywordList.length > 0 ? keywordList : [cleanTerm];
-
-  for (const q of queries) {
-    if (q.split(' ').length <= 3) {
-      const imageUrl = await searchPexels(q);
-      if (imageUrl) return imageUrl;
-    }
-    const keywordQuery = extractKeywords(q);
-    if (keywordQuery !== q.toLowerCase()) {
-      const imageUrl = await searchPexels(keywordQuery);
-      if (imageUrl) return imageUrl;
-    }
-    const words = q.split(/\s+/);
-    const lastWord = words[words.length - 1];
-    if (lastWord.length > 3 && lastWord !== keywordQuery) {
-      const imageUrl = await searchPexels(lastWord);
-      if (imageUrl) return imageUrl;
-    }
-  }
-
-  // Fallback to abstract if specific fails
-  const genericTerms = ["abstract texture", "minimal background", "light gradient"];
-  const randomGeneric = genericTerms[Math.floor(Math.random() * genericTerms.length)];
-  const genericImage = await searchPexels(randomGeneric);
-  if (genericImage) return genericImage;
-
-  return fallbackUrl;
+  const result = await searchWithVariants(term, searchPexels);
+  return result || FALLBACK_IMAGE_URL;
 }
 
-const replaceImagePlaceholders = async (html: string, excludedUrls: string[] = [], paletteSource?: string): Promise<string> => {
+async function fetchUnsplashImage(term: string, usedUrls: Set<string>): Promise<string> {
+  const apiKey = getUnsplashApiKey();
+  if (!apiKey) {
+    console.warn("Unsplash API Key not found. Using placeholder.");
+    return FALLBACK_IMAGE_URL;
+  }
+
+  const searchUnsplash = async (query: string): Promise<string | null> => {
+    try {
+      const cacheKey = `unsplash::${query}`;
+      const cachedPick = pickFromCache(cacheKey, usedUrls);
+      if (cachedPick) return cachedPick;
+
+      const response = await fetch(
+        `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=30&orientation=landscape`,
+        { headers: { Authorization: `Client-ID ${apiKey}` } }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (data.results && data.results.length > 0) {
+        const urls = data.results
+          .map((p: any) => p.urls?.regular || p.urls?.full)
+          .filter(Boolean);
+        writeCache(cacheKey, urls);
+
+        const available = data.results.filter((p: any) =>
+          !usedUrls.has(p.urls?.regular) && !usedUrls.has(p.urls?.full)
+        );
+        const pool = available.length > 0 ? available : data.results;
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        const photo = pool[randomIndex];
+        const url = photo.urls?.regular || photo.urls?.full;
+        if (!url) return null;
+        usedUrls.add(url);
+        return url;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const result = await searchWithVariants(term, searchUnsplash);
+  return result || FALLBACK_IMAGE_URL;
+}
+
+async function fetchPixabayImage(term: string, usedUrls: Set<string>): Promise<string> {
+  const apiKey = getPixabayApiKey();
+  if (!apiKey) {
+    console.warn("Pixabay API Key not found. Using placeholder.");
+    return FALLBACK_IMAGE_URL;
+  }
+
+  const searchPixabay = async (query: string): Promise<string | null> => {
+    try {
+      const cacheKey = `pixabay::${query}`;
+      const cachedPick = pickFromCache(cacheKey, usedUrls);
+      if (cachedPick) return cachedPick;
+
+      const response = await fetch(
+        `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(query)}&image_type=photo&orientation=horizontal&per_page=40&safesearch=true`
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (data.hits && data.hits.length > 0) {
+        const urls = data.hits
+          .map((p: any) => p.largeImageURL || p.webformatURL)
+          .filter(Boolean);
+        writeCache(cacheKey, urls);
+
+        const available = data.hits.filter((p: any) =>
+          !usedUrls.has(p.largeImageURL) && !usedUrls.has(p.webformatURL)
+        );
+        const pool = available.length > 0 ? available : data.hits;
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        const photo = pool[randomIndex];
+        const url = photo.largeImageURL || photo.webformatURL;
+        if (!url) return null;
+        usedUrls.add(url);
+        return url;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const result = await searchWithVariants(term, searchPixabay);
+  return result || FALLBACK_IMAGE_URL;
+}
+
+const getAvailableImageProviders = (): ImageProviderName[] => {
+  const providers: ImageProviderName[] = [];
+  if (getPexelsApiKey()) providers.push('pexels');
+  if (getUnsplashApiKey()) providers.push('unsplash');
+  if (getPixabayApiKey()) providers.push('pixabay');
+  return providers;
+};
+
+const pickImageProvider = (provider: ImageProviderName): ImageProviderName => {
+  if (provider !== 'random') return provider;
+  const available = getAvailableImageProviders();
+  if (available.length === 0) return 'pexels';
+  const idx = Math.floor(Math.random() * available.length);
+  return available[idx];
+};
+
+async function fetchImageByProvider(
+  provider: ImageProviderName,
+  term: string,
+  usedUrls: Set<string>,
+  color?: string
+): Promise<string> {
+  const resolved = pickImageProvider(provider);
+  if (resolved === 'unsplash') return await fetchUnsplashImage(term, usedUrls);
+  if (resolved === 'pixabay') return await fetchPixabayImage(term, usedUrls);
+  return await fetchPexelsImage(term, usedUrls, color);
+}
+
+const replaceImagePlaceholders = async (
+  html: string,
+  excludedUrls: string[] = [],
+  paletteSource?: string,
+  imageProvider: ImageProviderName = 'pexels'
+): Promise<string> => {
   const usedUrls = new Set<string>(excludedUrls);
   const regex = /{{IMAGE:(.*?)}}/g;
   const matches = [...html.matchAll(regex)];
@@ -301,7 +508,7 @@ const replaceImagePlaceholders = async (html: string, excludedUrls: string[] = [
     const term = match[1];
     // We pass the Set by reference, so it gets updated inside (or we update it here)
     // fetchPexelsImage updates the set inside.
-    const url = await fetchPexelsImage(term, usedUrls, paletteColor);
+    const url = await fetchImageByProvider(imageProvider, term, usedUrls, paletteColor);
 
     // Replace ONLY the first occurrence of this specific match string in the current html state
     // This handles cases where {{IMAGE:cat}} appears twice; the first loop replaces the first one,
@@ -507,11 +714,15 @@ INSTRUCTIONS:
 Return ONLY the HTML for the section.
 `;
 
-export const generateSlides = async (provider: AiProviderName, topic: string): Promise<string> => {
+export const generateSlides = async (
+  provider: AiProviderName,
+  topic: string,
+  imageProvider: ImageProviderName
+): Promise<string> => {
   try {
     const finalPrompt = BASE_PROMPT.replace(/{topic}/g, topic);
     const text = await createResponseText(provider, finalPrompt, 1.5);
-    return await replaceImagePlaceholders(text);
+    return await replaceImagePlaceholders(text, [], undefined, imageProvider);
   } catch (error) {
     console.error("Error generating slides:", error);
     throw error;
@@ -523,7 +734,8 @@ export const regenerateSlide = async (
   topic: string,
   currentSlide: string,
   cssContext: string,
-  excludedImages: string[] = []
+  excludedImages: string[] = [],
+  imageProvider: ImageProviderName
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
@@ -535,7 +747,7 @@ export const regenerateSlide = async (
 
     const text = await createResponseText(provider, filledPrompt, 0.7);
     const sectionHtml = extractSection(text);
-    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext);
+    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
   } catch (error) {
     console.error("Error regenerating slide:", error);
     throw error;
@@ -546,7 +758,8 @@ export const generateNewSlide = async (
   provider: AiProviderName,
   topic: string,
   cssContext: string,
-  excludedImages: string[] = []
+  excludedImages: string[] = [],
+  imageProvider: ImageProviderName
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
@@ -557,7 +770,7 @@ export const generateNewSlide = async (
 
     const text = await createResponseText(provider, filledPrompt, 0.7);
     const sectionHtml = extractSection(text);
-    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext);
+    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
   } catch (error) {
     console.error("Error adding slide:", error);
     throw error;

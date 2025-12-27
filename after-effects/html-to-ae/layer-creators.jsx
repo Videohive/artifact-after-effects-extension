@@ -119,20 +119,25 @@
     var contents = layer.property("Contents");
 
     if (border.isUniform && isVisibleBorderSide(border.sides ? border.sides.top : null)) {
+      var strokeWidth = Number(border.widthPx) || 0;
+      var inset = strokeWidth > 0 ? strokeWidth : 0;
+      var innerW = Math.max(0, localBBox.w - inset);
+      var innerH = Math.max(0, localBBox.h - inset);
+
       var grp = contents.addProperty("ADBE Vector Group");
       grp.name = "Border";
 
       var grpContents = grp.property("Contents");
       var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
-      rect.property("Size").setValue([localBBox.w, localBBox.h]);
+      rect.property("Size").setValue([innerW, innerH]);
       if (border.radiusPx && border.radiusPx > 0)
         rect.property("Roundness").setValue(
-          clampRoundnessValue(border.radiusPx, localBBox.w, localBBox.h)
+          clampRoundnessValue(Math.max(0, border.radiusPx - inset / 2), innerW, innerH)
         );
 
       var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
       stroke.property("Color").setValue(parseCssColor(border.color));
-      stroke.property("Stroke Width").setValue(border.widthPx);
+      stroke.property("Stroke Width").setValue(strokeWidth);
       var opacityProp = stroke.property("ADBE Vector Stroke Opacity");
       if (opacityProp) opacityProp.setValue(Math.round(parseCssAlpha(border.color) * 100));
 
@@ -147,6 +152,9 @@
 
     function addSide(name, x1, y1, x2, y2, side) {
       if (!isVisibleBorderSide(side)) return;
+
+      var sw = Number(side.widthPx) || 0;
+      if (sw <= 0) return;
 
       var grp = contents.addProperty("ADBE Vector Group");
       grp.name = "Border_" + name;
@@ -173,7 +181,7 @@
 
       var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
       stroke.property("Color").setValue(parseCssColor(side.color));
-      stroke.property("Stroke Width").setValue(side.widthPx);
+      stroke.property("Stroke Width").setValue(sw);
       var opacityProp = stroke.property("ADBE Vector Stroke Opacity");
       if (opacityProp) opacityProp.setValue(Math.round(parseCssAlpha(side.color) * 100));
 
@@ -181,10 +189,15 @@
       fill.enabled = false
     }
 
-    addSide("Top", 0, 0, localBBox.w, 0, sides.top);
-    addSide("Right", localBBox.w, 0, localBBox.w, localBBox.h, sides.right);
-    addSide("Bottom", 0, localBBox.h, localBBox.w, localBBox.h, sides.bottom);
-    addSide("Left", 0, 0, 0, localBBox.h, sides.left);
+    var topInset = (Number(sides.top && sides.top.widthPx) || 0) / 2;
+    var rightInset = (Number(sides.right && sides.right.widthPx) || 0) / 2;
+    var bottomInset = (Number(sides.bottom && sides.bottom.widthPx) || 0) / 2;
+    var leftInset = (Number(sides.left && sides.left.widthPx) || 0) / 2;
+
+    addSide("Top", 0, topInset, localBBox.w, topInset, sides.top);
+    addSide("Right", localBBox.w - rightInset, 0, localBBox.w - rightInset, localBBox.h, sides.right);
+    addSide("Bottom", 0, localBBox.h - bottomInset, localBBox.w, localBBox.h - bottomInset, sides.bottom);
+    addSide("Left", leftInset, 0, leftInset, localBBox.h, sides.left);
 
     setLayerTopLeft(layer, localBBox);
     return layer;

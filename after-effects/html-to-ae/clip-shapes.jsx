@@ -6,6 +6,37 @@
     var w = Math.max(1, bbox.w);
     var h = Math.max(1, bbox.h);
 
+    debugLog(
+      "Clip shape " +
+        (node && node.name ? node.name : "node") +
+        " bbox=" +
+        w +
+        "x" +
+        h +
+        " borderRadiusPx=" +
+        (clip && typeof clip.borderRadiusPx !== "undefined" ? clip.borderRadiusPx : "n/a")
+    );
+    if (clip && clip.borderRadius) {
+      debugLog(
+        "Clip radii raw tl=" +
+          toNum(clip.borderRadius.topLeft && clip.borderRadius.topLeft.x) +
+          "," +
+          toNum(clip.borderRadius.topLeft && clip.borderRadius.topLeft.y) +
+          " tr=" +
+          toNum(clip.borderRadius.topRight && clip.borderRadius.topRight.x) +
+          "," +
+          toNum(clip.borderRadius.topRight && clip.borderRadius.topRight.y) +
+          " br=" +
+          toNum(clip.borderRadius.bottomRight && clip.borderRadius.bottomRight.x) +
+          "," +
+          toNum(clip.borderRadius.bottomRight && clip.borderRadius.bottomRight.y) +
+          " bl=" +
+          toNum(clip.borderRadius.bottomLeft && clip.borderRadius.bottomLeft.x) +
+          "," +
+          toNum(clip.borderRadius.bottomLeft && clip.borderRadius.bottomLeft.y)
+      );
+    }
+
     var layer = comp.layers.addShape();
     layer.name = safeName((node.name || "Clip") + "_clip");
 
@@ -131,6 +162,24 @@
     };
 
     clampRadii(out, w, h);
+    debugLog(
+      "Clip radii clamped tl=" +
+        out.tl.rx +
+        "," +
+        out.tl.ry +
+        " tr=" +
+        out.tr.rx +
+        "," +
+        out.tr.ry +
+        " br=" +
+        out.br.rx +
+        "," +
+        out.br.ry +
+        " bl=" +
+        out.bl.rx +
+        "," +
+        out.bl.ry
+    );
     out.hasAny =
       out.tl.rx > 0 ||
       out.tl.ry > 0 ||
@@ -145,15 +194,15 @@
   }
 
   function clampRadii(r, w, h) {
-    r.tl.rx = clampRadius(r.tl.rx, w / 2);
-    r.tr.rx = clampRadius(r.tr.rx, w / 2);
-    r.br.rx = clampRadius(r.br.rx, w / 2);
-    r.bl.rx = clampRadius(r.bl.rx, w / 2);
+    r.tl.rx = clampRadius(r.tl.rx, w);
+    r.tr.rx = clampRadius(r.tr.rx, w);
+    r.br.rx = clampRadius(r.br.rx, w);
+    r.bl.rx = clampRadius(r.bl.rx, w);
 
-    r.tl.ry = clampRadius(r.tl.ry, h / 2);
-    r.tr.ry = clampRadius(r.tr.ry, h / 2);
-    r.br.ry = clampRadius(r.br.ry, h / 2);
-    r.bl.ry = clampRadius(r.bl.ry, h / 2);
+    r.tl.ry = clampRadius(r.tl.ry, h);
+    r.tr.ry = clampRadius(r.tr.ry, h);
+    r.br.ry = clampRadius(r.br.ry, h);
+    r.bl.ry = clampRadius(r.bl.ry, h);
 
     // Normalize per side so sums don't exceed box
     normalizePair(r.tl, r.tr, "rx", w);

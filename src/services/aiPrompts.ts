@@ -165,6 +165,7 @@ CONSTRAINT:
    - Prioritize precise, concrete descriptors over generic terms.
    - NO filters (no grayscale, opacity, blur).
    - Photography must stay clean and natural.
+   - Images MUST use the {{IMAGE:...}} placeholder (no direct URLs).
 
 5. **IMAGE SHAPING (ADVANCED)**
 Image shaping is a semantic action, not a stylistic choice.

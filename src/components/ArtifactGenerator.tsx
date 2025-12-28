@@ -334,7 +334,7 @@ export const ArtifactGenerator: React.FC = () => {
       html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
       body { background: #000; display: flex; align-items: center; justify-content: center; }
       /* Ensure artifacts fit the iframe bounds (container already keeps 16:9). */
-      .artifact, .slide { width: 100% !important; height: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
+      .artifact, .slide { width: 100% !important; height: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; margin-bottom: 0 !important; }
       /* Fallback styling for images */
       img {
         /* Hide alt text by making it transparent */
@@ -524,6 +524,9 @@ export const ArtifactGenerator: React.FC = () => {
 
   const getHeadHtml = (headOverride = headContent) => {
     const base = headOverride.trim();
+    const forceArtifactMarginReset = `<style>
+      .artifact, .slide { margin-bottom: 0 !important; }
+    </style>`;
     if (!animationsEnabled) {
       return `${base}<style>
             /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
@@ -531,9 +534,9 @@ export const ArtifactGenerator: React.FC = () => {
               animation: none !important;
               transition: none !important;
             }
-          </style>`;
+          </style>${forceArtifactMarginReset}`;
     }
-    return base;
+    return `${base}${forceArtifactMarginReset}`;
   };
 
   const getArtifactHtmlByIndex = (index: number) => {

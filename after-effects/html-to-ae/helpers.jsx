@@ -118,6 +118,17 @@
   function normalizeSlides(data) {
     if (!data) return [];
     if (data instanceof Array) return data;
+    if (data.artifacts && data.artifacts instanceof Array) {
+      var rootSettings = data.settings || null;
+      var list = [];
+      for (var i = 0; i < data.artifacts.length; i++) {
+        var item = data.artifacts[i];
+        if (!item) continue;
+        if (!item.settings && rootSettings) item.settings = rootSettings;
+        list.push(item);
+      }
+      return list;
+    }
     if (data.slides && data.slides instanceof Array) return data.slides;
     return [data];
   }

@@ -43,7 +43,7 @@
         "Created from JSON node: " +
         (node.name || "") +
         " (" +
-        (rootData.slideId || "") +
+        (rootData.artifactId || rootData.slideId || "") +
         ")";
     }
 

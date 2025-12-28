@@ -29,7 +29,7 @@ import {
 } from './helpers';
 import { buildTextExtra } from './text';
 import { extractBorder, extractOutline } from './border';
-import { AEBounds, AENode, AERenderHints, AEExportOptions, AESlideExport } from './types';
+import { AEBounds, AENode, AERenderHints, AEExportOptions, AEArtifactExport } from './types';
 
 const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
   el instanceof (win as Window & typeof globalThis).HTMLElement;
@@ -409,7 +409,7 @@ export const extractSlideLayout = async (
   slide: HTMLElement,
   win: Window,
   options: AEExportOptions = {}
-): Promise<AESlideExport> => {
+): Promise<AEArtifactExport> => {
   await win.document.fonts.ready;
 
   const rootRect = slide.getBoundingClientRect();
@@ -939,7 +939,7 @@ export const extractSlideLayout = async (
   if (!root) throw new Error('extractSlideLayout: slide root is not visible or has zero size.');
 
   return {
-    slideId: slide.id,
+    artifactId: slide.id,
     fonts: extractFontData(win.document, win),
     settings: {
       fps,

@@ -657,7 +657,36 @@ export const ArtifactGenerator: React.FC = () => {
         results.push(jsonStructure);
       }
 
-      const jsonString = JSON.stringify(results, null, 2);
+      const settings = {
+        fps: exportFps,
+        duration: exportDuration,
+        resolution: {
+          width: exportResolution.width,
+          height: exportResolution.height,
+          label: exportResolution.label
+        }
+      };
+      const artifactsPayload = results.map(result => {
+        const artifactId =
+          (result as { artifactId?: string; slideId?: string }).artifactId ||
+          (result as { slideId?: string }).slideId ||
+          '';
+        const { settings: _settings, ...rest } = result as Record<string, any>;
+        return {
+          ...rest,
+          artifactId
+        };
+      });
+
+      const projectPayload = {
+        name: projectTitle.trim(),
+        description: projectDescription.trim(),
+        tags: projectTags.trim(),
+        settings,
+        artifacts: artifactsPayload
+      };
+
+      const jsonString = JSON.stringify(projectPayload, null, 2);
       await navigator.clipboard.writeText(jsonString);
 
       setCopiedJsonProject(true);

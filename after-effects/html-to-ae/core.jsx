@@ -9,7 +9,7 @@
     var dur = pickNumber([data.duration, settings && settings.duration], CFG.defaultDuration);
     var fps = pickNumber([data.fps, settings && settings.fps], CFG.defaultFPS);
 
-    var slideName = safeName(data.slideId || "slide");
+    var slideName = safeName(data.artifactId || data.slideId || "slide");
 
     // ?? ������ ����� � ������ slideId
     SLIDE_FOLDER = app.project.items.addFolder(slideName);

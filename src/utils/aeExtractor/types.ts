@@ -136,8 +136,8 @@ export interface AENode {
   };
 }
 
-export interface AESlideExport {
-  slideId: string;
+export interface AEArtifactExport {
+  artifactId: string;
   fonts?: {
     urls: string[];
     postNames: Array<{
@@ -154,4 +154,12 @@ export interface AESlideExport {
     scale: number;
   };
   root: AENode;
+}
+
+export interface AEProjectExport {
+  settings: AEExportSettings;
+  name: string;
+  description: string;
+  tags: string;
+  artifacts: AEArtifactExport[];
 }

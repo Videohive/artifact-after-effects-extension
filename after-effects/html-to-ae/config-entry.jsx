@@ -50,7 +50,9 @@
 
   var projectFolder = null;
   if (slides.length > 1) {
-    projectFolder = app.project.items.addFolder("Slides");
+    var isProjectJson = data && data.artifacts && data.artifacts instanceof Array;
+    var folderName = isProjectJson ? safeName(data.name || "Project") : "Slides";
+    projectFolder = app.project.items.addFolder(folderName);
   }
 
   var slideComps = [];

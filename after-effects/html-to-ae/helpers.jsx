@@ -79,6 +79,27 @@
     return false;
   }
 
+  function getEffectiveBackgroundColor(style) {
+    if (!style) return null;
+    var bg = style.backgroundColor;
+    if (bg && !isTransparentColor(bg)) return bg;
+
+    var grads = style.backgroundGradients;
+    if (grads && grads.length) {
+      var first = grads[0];
+      if (first && first.stops && first.stops.length && first.stops[0].color) {
+        var c = first.stops[0].color;
+        if (c && !isTransparentColor(c)) return c;
+      }
+    }
+
+    return null;
+  }
+
+  function hasEffectiveBackground(style) {
+    return !!getEffectiveBackgroundColor(style);
+  }
+
   function safeName(n) {
     if (!n) return "Layer";
     var s = String(n);

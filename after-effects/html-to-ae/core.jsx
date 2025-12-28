@@ -77,28 +77,30 @@
 
     var isRoot = node === rootData.root;
 
+    var wantsPrecomp =
+      (node.renderHints && node.renderHints.needsPrecomp === true) ||
+      (node.clip && node.clip.enabled === true);
+    var allowRootPrecomp = false;
+    if (isRoot && wantsPrecomp && node.bbox) {
+      var rootW = Math.round(node.bbox.w);
+      var rootH = Math.round(node.bbox.h);
+      allowRootPrecomp = rootW < comp.width || rootH < comp.height;
+    }
+    var needsPrecomp = (!isRoot || allowRootPrecomp) && wantsPrecomp;
+
     // ----------------------------
     // ROOT BACKGROUND
     // ----------------------------
     if (isRoot && CFG.createBackgroundFromRoot) {
-      if (node.style && node.style.backgroundColor) {
-        createSolidBackground(
-          comp,
-          node.style.backgroundColor,
-          comp.width,
-          comp.height,
-          "Background"
-        );
+      var bgColor = node.style ? getEffectiveBackgroundColor(node.style) : null;
+      var fillsComp =
+        node.bbox &&
+        Math.round(node.bbox.w) >= comp.width &&
+        Math.round(node.bbox.h) >= comp.height;
+      if (bgColor && fillsComp && !needsPrecomp) {
+        createSolidBackground(comp, bgColor, comp.width, comp.height, "Background");
       }
     }
-
-    // ----------------------------
-    // SHOULD THIS NODE CREATE A PRECOMP?
-    // ----------------------------
-    var needsPrecomp =
-      !isRoot &&
-      ((node.renderHints && node.renderHints.needsPrecomp === true) ||
-        (node.clip && node.clip.enabled === true));
 
     var layer = null;
 
@@ -133,19 +135,14 @@
         };
 
         // 5. ��� ������ (���� ����)
-        if (
-          CFG.makeShapeForGroupsWithBg &&
-          node.style &&
-          node.style.backgroundColor &&
-          !isTransparentColor(node.style.backgroundColor)
-        ) {
+        if (CFG.makeShapeForGroupsWithBg && node.style && hasEffectiveBackground(node.style)) {
           var bgShape = createRectShape(childComp, node, {
             x: 0,
             y: 0,
             w: childComp.width,
             h: childComp.height,
           });
-          bgShape.moveToEnd();
+          if (bgShape) bgShape.moveToEnd();
         }
         if (hasBorder(node.border)) {
           var borderShape = createBorderShape(childComp, node, {
@@ -180,13 +177,7 @@
 
       // ��� ������ (���� ����)
       var bgShape = null;
-      if (
-        !isRoot &&
-        CFG.makeShapeForGroupsWithBg &&
-        node.style &&
-        node.style.backgroundColor &&
-        !isTransparentColor(node.style.backgroundColor)
-      ) {
+      if (CFG.makeShapeForGroupsWithBg && node.style && hasEffectiveBackground(node.style)) {
         var bgBBox = getLocalBBox(node, origin);
         bgShape = createRectShape(comp, node, bgBBox);
         // Background is created before children, so it will already sit below them.
@@ -194,7 +185,7 @@
         applyDropShadow(bgShape, node.style);
       }
 
-      if (!isRoot && hasBorder(node.border)) {
+      if (hasBorder(node.border)) {
         var borderBBox = getLocalBBox(node, origin);
         var borderShape = createBorderShape(comp, node, borderBBox);
         if (borderShape && parentLayer) borderShape.parent = parentLayer;

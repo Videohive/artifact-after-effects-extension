@@ -77,11 +77,12 @@
     if (br > 0) rect.property("Roundness").setValue(clampRoundnessValue(br, localBBox.w, localBBox.h));
 
     var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
-    fill.property("Color").setValue(parseCssColor(node.style.backgroundColor));
+    var fillColor = getEffectiveBackgroundColor(node.style);
+    fill.property("Color").setValue(parseCssColor(fillColor));
 
     // Position: shapes have their own Transform inside group; easiest: layer position to bbox center
     setLayerTransform(layer, localBBox);
-    applyOpacity(layer, null, parseCssAlpha(node.style.backgroundColor));
+    applyOpacity(layer, null, parseCssAlpha(fillColor));
 
     return layer;
   }

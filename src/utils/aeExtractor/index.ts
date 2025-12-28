@@ -413,17 +413,33 @@ export const extractSlideLayout = async (
   await win.document.fonts.ready;
 
   const rootRect = slide.getBoundingClientRect();
-  const sourceW = clampFinite(rootRect.width);
-  const sourceH = clampFinite(rootRect.height);
+  const docEl = win.document.documentElement;
+  const viewportW = clampFinite(docEl.clientWidth || win.innerWidth);
+  const viewportH = clampFinite(docEl.clientHeight || win.innerHeight);
+  const baseSourceW = clampFinite(rootRect.width);
+  const baseSourceH = clampFinite(rootRect.height);
 
   const targetW = resolveExportSize(options.targetWidth, TARGET_W);
   const targetH = resolveExportSize(options.targetHeight, TARGET_H);
   const fps = resolveExportValue(options.fps, DEFAULT_FPS);
   const duration = resolveExportValue(options.duration, DEFAULT_DURATION);
 
+  const useViewportScale =
+    options.useViewportScale === true ||
+    (viewportW > 0 &&
+      viewportH > 0 &&
+      (baseSourceW < viewportW * 0.98 || baseSourceH < viewportH * 0.98));
+  const sourceW = useViewportScale ? viewportW : baseSourceW;
+  const sourceH = useViewportScale ? viewportH : baseSourceH;
+
   const scaleX = sourceW > 0 ? targetW / sourceW : 1;
   const scaleY = sourceH > 0 ? targetH / sourceH : 1;
   const scale = clampFinite(Math.min(scaleX, scaleY)) || 1;
+
+  const coordRootRect =
+    useViewportScale && viewportW > 0 && viewportH > 0
+      ? new DOMRect(0, 0, viewportW, viewportH)
+      : rootRect;
 
   const mergeBounds = (base: AEBounds, items: AENode[]): AEBounds => {
     let minX = base.x;
@@ -455,8 +471,8 @@ export const extractSlideLayout = async (
 
     const isHtmlEl = isHTMLElement(el, win);
     const rawBBox: AEBounds = {
-      x: rect.left - rootRect.left,
-      y: rect.top - rootRect.top,
+      x: rect.left - coordRootRect.left,
+      y: rect.top - coordRootRect.top,
       w: rect.width,
       h: rect.height
     };
@@ -539,10 +555,16 @@ export const extractSlideLayout = async (
       if (!contentText && !hasPaint) return null;
       if (!isVisible(pseudoStyle, rect)) return null;
 
-      let rawBox = resolvePseudoBox(win, pseudoStyle, rect, rootRect);
+      let rawBox = resolvePseudoBox(win, pseudoStyle, rect, coordRootRect);
 
       if ((rawBox.w <= 0 || rawBox.h <= 0) && contentText) {
-        const cleanup = createPseudoTextElement(win.document, contentText, pseudoStyle, rootRect, rawBox);
+        const cleanup = createPseudoTextElement(
+          win.document,
+          contentText,
+          pseudoStyle,
+          coordRootRect,
+          rawBox
+        );
         try {
           const measureEl = win.document.body.lastElementChild as HTMLElement;
           const m = measureEl.getBoundingClientRect();
@@ -633,7 +655,7 @@ export const extractSlideLayout = async (
             win,
             textEl,
             win.getComputedStyle(textEl),
-            rootRect,
+            coordRootRect,
             scale,
             pseudoBBox
           );
@@ -805,7 +827,7 @@ export const extractSlideLayout = async (
 
         extra = {
           ...extra,
-          ...buildTextExtra(win, el, textStyle, rootRect, scale, bbox)
+          ...buildTextExtra(win, el, textStyle, coordRootRect, scale, bbox)
         };
       } else {
         pushBefore();
@@ -822,7 +844,7 @@ export const extractSlideLayout = async (
             isAsset: false,
             isHidden: false
           },
-          ...buildTextExtra(win, el, textStyle, rootRect, scale, bbox),
+          ...buildTextExtra(win, el, textStyle, coordRootRect, scale, bbox),
           border: null,
           outline: null,
           clip: {
@@ -859,7 +881,7 @@ export const extractSlideLayout = async (
             isAsset: false,
             isHidden: false
           },
-          ...buildTextExtra(win, el, style, rootRect, scale, bbox, directTextNodes),
+          ...buildTextExtra(win, el, style, coordRootRect, scale, bbox, directTextNodes),
           border: null,
           outline: null,
           clip: {

@@ -83,6 +83,7 @@ export interface AEExportOptions {
   fps?: number;
   duration?: number;
   resolutionLabel?: string;
+  useViewportScale?: boolean;
 }
 
 export interface AENode {

@@ -387,6 +387,19 @@ const extractFontData = (
     addPostName(font.family, font.weight, font.style);
   });
 
+  // Fallback: collect used fonts from computed styles (helps when FontFaceSet is empty).
+  const root = doc.body || doc.documentElement;
+  if (root) {
+    const els = Array.from(root.querySelectorAll('*'));
+    els.forEach(el => {
+      if (!isHTMLElement(el, win)) return;
+      const text = (el.textContent || '').trim();
+      if (!text) return;
+      const style = win.getComputedStyle(el);
+      addPostName(style.fontFamily, style.fontWeight, style.fontStyle);
+    });
+  }
+
   const postNames = Array.from(postNameMap.entries()).map(([name, styles]) => ({
     name,
     styles: Array.from(styles)

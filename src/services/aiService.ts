@@ -477,9 +477,20 @@ const replaceImagePlaceholders = async (
 const BASE_PROMPT = `
 Role: World-Class Art Director & Frontend Engineer.
 Mindset: Think like a high-end creative agency. Reference the visual standards of: **Active Theory, Resn, Hello Monday, Fantasy, Locomotive, Huge, and Jam3**. Avoid "safe", "default", or "corporate-template" choices.
-Task: Create a distinctive visual identity and a set of HTML slides for the User's Topic.
+
+Task:
+Create a distinctive visual identity and a set of DESIGN ARTIFACTS rendered in HTML + SVG.
 
 TOPIC: "{topic}"
+
+// === PATCH: ARTIFACT MODE SWITCH ===
+ARTIFACT MODE: {artifact_mode}
+(Allowed values: slides | icons | patterns | textures | mixed)
+
+A DESIGN ARTIFACT is a self-contained visual object.
+Slides are only ONE possible artifact type.
+All phases below remain active and MUST be interpreted through the selected ARTIFACT MODE.
+// === END PATCH ===
 
 PHASE 1: ART DIRECTION (INTERNAL – THINK FIRST)
 
@@ -512,30 +523,49 @@ PHASE 1: ART DIRECTION (INTERNAL – THINK FIRST)
 
 PHASE 2: NARRATIVE & STRUCTURE (INTERNAL)
 
+// === PATCH: INTERPRETATION RULE ===
+Interpret "narrative" based on ARTIFACT MODE:
+- slides → story flow, pacing, progression
+- icons → semantic system, recognizability, hierarchy
+- patterns → rhythm, repetition, density logic
+- textures → frequency, scale, material illusion
+// === END PATCH ===
+
 1. **CONSTRAINT CHECK**
    - Quantity:
-     - If the user specifies number of slides → generate EXACTLY that number.
-     - Otherwise → generate 5 slides.
+     - If the user specifies number of artifacts/slides/icons/patterns/textures → generate EXACTLY that number.
+     - Otherwise:
+       - slides → generate 5 artifacts
+       - icons → generate 12 artifacts
+       - patterns → generate 6 artifacts
+       - textures → generate 3 artifacts
    - Structure:
-     - If slide types are specified → follow them STRICTLY.
+     - If artifact types are specified → follow them STRICTLY.
 
 2. **STORY FLOW**
    - If no structure is given:
-     - Design the narrative yourself.
-     - Choose a structure appropriate to the genre:
-       - Pitch deck
-       - Portfolio
-       - Educational
-       - Brand story
-   - Each slide must have a clear purpose.
+     - If ARTIFACT MODE includes "slides":
+       - Design the narrative yourself.
+       - Choose a structure appropriate to the genre:
+         - Pitch deck
+         - Portfolio
+         - Educational
+         - Brand story
+     - If ARTIFACT MODE does NOT include "slides":
+       - Do NOT create slide-like story flow.
+       - Design a system progression (variation, density, hierarchy) appropriate to the artifact type.
 
 3. **LAYOUT VARIETY**
-   - Every slide MUST use a different layout archetype.
-   - Avoid repetition.
-   - Layout must support the content:
-     - Emotional → bold typography, minimal text
-     - Informational → structured grids
-     - Inspirational → image-led compositions
+   - If ARTIFACT MODE includes "slides":
+     - Every slide MUST use a different layout archetype.
+     - Avoid repetition.
+     - Layout must support the content:
+       - Emotional → bold typography, minimal text
+       - Informational → structured grids
+       - Inspirational → image-led compositions
+   - If ARTIFACT MODE does NOT include "slides":
+     - Every artifact MUST vary in form while preserving system coherence.
+     - Avoid producing the same silhouette or rhythm repeatedly.
 
 PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
 
@@ -561,7 +591,7 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
 
 3. SVG DESIGN LAYER (MEANING-DRIVEN EXECUTION)
 
-SVG is the functional and symbolic skeleton of the slide. It must be authored as a semantic layer that directly responds to the User's input.
+SVG is the functional and symbolic skeleton of the artifact(s). It must be authored as a semantic layer that directly responds to the User's input.
 
 LOGIC FLOW:
 1. EXPLICIT SPECIFICATIONS: If the User's prompt contains any descriptions of visual forms, patterns, behaviors, or graphic elements, you MUST translate them into SVG code with absolute fidelity. Their intent is your primary technical constraint. 
@@ -582,6 +612,7 @@ CONSTRAINT:
    - Prioritize precise, concrete descriptors over generic terms.
    - NO filters (no grayscale, opacity, blur).
    - Photography must stay clean and natural.
+   - If ARTIFACT MODE does NOT include "slides": Do NOT use images unless the user explicitly requests photographic imagery.
 
 5. **IMAGE SHAPING (ADVANCED)**
 Image shaping is a semantic action, not a stylistic choice.
@@ -604,18 +635,19 @@ Shaping should originate from context:
 If the image communicates the same meaning without shaping,
 shaping must not be applied.
 
-Shaping must respond to the slide’s narrative role,
+Shaping must respond to slide’s narrative role,
 not to visual balance or decoration.
 
 6. **VISUAL ANCHORS**
-   - Every slide MUST contain at least ONE strong visual anchor:
+   - Every artifact MUST contain at least ONE strong visual anchor:
      - A large number
      - A bold keyword
      - A graphic element
      - A striking image shape
+   - If ARTIFACT MODE does NOT include "slides": interpret anchors as dominant gesture, density break, or signature form.
 
 7. **DESIGN DISCIPLINE**
-   - One strong idea per slide.
+   - One strong idea per artifact.
 
 HARD CONSTRAINT: TEXT ORIENTATION (NON-NEGOTIABLE)
 
@@ -663,17 +695,19 @@ PHASE 4: TECHNICAL EXECUTION
     • Include primary keywords naturally, no stuffing
 
 2. **LAYOUT**
-- Width: 100vw
-- Height: 56.25vw (16:9)
-- Slides must be visible by default with no user interaction.
-- Do NOT use radio inputs or CSS that hides slides by default
-  (no opacity: 0 or visibility: hidden on .slide).
+- If ARTIFACT MODE includes "slides":
+  - Width: 100vw
+  - Height: 56.25vw (16:9)
+- If ARTIFACT MODE does NOT include "slides":
+  - The canvas may be any proportion, but must present artifacts clearly and beautifully in a curated layout.
+
+- Artifacts must be visible by default with no user interaction.
+- Do NOT use radio inputs or CSS that hides artifacts by default (no opacity: 0 or visibility: hidden on the main artifact blocks).
+
 - **PRO DIRECTION:**
   - Do not feel constrained by standard flow.
-  - Use any combination of CSS Grid, Flexbox, and Absolute Positioning
-    to break the “web-page” feel.
-  - Feel free to use negative margins, calc-based offsets,
-    and intentional overlapping for high-end editorial composition.
+  - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the “web-page” feel.
+  - Feel free to use negative margins, calc-based offsets, and intentional overlapping for high-end editorial composition.
 
 3. **CREATIVE MODE**
 - Bolder is better.
@@ -683,7 +717,7 @@ PHASE 4: TECHNICAL EXECUTION
   - Slight asymmetry > perfect symmetry.
   - Avoid template-looking layouts.
 
-  Do not fear long HTML files. Complex SVG paths and detailed geometric patterns are encouraged to achieve the visual standards of the referenced agencies.
+Do not fear long HTML files. Complex SVG paths and detailed geometric patterns are encouraged to achieve the visual standards of the referenced agencies.
 
 PHASE 5: GENERATION
 
@@ -691,40 +725,69 @@ Generate the final HTML.
 `;
 
 const REGENERATE_PROMPT = `
-Role: Senior Frontend Developer.
-Task: Redesign this specific slide using the EXISTING visual identity.
+Role: Senior Frontend Developer & Art Director.
+Task: Add a NEW DESIGN ARTIFACT using the EXISTING visual identity.
 
 CONTEXT:
 Topic: {topic}
+ARTIFACT MODE: {artifact_mode}
 Existing CSS (Strictly Follow This): {cssContext}
-Current Slide HTML: {currentSlide}
+Existing Artifacts (HTML/SVG context): {artifactsContext}
 
 INSTRUCTIONS:
-1. Return EXACTLY ONE \`<section class="slide">\` element.
-2. **STRICTLY** use the CSS variables defined in \`Existing CSS\`. Do not invent new colors.
-3. Change the layout structure (e.g., move text to the left, image to the right), but keep the fonts/colors identical.
-4. Use \`{{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}}\` for images.
-   Provide EXACTLY 10 concise, specific keywords/phrases (2-4 words each).
+1. Add EXACTLY ONE new artifact.
+2. The artifact type MUST match ARTIFACT MODE.
+3. STRICTLY use the existing CSS variables and visual language.
+4. Do NOT modify existing artifacts.
+5. The new artifact MUST:
+   - introduce a new variation
+   - avoid repeating silhouettes or compositions
+6. SVG rules:
+   - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
+   - no external assets
+7. If ARTIFACT MODE includes "slides":
+   - return one <section class="slide">
+   - images allowed via {{IMAGE:...}} (10 keywords)
+8. If ARTIFACT MODE ≠ slides:
+   - return ONLY the SVG/HTML node of the artifact
+   - no narrative, no images
 
-Return ONLY the HTML for the section.
+Return ONLY the HTML/SVG for the new artifact.
 `;
 
 const ADD_SLIDE_PROMPT = `
-Role: Senior Frontend Developer.
-Task: Add a NEW slide to the deck.
+Role: Senior Frontend Developer & Art Director.
+Task: Redesign ONE existing DESIGN ARTIFACT while preserving the visual identity.
 
 CONTEXT:
 Topic: {topic}
+ARTIFACT MODE: {artifact_mode}
 Existing CSS (Strictly Follow This): {cssContext}
+Artifact to Update (HTML/SVG): {currentArtifact}
 
 INSTRUCTIONS:
-1. Return EXACTLY ONE \`<section class="slide">\` element.
-2. **STRICTLY** use the CSS variables defined in \`Existing CSS\`.
-3. Create a layout type that isn't typically just "text + image" (e.g., a quote slide, a 3-column grid, a big number slide).
-4. Use \`{{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}}\` for images.
-   Provide EXACTLY 10 concise, specific keywords/phrases (2-4 words each).
+1. Update EXACTLY ONE artifact.
+2. Preserve:
+   - colors
+   - fonts
+   - stroke logic
+   - overall visual language
+3. Change:
+   - geometry
+   - composition
+   - rhythm
+   - density or hierarchy
+4. Do NOT invent new CSS variables.
+5. SVG rules:
+   - primitives only
+   - no filters, no images unless ARTIFACT MODE includes "slides"
+6. If ARTIFACT MODE includes "slides":
+   - return one <section class="slide">
+   - layout MUST differ from the original
+7. If ARTIFACT MODE ≠ slides:
+   - return ONLY the updated SVG/HTML node
 
-Return ONLY the HTML for the section.
+Return ONLY the updated artifact.
 `;
 
 export const generateSlides = async (

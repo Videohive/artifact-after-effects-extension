@@ -616,6 +616,44 @@
           var tq = lastQ ? [2 * x - lastQ[0], 2 * y - lastQ[1]] : [x, y];
           addQuadratic(tq[0], tq[1], tx, ty);
         }
+      } else if (cmd === "A" || cmd === "a") {
+        if (i + 6 >= tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          debugLog("SVG: path incomplete A at i=" + i);
+          i = tokens.length;
+          break;
+        }
+        while (i + 6 < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
+          var rx = parseFloat(tokens[i++]);
+          var ry = parseFloat(tokens[i++]);
+          var xAxisRotation = parseFloat(tokens[i++]);
+          var largeArcFlag = parseFloat(tokens[i++]);
+          var sweepFlag = parseFloat(tokens[i++]);
+          var ax = parseSvgPathNumber(tokens[i++], svgData.width);
+          var ay = parseSvgPathNumber(tokens[i++], svgData.height);
+          if (cmd === "a") {
+            ax += x;
+            ay += y;
+          }
+          if (!isFinite(rx) || !isFinite(ry) || rx === 0 || ry === 0) {
+            addLine(ax, ay);
+            continue;
+          }
+          var curves = arcToCubicCurves(
+            x,
+            y,
+            rx,
+            ry,
+            xAxisRotation,
+            largeArcFlag,
+            sweepFlag,
+            ax,
+            ay
+          );
+          for (var ci = 0; ci < curves.length; ci++) {
+            var c = curves[ci];
+            addCubic(c[0], c[1], c[2], c[3], c[4], c[5]);
+          }
+        }
       } else if (cmd === "Z" || cmd === "z") {
         if (sub) {
           sub.closed = true;
@@ -703,6 +741,95 @@
     }
 
     return tokens;
+  }
+
+  function arcToCubicCurves(x1, y1, rx, ry, angle, largeArcFlag, sweepFlag, x2, y2) {
+    var out = [];
+    var rad = (parseFloat(angle) || 0) * (Math.PI / 180);
+    var cosPhi = Math.cos(rad);
+    var sinPhi = Math.sin(rad);
+
+    var dx = (x1 - x2) / 2;
+    var dy = (y1 - y2) / 2;
+    var x1p = cosPhi * dx + sinPhi * dy;
+    var y1p = -sinPhi * dx + cosPhi * dy;
+
+    rx = Math.abs(rx);
+    ry = Math.abs(ry);
+    if (rx === 0 || ry === 0) return out;
+
+    var lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+    if (lambda > 1) {
+      var s = Math.sqrt(lambda);
+      rx *= s;
+      ry *= s;
+    }
+
+    var rx2 = rx * rx;
+    var ry2 = ry * ry;
+    var x1p2 = x1p * x1p;
+    var y1p2 = y1p * y1p;
+    var sign = largeArcFlag == sweepFlag ? -1 : 1;
+    var sq = (rx2 * ry2 - rx2 * y1p2 - ry2 * x1p2) / (rx2 * y1p2 + ry2 * x1p2);
+    if (sq < 0) sq = 0;
+    var coef = sign * Math.sqrt(sq);
+    var cxp = (coef * rx * y1p) / ry;
+    var cyp = (coef * -ry * x1p) / rx;
+
+    var cx = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2;
+    var cy = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2;
+
+    var vx1 = (x1p - cxp) / rx;
+    var vy1 = (y1p - cyp) / ry;
+    var vx2 = (-x1p - cxp) / rx;
+    var vy2 = (-y1p - cyp) / ry;
+
+    var theta1 = Math.atan2(vy1, vx1);
+    var delta = Math.atan2(vx1 * vy2 - vy1 * vx2, vx1 * vx2 + vy1 * vy2);
+
+    if (!sweepFlag && delta > 0) {
+      delta -= Math.PI * 2;
+    } else if (sweepFlag && delta < 0) {
+      delta += Math.PI * 2;
+    }
+
+    var segments = Math.ceil(Math.abs(delta) / (Math.PI / 2));
+    var deltaSeg = delta / segments;
+
+    for (var i = 0; i < segments; i++) {
+      var t1 = theta1 + i * deltaSeg;
+      var t2 = t1 + deltaSeg;
+
+      var sinT1 = Math.sin(t1);
+      var cosT1 = Math.cos(t1);
+      var sinT2 = Math.sin(t2);
+      var cosT2 = Math.cos(t2);
+
+      var alpha = (4 / 3) * Math.tan(deltaSeg / 4);
+
+      var x1c = cosT1 - alpha * sinT1;
+      var y1c = sinT1 + alpha * cosT1;
+      var x2c = cosT2 + alpha * sinT2;
+      var y2c = sinT2 - alpha * cosT2;
+      var x2p = cosT2;
+      var y2p = sinT2;
+
+      var p1 = mapEllipsePoint(x1c, y1c, rx, ry, cosPhi, sinPhi, cx, cy);
+      var p2 = mapEllipsePoint(x2c, y2c, rx, ry, cosPhi, sinPhi, cx, cy);
+      var p = mapEllipsePoint(x2p, y2p, rx, ry, cosPhi, sinPhi, cx, cy);
+
+      out.push([p1.x, p1.y, p2.x, p2.y, p.x, p.y]);
+    }
+
+    return out;
+  }
+
+  function mapEllipsePoint(x, y, rx, ry, cosPhi, sinPhi, cx, cy) {
+    var xp = x * rx;
+    var yp = y * ry;
+    var xr = cosPhi * xp - sinPhi * yp;
+    var yr = sinPhi * xp + cosPhi * yp;
+    return { x: xr + cx, y: yr + cy };
   }
 
   function allSvgPointsFinite(points) {

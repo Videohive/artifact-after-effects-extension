@@ -1,4 +1,4 @@
-import { SlideGenerator } from './components/SlideGenerator';
+import { ArtifactGenerator } from './components/ArtifactGenerator';
 import { Presentation } from 'lucide-react';
 
 export default function App() {
@@ -20,7 +20,7 @@ export default function App() {
 
       <main className="flex-1 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <SlideGenerator />
+          <ArtifactGenerator />
         </div>
       </main>
     </div>

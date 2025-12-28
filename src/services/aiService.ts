@@ -3,6 +3,19 @@ import { GoogleGenAI } from "@google/genai";
 
 export type AiProviderName = 'gemini' | 'openai';
 export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay';
+export type ArtifactMode =
+  | 'auto'
+  | 'slides'
+  | 'icons'
+  | 'patterns'
+  | 'textures'
+  | 'type-specimen'
+  | 'ui-modules'
+  | 'covers'
+  | 'posters'
+  | 'grids'
+  | 'dividers'
+  | 'mixed';
 
 // Helper: Exponential backoff for 429 errors
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -117,19 +130,28 @@ const createResponseText = async (provider: AiProviderName, prompt: string, temp
 
 const FALLBACK_IMAGE_URL = 'https://placehold.co/1920x1080/1a1a1a/666666?text=Image';
 
-// Helper to safely extract section from AI response
-const extractSection = (html: string): string => {
+const shouldIncludeSlides = (artifactMode: ArtifactMode) =>
+  artifactMode === 'slides' || artifactMode === 'mixed';
+
+// Helper to safely extract a single artifact wrapper from AI response
+const extractArtifactSection = (html: string, artifactMode: ArtifactMode): string => {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     const section = doc.querySelector('section');
     if (section) {
-      if (!section.classList.contains('slide')) {
-        section.classList.add('slide');
-      }
+      section.classList.add('artifact');
+      if (shouldIncludeSlides(artifactMode)) section.classList.add('slide');
       // CRITICAL: Strip any inline styles that might mess up fonts/layout consistency
       section.removeAttribute('style');
       return section.outerHTML;
+    }
+    const root = doc.body.firstElementChild;
+    if (root && root instanceof HTMLElement) {
+      root.classList.add('artifact');
+      if (shouldIncludeSlides(artifactMode)) root.classList.add('slide');
+      root.removeAttribute('style');
+      return root.outerHTML;
     }
     const match = html.match(/<section[\s\S]*?<\/section>/i);
     return match ? match[0] : html;
@@ -485,7 +507,22 @@ TOPIC: "{topic}"
 
 // === PATCH: ARTIFACT MODE SWITCH ===
 ARTIFACT MODE: {artifact_mode}
-(Allowed values: slides | icons | patterns | textures | mixed)
++ARTIFACT MODE REFERENCE:
++
++auto          ? infer from TOPIC and declare chosen mode in <meta name="artifact-mode">
++slides        – narrative layouts
++icons         – symbolic UI glyphs
++patterns      – seamless graphic systems
++textures      – vector material surfaces
++type-specimen – typographic compositions
++ui-modules    – interface blocks
++covers        – single-frame compositions
++posters       – expressive editorial layouts
++grids         – layout systems
++dividers      – ornamental separators
++mixed         – controlled combination of the above
++
++Interpret all following phases according to the selected ARTIFACT MODE.
 
 A DESIGN ARTIFACT is a self-contained visual object.
 Slides are only ONE possible artifact type.
@@ -529,16 +566,28 @@ Interpret "narrative" based on ARTIFACT MODE:
 - icons → semantic system, recognizability, hierarchy
 - patterns → rhythm, repetition, density logic
 - textures → frequency, scale, material illusion
+- type-specimen → typographic exploration, hierarchy, pairing logic
+- ui-modules → system structure, affordances, density control
+- covers → single-frame impact, hierarchy, focal balance
+- posters → graphic statement, contrast, typographic dominance
+- grids → structure logic, modularity, alignment tension
+- dividers → ornamental rhythm, motif variation, spacing intent
 // === END PATCH ===
 
 1. **CONSTRAINT CHECK**
    - Quantity:
-     - If the user specifies number of artifacts/slides/icons/patterns/textures → generate EXACTLY that number.
+     - If the user specifies number of artifacts/slides/icons/patterns/textures/type-specimen/ui-modules/covers/posters/grids/dividers → generate EXACTLY that number.
      - Otherwise:
        - slides → generate 5 artifacts
        - icons → generate 12 artifacts
        - patterns → generate 6 artifacts
        - textures → generate 3 artifacts
+       - type-specimen → generate 3 artifacts
+       - ui-modules → generate 6 artifacts
+       - covers → generate 3 artifacts
+       - posters → generate 3 artifacts
+       - grids → generate 6 artifacts
+       - dividers → generate 8 artifacts
    - Structure:
      - If artifact types are specified → follow them STRICTLY.
 
@@ -679,6 +728,11 @@ PHASE 4: TECHNICAL EXECUTION
     • Clear commercial intent (opener, promo, slideshow, titles, etc.)
   - <meta name="project-title" content="...">
     • Must EXACTLY match the <title>
+  - <meta name="description" content="...">
+    • Clear SEO-friendly 1–2 sentence summary
+    • 120–160 characters (target range)
+    • Describe what the template is and how it’s used
+    • Include primary keywords naturally, no stuffing
   - <meta name="tags" content="tag1, tag2, tag3, ...">
     • EXACTLY 20 concise SEO tags
     • lowercase
@@ -688,11 +742,9 @@ PHASE 4: TECHNICAL EXECUTION
     • optimized for motion templates and stock search
   - <meta name="keywords" content="same as tags">
     • Must be IDENTICAL to the tags list (same order, same commas)
-  - <meta name="description" content="...">
-    • Clear SEO-friendly 1–2 sentence summary
-    • 120–160 characters (target range)
-    • Describe what the template is and how it’s used
-    • Include primary keywords naturally, no stuffing
+  - <meta name="artifact-mode" content="...">
+    ? Must be one of: slides, icons, patterns, textures, type-specimen, ui-modules, covers, posters, grids, dividers, mixed
+    ? If ARTIFACT MODE is "auto", choose the correct mode and set it here
 
 2. **LAYOUT**
 - If ARTIFACT MODE includes "slides":
@@ -717,6 +769,10 @@ PHASE 4: TECHNICAL EXECUTION
   - Slight asymmetry > perfect symmetry.
   - Avoid template-looking layouts.
 
+4. **ARTIFACT WRAPPERS**
+- Every artifact MUST be wrapped in <section class="artifact">.
+- If ARTIFACT MODE includes "slides": use <section class="artifact slide"> for each artifact.
+
 Do not fear long HTML files. Complex SVG paths and detailed geometric patterns are encouraged to achieve the visual standards of the referenced agencies.
 
 PHASE 5: GENERATION
@@ -725,37 +781,6 @@ Generate the final HTML.
 `;
 
 const REGENERATE_PROMPT = `
-Role: Senior Frontend Developer & Art Director.
-Task: Add a NEW DESIGN ARTIFACT using the EXISTING visual identity.
-
-CONTEXT:
-Topic: {topic}
-ARTIFACT MODE: {artifact_mode}
-Existing CSS (Strictly Follow This): {cssContext}
-Existing Artifacts (HTML/SVG context): {artifactsContext}
-
-INSTRUCTIONS:
-1. Add EXACTLY ONE new artifact.
-2. The artifact type MUST match ARTIFACT MODE.
-3. STRICTLY use the existing CSS variables and visual language.
-4. Do NOT modify existing artifacts.
-5. The new artifact MUST:
-   - introduce a new variation
-   - avoid repeating silhouettes or compositions
-6. SVG rules:
-   - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
-   - no external assets
-7. If ARTIFACT MODE includes "slides":
-   - return one <section class="slide">
-   - images allowed via {{IMAGE:...}} (10 keywords)
-8. If ARTIFACT MODE ≠ slides:
-   - return ONLY the SVG/HTML node of the artifact
-   - no narrative, no images
-
-Return ONLY the HTML/SVG for the new artifact.
-`;
-
-const ADD_SLIDE_PROMPT = `
 Role: Senior Frontend Developer & Art Director.
 Task: Redesign ONE existing DESIGN ARTIFACT while preserving the visual identity.
 
@@ -778,39 +803,78 @@ INSTRUCTIONS:
    - rhythm
    - density or hierarchy
 4. Do NOT invent new CSS variables.
-5. SVG rules:
-   - primitives only
-   - no filters, no images unless ARTIFACT MODE includes "slides"
-6. If ARTIFACT MODE includes "slides":
-   - return one <section class="slide">
-   - layout MUST differ from the original
-7. If ARTIFACT MODE ≠ slides:
-   - return ONLY the updated SVG/HTML node
+5. The artifact MUST:
+   - introduce a new variation
+   - avoid repeating silhouettes or compositions
+6. SVG rules:
+   - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
+   - no external assets
+7. If ARTIFACT MODE includes "slides":
+   - return one <section class="artifact slide">
+   - images allowed via {{IMAGE:...}} (10 keywords)
+8. If ARTIFACT MODE != slides:
+   - return one <section class="artifact">
+   - no narrative, no images
 
 Return ONLY the updated artifact.
 `;
 
-export const generateSlides = async (
+
+const ADD_ARTIFACT_PROMPT = `
+Role: Senior Frontend Developer & Art Director.
+Task: Add a NEW DESIGN ARTIFACT using the EXISTING visual identity.
+
+CONTEXT:
+Topic: {topic}
+ARTIFACT MODE: {artifact_mode}
+Existing CSS (Strictly Follow This): {cssContext}
+
+INSTRUCTIONS:
+1. Add EXACTLY ONE new artifact.
+2. The artifact type MUST match ARTIFACT MODE.
+3. STRICTLY use the existing CSS variables and visual language.
+4. Do NOT modify existing artifacts.
+5. The new artifact MUST:
+   - introduce a new variation
+   - avoid repeating silhouettes or compositions
+6. SVG rules:
+   - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
+   - no external assets
+7. If ARTIFACT MODE includes "slides":
+   - return one <section class="artifact slide">
+   - images allowed via {{IMAGE:...}} (10 keywords)
+8. If ARTIFACT MODE != slides:
+   - return one <section class="artifact">
+   - no narrative, no images
+
+Return ONLY the HTML/SVG for the new artifact.
+`;
+
+export const generateArtifacts = async (
   provider: AiProviderName,
   topic: string,
+  artifactMode: ArtifactMode,
   imageProvider: ImageProviderName
 ): Promise<string> => {
   try {
-    const finalPrompt = BASE_PROMPT.replace(/{topic}/g, topic);
+    const finalPrompt = BASE_PROMPT
+      .replace(/{topic}/g, topic)
+      .replace(/{artifact_mode}/g, artifactMode);
     const text = await createResponseText(provider, finalPrompt, 1.5);
     return await replaceImagePlaceholders(text, [], undefined, imageProvider);
   } catch (error) {
-    console.error("Error generating slides:", error);
+    console.error("Error generating artifacts:", error);
     throw error;
   }
 };
 
-export const regenerateSlide = async (
+export const regenerateArtifact = async (
   provider: AiProviderName,
   topic: string,
-  currentSlide: string,
+  currentArtifact: string,
   cssContext: string,
   excludedImages: string[] = [],
+  artifactMode: ArtifactMode,
   imageProvider: ImageProviderName
 ): Promise<string> => {
   try {
@@ -818,37 +882,40 @@ export const regenerateSlide = async (
 
     const filledPrompt = REGENERATE_PROMPT
       .replace('{topic}', topic)
+      .replace('{artifact_mode}', artifactMode)
       .replace('{cssContext}', truncatedCss)
-      .replace('{currentSlide}', currentSlide);
+      .replace('{currentArtifact}', currentArtifact);
 
     const text = await createResponseText(provider, filledPrompt, 0.7);
-    const sectionHtml = extractSection(text);
+    const sectionHtml = extractArtifactSection(text, artifactMode);
     return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
   } catch (error) {
-    console.error("Error regenerating slide:", error);
+    console.error("Error regenerating artifact:", error);
     throw error;
   }
 };
 
-export const generateNewSlide = async (
+export const generateNewArtifact = async (
   provider: AiProviderName,
   topic: string,
   cssContext: string,
   excludedImages: string[] = [],
+  artifactMode: ArtifactMode,
   imageProvider: ImageProviderName
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
 
-    const filledPrompt = ADD_SLIDE_PROMPT
+    const filledPrompt = ADD_ARTIFACT_PROMPT
       .replace('{topic}', topic)
+      .replace('{artifact_mode}', artifactMode)
       .replace('{cssContext}', truncatedCss);
 
     const text = await createResponseText(provider, filledPrompt, 0.7);
-    const sectionHtml = extractSection(text);
+    const sectionHtml = extractArtifactSection(text, artifactMode);
     return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
   } catch (error) {
-    console.error("Error adding slide:", error);
+    console.error("Error adding artifact:", error);
     throw error;
   }
 };

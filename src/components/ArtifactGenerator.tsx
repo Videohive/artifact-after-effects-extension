@@ -1,6 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { generateSlides, regenerateSlide, generateNewSlide, ImageProviderName } from '../services/aiService';
-import { extractSlideLayout } from '../utils/aeExtractor/index';
+import {
+  generateArtifacts,
+  regenerateArtifact,
+  generateNewArtifact,
+  ImageProviderName,
+  ArtifactMode
+} from '../services/aiService';
+import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtractor/index';
 import { Loader2, Sparkles, Code, Play, RefreshCw, ChevronLeft, ChevronRight, Plus, Trash2, AlertCircle, Send, Presentation, FileJson, Check, Copy } from 'lucide-react';
 
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
@@ -54,25 +60,79 @@ const fixTextUrlBlocks = (root: ParentNode) => {
   });
 };
 
-const normalizeSlideClassOrder = (root: HTMLElement, index: number) => {
-  const keptClasses = Array.from(root.classList).filter(
-    cls => cls !== 'slide' && !/^slide-\d+$/.test(cls)
-  );
-  root.setAttribute('class', [`slide-${index}`, 'slide', ...keptClasses].join(' '));
+const parseArtifactMode = (value?: string | null): ArtifactMode | null => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase() as ArtifactMode;
+  const allowed: ArtifactMode[] = [
+    'auto',
+    'slides',
+    'icons',
+    'patterns',
+    'textures',
+    'type-specimen',
+    'ui-modules',
+    'covers',
+    'posters',
+    'grids',
+    'dividers',
+    'mixed'
+  ];
+  return allowed.includes(normalized) ? normalized : null;
 };
 
-const applySlideIndexClass = (html: string, index: number) => {
+const inferArtifactModeFromTopic = (topic: string): ArtifactMode => {
+  const normalized = topic.toLowerCase();
+  if (/(slide|slides|storyboard|story board|title sequence|frame|frames|sequence)/i.test(normalized)) {
+    return 'slides';
+  }
+  return 'auto';
+};
+
+const normalizeArtifactClassOrder = (
+  root: HTMLElement,
+  index: number,
+  includeSlideClass: boolean
+) => {
+  const keptClasses = Array.from(root.classList).filter(
+    cls =>
+      cls !== 'slide' &&
+      cls !== 'artifact' &&
+      !/^slide-\d+$/.test(cls) &&
+      !/^artifact-\d+$/.test(cls)
+  );
+  const hasSlideClass = includeSlideClass || root.classList.contains('slide');
+  const classes = [
+    ...(hasSlideClass ? [`slide-${index}`, 'slide'] : []),
+    `artifact-${index}`,
+    'artifact',
+    ...keptClasses
+  ];
+  root.setAttribute('class', classes.join(' '));
+};
+
+const applyArtifactIndexClass = (html: string, index: number, includeSlideClass: boolean) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
-  const root = doc.querySelector('.slide') || doc.body.firstElementChild;
+  const root =
+    doc.querySelector('.artifact') ||
+    doc.querySelector('.slide') ||
+    doc.body.firstElementChild;
   if (!root || !(root instanceof HTMLElement)) return html;
 
-  normalizeSlideClassOrder(root, index);
+  normalizeArtifactClassOrder(root, index, includeSlideClass);
   return root.outerHTML;
 };
 
-const collectSlideElements = (doc: Document) => {
+const collectArtifactElements = (doc: Document) => {
   const body = doc.body;
+  const bodyArtifacts = Array.from(body.children).filter(
+    child => child instanceof HTMLElement && child.classList.contains('artifact')
+  ) as HTMLElement[];
+  if (bodyArtifacts.length > 0) return bodyArtifacts;
+
+  const allArtifacts = Array.from(body.querySelectorAll('.artifact')) as HTMLElement[];
+  if (allArtifacts.length > 0) return allArtifacts;
+
   const bodySlides = Array.from(body.children).filter(
     child => child instanceof HTMLElement && child.classList.contains('slide')
   ) as HTMLElement[];
@@ -103,8 +163,8 @@ const collectSlideElements = (doc: Document) => {
   return [];
 };
 
-const reindexSlideClasses = (slideHtmls: string[]) => {
-  return slideHtmls.map((html, i) => applySlideIndexClass(html, i + 1));
+const reindexArtifactClasses = (artifactHtmls: string[], includeSlideClass: boolean) => {
+  return artifactHtmls.map((html, i) => applyArtifactIndexClass(html, i + 1, includeSlideClass));
 };
 
 const sanitizeLayout = (root: ParentNode) => {
@@ -129,11 +189,13 @@ const parseHeadMetadata = (headHtml: string) => {
   const metaTitle = doc.querySelector('meta[name="project-title"]') as HTMLMetaElement | null;
   const metaTags = doc.querySelector('meta[name="tags"]') as HTMLMetaElement | null;
   const metaDescription = doc.querySelector('meta[name="description"]') as HTMLMetaElement | null;
+  const metaArtifactMode = doc.querySelector('meta[name="artifact-mode"]') as HTMLMetaElement | null;
   const titleEl = doc.querySelector('title');
   const title = (metaTitle?.content || titleEl?.textContent || '').trim();
   const tags = (metaTags?.content || '').trim();
   const description = (metaDescription?.content || '').trim();
-  return { title, tags, description };
+  const artifactMode = parseArtifactMode(metaArtifactMode?.content);
+  return { title, tags, description, artifactMode };
 };
 
 const updateHeadMetadata = (headHtml: string, title: string, tags: string, description: string) => {
@@ -166,23 +228,25 @@ const updateHeadMetadata = (headHtml: string, title: string, tags: string, descr
   return head.innerHTML;
 };
 
-export const SlideGenerator: React.FC = () => {
+export const ArtifactGenerator: React.FC = () => {
   const [topic, setTopic] = useState('');
   const [headContent, setHeadContent] = useState<string>('');
-  const [slides, setSlides] = useState<string[]>([]);
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [artifacts, setArtifacts] = useState<string[]>([]);
+  const [currentArtifactIndex, setCurrentArtifactIndex] = useState(0);
   const [animationsEnabled, setAnimationsEnabled] = useState(false);
   const provider = 'gemini' as const;
   
   const [loading, setLoading] = useState(false);
-  const [regeneratingSlide, setRegeneratingSlide] = useState(false);
-  const [addingSlide, setAddingSlide] = useState(false);
+  const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
+  const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [copiedJsonSlide, setCopiedJsonSlide] = useState(false);
+  const [copiedJsonArtifact, setCopiedJsonArtifact] = useState(false);
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [imageProvider, setImageProvider] = useState<ImageProviderName>('random');
+  const [artifactMode, setArtifactMode] = useState<ArtifactMode>('slides');
+  const includeSlideClass = artifactMode === 'slides' || artifactMode === 'mixed';
   const [codeDraft, setCodeDraft] = useState('');
   const [isCodeDirty, setIsCodeDirty] = useState(false);
   const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
@@ -227,10 +291,10 @@ export const SlideGenerator: React.FC = () => {
     const observer = new ResizeObserver(updateScale);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [slides.length]);
+  }, [artifacts.length]);
 
   useEffect(() => {
-    const { title, tags, description } = parseHeadMetadata(headContent);
+    const { title, tags, description, artifactMode: headMode } = parseHeadMetadata(headContent);
     if (!editingTitle) {
       setProjectTitle(title);
       setTitleDraft(title);
@@ -243,7 +307,10 @@ export const SlideGenerator: React.FC = () => {
       setProjectDescription(description);
       setDescriptionDraft(description);
     }
-  }, [headContent, editingTitle, editingTags, editingDescription]);
+    if (headMode && headMode !== 'auto' && headMode !== artifactMode) {
+      setArtifactMode(headMode);
+    }
+  }, [headContent, editingTitle, editingTags, editingDescription, artifactMode]);
 
   const parseAndSetHtml = (html: string, preserveIndex = false) => {
     const parser = new DOMParser();
@@ -251,15 +318,23 @@ export const SlideGenerator: React.FC = () => {
     
     sanitizeLayout(doc);
 
-    const sections = collectSlideElements(doc);
+    const sections = collectArtifactElements(doc);
+    const { artifactMode: headMode } = parseHeadMetadata(doc.head.innerHTML);
+    const hasSlideClass = sections.some(section => section.classList.contains('slide'));
+    const resolvedMode = hasSlideClass
+      ? 'slides'
+      : headMode && headMode !== 'auto'
+        ? headMode
+        : 'mixed';
+    const resolvedIncludeSlides = resolvedMode === 'slides' || resolvedMode === 'mixed';
     
     // Inject global reset for strict 16:9
     const style = doc.createElement('style');
     style.innerHTML = `
       html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
       body { background: #000; display: flex; align-items: center; justify-content: center; }
-      /* Ensure slides fit the iframe bounds (container already keeps 16:9). */
-      .slide { width: 100% !important; height: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
+      /* Ensure artifacts fit the iframe bounds (container already keeps 16:9). */
+      .artifact, .slide { width: 100% !important; height: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
       /* Fallback styling for images */
       img {
         /* Hide alt text by making it transparent */
@@ -299,27 +374,29 @@ export const SlideGenerator: React.FC = () => {
     doc.head.appendChild(script);
 
     const nextIndex = preserveIndex
-      ? Math.min(currentSlideIndex, Math.max(0, sections.length - 1))
+      ? Math.min(currentArtifactIndex, Math.max(0, sections.length - 1))
       : 0;
 
     if (sections.length > 0) {
       setHeadContent(doc.head.innerHTML);
-      const slideHtmls = sections.map((section, i) => {
-        normalizeSlideClassOrder(section, i + 1);
+      const artifactHtmls = sections.map((section, i) => {
+        normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
         return section.outerHTML;
       });
-      setSlides(slideHtmls);
-      setCurrentSlideIndex(nextIndex);
+      setArtifacts(artifactHtmls);
+      setCurrentArtifactIndex(nextIndex);
+      setArtifactMode(resolvedMode);
     } else {
       setHeadContent(doc.head.innerHTML);
-      setSlides([doc.body.innerHTML]);
-      setCurrentSlideIndex(0);
+      setArtifacts([doc.body.innerHTML]);
+      setCurrentArtifactIndex(0);
+      setArtifactMode(resolvedMode);
     }
   };
 
   const getUsedImageUrls = () => {
-    if (slides.length === 0) return [];
-    const allHtml = slides.join('');
+    if (artifacts.length === 0) return [];
+    const allHtml = artifacts.join('');
     const parser = new DOMParser();
     const doc = parser.parseFromString(allHtml, 'text/html');
     const imgs = Array.from(doc.querySelectorAll('img')).map(img => img.src);
@@ -336,19 +413,21 @@ export const SlideGenerator: React.FC = () => {
     if (e) e.preventDefault();
     if (!topic.trim()) return;
 
+    const requestedMode = inferArtifactModeFromTopic(topic);
+    setArtifactMode(requestedMode);
     setLoading(true);
-    setSlides([]);
+    setArtifacts([]);
     setHeadContent('');
     setErrorMsg(null);
     try {
-      const generatedHtml = await generateSlides(provider, topic, imageProvider);
+      const generatedHtml = await generateArtifacts(provider, topic, requestedMode, imageProvider);
       parseAndSetHtml(generatedHtml);
     } catch (error: any) {
       console.error(error);
       if (error?.status === 429 || error?.message?.includes('429')) {
         setErrorMsg("We're experiencing high traffic. Please wait a moment and try again.");
       } else {
-        setErrorMsg("Failed to generate slides. Please try again.");
+        setErrorMsg("Failed to generate artifacts. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -362,63 +441,84 @@ export const SlideGenerator: React.FC = () => {
     }
   };
 
-  const handleRegenerateCurrentSlide = async () => {
-    if (slides.length === 0) return;
-    setRegeneratingSlide(true);
+  const handleRegenerateCurrentArtifact = async () => {
+    if (artifacts.length === 0) return;
+    setRegeneratingArtifact(true);
     try {
-      const currentContent = slides[currentSlideIndex];
+      const currentContent = artifacts[currentArtifactIndex];
       const excluded = getUsedImageUrls();
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
       
-      const newSlideHtml = await regenerateSlide(provider, topic, currentContent, cssContext, excluded, imageProvider);
-      const newSlides = [...slides];
-      newSlides[currentSlideIndex] = newSlideHtml;
+      const newArtifactHtml = await regenerateArtifact(
+        provider,
+        topic,
+        currentContent,
+        cssContext,
+        excluded,
+        artifactMode,
+        imageProvider
+      );
+      const newArtifacts = [...artifacts];
+      newArtifacts[currentArtifactIndex] = newArtifactHtml;
       // Simple sanitization
       const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = newSlideHtml;
+      tempDiv.innerHTML = newArtifactHtml;
       sanitizeLayout(tempDiv);
-      newSlides[currentSlideIndex] = tempDiv.innerHTML;
+      newArtifacts[currentArtifactIndex] = tempDiv.innerHTML;
       
-      setSlides(reindexSlideClasses(newSlides));
+      setArtifacts(reindexArtifactClasses(newArtifacts, includeSlideClass));
     } catch (error) {
       console.error(error);
     } finally {
-      setRegeneratingSlide(false);
+      setRegeneratingArtifact(false);
     }
   };
 
-  const handleAddSlide = async () => {
-    if (slides.length === 0) return;
-    setAddingSlide(true);
+  const handleAddArtifact = async () => {
+    if (artifacts.length === 0) return;
+    setAddingArtifact(true);
     try {
       const excluded = getUsedImageUrls();
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
 
-      const newSlideHtml = await generateNewSlide(provider, topic, cssContext, excluded, imageProvider);
+      const newArtifactHtml = await generateNewArtifact(
+        provider,
+        topic,
+        cssContext,
+        excluded,
+        artifactMode,
+        imageProvider
+      );
       
       const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = newSlideHtml;
+      tempDiv.innerHTML = newArtifactHtml;
       sanitizeLayout(tempDiv);
       
-      const newSlides = reindexSlideClasses([...slides, tempDiv.innerHTML]);
-      setSlides(newSlides);
-      setCurrentSlideIndex(newSlides.length - 1);
+      const newArtifacts = reindexArtifactClasses(
+        [...artifacts, tempDiv.innerHTML],
+        includeSlideClass
+      );
+      setArtifacts(newArtifacts);
+      setCurrentArtifactIndex(newArtifacts.length - 1);
       
     } catch (error) {
       console.error(error);
     } finally {
-      setAddingSlide(false);
+      setAddingArtifact(false);
     }
   };
 
-  const handleDeleteSlide = () => {
-    if (slides.length <= 1) return;
-    const newSlides = reindexSlideClasses(slides.filter((_, i) => i !== currentSlideIndex));
-    setSlides(newSlides);
-    if (currentSlideIndex >= newSlides.length) {
-      setCurrentSlideIndex(newSlides.length - 1);
+  const handleDeleteArtifact = () => {
+    if (artifacts.length <= 1) return;
+    const newArtifacts = reindexArtifactClasses(
+      artifacts.filter((_, i) => i !== currentArtifactIndex),
+      includeSlideClass
+    );
+    setArtifacts(newArtifacts);
+    if (currentArtifactIndex >= newArtifacts.length) {
+      setCurrentArtifactIndex(newArtifacts.length - 1);
     }
   };
 
@@ -436,20 +536,20 @@ export const SlideGenerator: React.FC = () => {
     return base;
   };
 
-  const getSlideHtmlByIndex = (index: number) => {
-    if (slides.length === 0) return '';
+  const getArtifactHtmlByIndex = (index: number) => {
+    if (artifacts.length === 0) return '';
     return `
       <!DOCTYPE html>
       <html>
         <head>${getHeadHtml()}</head>
         <body>
-          ${slides[index]}
+          ${artifacts[index]}
         </body>
       </html>
     `;
   };
 
-  const loadSlideIntoExportIframe = (index: number) => {
+  const loadArtifactIntoExportIframe = (index: number) => {
     return new Promise<Window>((resolve, reject) => {
       const iframe = exportIframeRef.current;
       if (!iframe) {
@@ -475,7 +575,7 @@ export const SlideGenerator: React.FC = () => {
         <html>
           <head>${getHeadHtml()}</head>
           <body>
-            ${slides[index]}
+            ${artifacts[index]}
           </body>
         </html>
       `;
@@ -485,14 +585,14 @@ export const SlideGenerator: React.FC = () => {
 
   const extractJsonFromIframe = async (win: Window) => {
     const doc = win.document;
-    const slideElement = doc.querySelector('.slide') || doc.body;
+    const artifactElement = doc.querySelector('.artifact') || doc.querySelector('.slide') || doc.body;
 
-    if (!slideElement) {
-      throw new Error('Could not find slide content to export.');
+    if (!artifactElement) {
+      throw new Error('Could not find artifact content to export.');
     }
 
-    sanitizeLayout(slideElement);
-    return extractSlideLayout(slideElement as HTMLElement, win, {
+    sanitizeLayout(artifactElement);
+    return extractArtifactLayout(artifactElement as HTMLElement, win, {
       targetWidth: exportResolution.width,
       targetHeight: exportResolution.height,
       fps: exportFps,
@@ -501,18 +601,18 @@ export const SlideGenerator: React.FC = () => {
     });
   };
 
-  const handleExportSlideJSON = async () => {
-    if (slides.length === 0) return;
+  const handleExportArtifactJSON = async () => {
+    if (artifacts.length === 0) return;
     
     try {
-      const win = await loadSlideIntoExportIframe(currentSlideIndex);
+      const win = await loadArtifactIntoExportIframe(currentArtifactIndex);
       const jsonStructure = await extractJsonFromIframe(win);
 
       const jsonString = JSON.stringify(jsonStructure, null, 2);
       await navigator.clipboard.writeText(jsonString);
       
-      setCopiedJsonSlide(true);
-      setTimeout(() => setCopiedJsonSlide(false), 2000);
+      setCopiedJsonArtifact(true);
+      setTimeout(() => setCopiedJsonArtifact(false), 2000);
     } catch (err) {
       console.error("Export failed:", err);
       setErrorMsg("Failed to export JSON structure.");
@@ -520,12 +620,12 @@ export const SlideGenerator: React.FC = () => {
   };
 
   const handleExportProjectJSON = async () => {
-    if (slides.length === 0) return;
+    if (artifacts.length === 0) return;
 
     try {
       const results = [];
-      for (let i = 0; i < slides.length; i += 1) {
-        const win = await loadSlideIntoExportIframe(i);
+      for (let i = 0; i < artifacts.length; i += 1) {
+        const win = await loadArtifactIntoExportIframe(i);
         const jsonStructure = await extractJsonFromIframe(win);
         results.push(jsonStructure);
       }
@@ -542,16 +642,16 @@ export const SlideGenerator: React.FC = () => {
   };
 
   const getCurrentFullHtml = () => {
-    return getSlideHtmlByIndex(currentSlideIndex);
+    return getArtifactHtmlByIndex(currentArtifactIndex);
   };
 
-  const getAllSlidesHtml = (headOverride = headContent) => {
+  const getAllArtifactsHtml = (headOverride = headContent) => {
      return `
       <!DOCTYPE html>
       <html>
         <head>${getHeadHtml(headOverride)}</head>
         <body>
-          ${slides.join('\n')}
+          ${artifacts.join('\n')}
         </body>
       </html>
     `;
@@ -560,14 +660,14 @@ export const SlideGenerator: React.FC = () => {
   useEffect(() => {
     if (viewMode !== 'code') return;
     if (prevViewModeRef.current !== 'code') {
-      setCodeDraft(getAllSlidesHtml());
+      setCodeDraft(getAllArtifactsHtml());
       setIsCodeDirty(false);
       return;
     }
     if (!isCodeDirty) {
-      setCodeDraft(getAllSlidesHtml());
+      setCodeDraft(getAllArtifactsHtml());
     }
-  }, [viewMode, headContent, slides, animationsEnabled, isCodeDirty]);
+  }, [viewMode, headContent, artifacts, animationsEnabled, isCodeDirty]);
 
   useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode === 'preview') {
@@ -584,7 +684,7 @@ export const SlideGenerator: React.FC = () => {
   };
 
   const handleCopyHtml = async () => {
-    const html = getAllSlidesHtml();
+    const html = getAllArtifactsHtml();
     await navigator.clipboard.writeText(html);
     setCopiedHtml(true);
     setTimeout(() => setCopiedHtml(false), 2000);
@@ -594,7 +694,7 @@ export const SlideGenerator: React.FC = () => {
     const newHead = updateHeadMetadata(headContent, nextTitle, nextTags, nextDescription);
     setHeadContent(newHead);
     if (viewMode === 'code' && !isCodeDirty) {
-      setCodeDraft(getAllSlidesHtml(newHead));
+      setCodeDraft(getAllArtifactsHtml(newHead));
     }
   };
 
@@ -619,12 +719,12 @@ export const SlideGenerator: React.FC = () => {
     applyHeadUpdates(projectTitle, projectTags, nextDescription);
   };
 
-  const isEmpty = slides.length === 0;
+  const isEmpty = artifacts.length === 0;
 
   return (
     <div className={`flex flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
       {/* Main Content Area */}
-      {slides.length > 0 ? (
+      {artifacts.length > 0 ? (
         <div className="flex flex-col gap-4">
           <div className="shrink-0 w-full flex justify-center px-4">
             <div
@@ -658,37 +758,6 @@ export const SlideGenerator: React.FC = () => {
                     className="text-left text-lg font-semibold text-white hover:text-indigo-300"
                   >
                     {projectTitle || 'Untitled Project'}
-                  </button>
-                )}
-              </div>
-              <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Tags</div>
-              <div className="mt-1">
-                {editingTags ? (
-                  <input
-                    value={tagsDraft}
-                    onChange={(e) => setTagsDraft(e.target.value)}
-                    onBlur={saveProjectTags}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.currentTarget.blur();
-                      if (e.key === 'Escape') {
-                        setTagsDraft(projectTags);
-                        setEditingTags(false);
-                      }
-                    }}
-                    placeholder="tag1, tag2, tag3"
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTagsDraft(projectTags);
-                      setEditingTags(true);
-                    }}
-                    className="text-left text-sm text-neutral-300 hover:text-indigo-300"
-                  >
-                    {projectTags || 'Add tags'}
                   </button>
                 )}
               </div>
@@ -726,11 +795,42 @@ export const SlideGenerator: React.FC = () => {
                   </button>
                 )}
               </div>
+              <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Tags</div>
+              <div className="mt-1">
+                {editingTags ? (
+                  <input
+                    value={tagsDraft}
+                    onChange={(e) => setTagsDraft(e.target.value)}
+                    onBlur={saveProjectTags}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      if (e.key === 'Escape') {
+                        setTagsDraft(projectTags);
+                        setEditingTags(false);
+                      }
+                    }}
+                    placeholder="tag1, tag2, tag3"
+                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTagsDraft(projectTags);
+                      setEditingTags(true);
+                    }}
+                    className="text-left text-sm text-neutral-300 hover:text-indigo-300"
+                  >
+                    {projectTags || 'Add tags'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="w-full flex flex-col items-center justify-center p-4">
-            {/* Slide Preview - Centered */}
+            {/* Artifact Preview - Centered */}
             <div className="w-full max-w-6xl flex items-center justify-center" ref={previewStageRef}>
               <div
                 className="relative bg-neutral-950 rounded-xl border border-neutral-800 shadow-2xl overflow-hidden group"
@@ -741,17 +841,17 @@ export const SlideGenerator: React.FC = () => {
               >
                 {viewMode === 'preview' ? (
                   <div
-                    className="origin-top-left"
+                    className="absolute left-1/2 top-1/2 origin-center"
                     style={{
                       width: PREVIEW_BASE_WIDTH,
                       height: PREVIEW_BASE_HEIGHT,
-                      transform: `scale(${previewScale})`
+                      transform: `translate(-50%, -50%) scale(${previewScale})`
                     }}
                   >
                     <iframe
                       ref={iframeRef}
                       srcDoc={getCurrentFullHtml()}
-                      title="Slide Preview"
+                      title="Artifact Preview"
                       className="border-0"
                       style={{ width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT }}
                       sandbox="allow-scripts allow-same-origin"
@@ -825,18 +925,18 @@ export const SlideGenerator: React.FC = () => {
                 {/* Center: Navigation Controls */}
                 <div className="flex items-center gap-4 px-4 py-2 bg-neutral-950 rounded-lg border border-neutral-800 justify-self-center w-full sm:w-auto justify-center">
                    <button
-                      onClick={() => setCurrentSlideIndex(prev => (prev === 0 ? slides.length - 1 : prev - 1))}
-                      disabled={slides.length <= 1}
+                      onClick={() => setCurrentArtifactIndex(prev => (prev === 0 ? artifacts.length - 1 : prev - 1))}
+                      disabled={artifacts.length <= 1}
                       className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
                     >
                       <ChevronLeft className="w-5 h-5" />
                     </button>
                     <span className="text-sm font-medium text-white min-w-[3rem] text-center select-none">
-                      {currentSlideIndex + 1} / {slides.length}
+                      {currentArtifactIndex + 1} / {artifacts.length}
                     </span>
                     <button
-                      onClick={() => setCurrentSlideIndex(prev => (prev === slides.length - 1 ? 0 : prev + 1))}
-                      disabled={slides.length <= 1}
+                      onClick={() => setCurrentArtifactIndex(prev => (prev === artifacts.length - 1 ? 0 : prev + 1))}
+                      disabled={artifacts.length <= 1}
                       className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
                     >
                       <ChevronRight className="w-5 h-5" />
@@ -846,29 +946,29 @@ export const SlideGenerator: React.FC = () => {
                 {/* Right: Actions */}
                 <div className="flex items-center gap-2 justify-self-end w-full sm:w-auto justify-end">
                   <button
-                    onClick={handleRegenerateCurrentSlide}
-                    disabled={regeneratingSlide}
+                    onClick={handleRegenerateCurrentArtifact}
+                    disabled={regeneratingArtifact}
                     className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
                   >
-                    {regeneratingSlide ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    {regeneratingArtifact ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                     Regenerate
                   </button>
                   <button
-                    onClick={handleAddSlide}
-                    disabled={addingSlide}
+                    onClick={handleAddArtifact}
+                    disabled={addingArtifact}
                     className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
                   >
-                    {addingSlide ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Add Slide
+                    {addingArtifact ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    Add Artifact
                   </button>
                   
                   <div className="h-6 w-px bg-neutral-800 mx-2" />
                   
                   <button
-                    onClick={handleDeleteSlide}
-                    disabled={slides.length <= 1}
+                    onClick={handleDeleteArtifact}
+                    disabled={artifacts.length <= 1}
                     className="p-2 text-red-400 hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50"
-                    title="Delete Slide"
+                    title="Delete Artifact"
                   >
                     <Trash2 className="w-5 h-5" />
                   </button>
@@ -878,16 +978,16 @@ export const SlideGenerator: React.FC = () => {
               <div className="grid grid-cols-1 gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[auto_1fr] sm:items-center">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={handleExportSlideJSON}
+                    onClick={handleExportArtifactJSON}
                     className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border ${
-                      copiedJsonSlide 
+                      copiedJsonArtifact 
                         ? 'bg-emerald-950/50 text-emerald-400 border-emerald-900' 
                         : 'text-neutral-300 hover:text-white hover:bg-neutral-800 border-transparent'
                     }`}
                     title="Copy AE JSON to Clipboard"
                   >
-                    {copiedJsonSlide ? <Check className="w-4 h-4" /> : <FileJson className="w-4 h-4" />}
-                    {copiedJsonSlide ? 'Copied' : 'JSON Slide'}
+                    {copiedJsonArtifact ? <Check className="w-4 h-4" /> : <FileJson className="w-4 h-4" />}
+                    {copiedJsonArtifact ? 'Copied' : 'JSON Artifact'}
                   </button>
                   <button
                     onClick={handleExportProjectJSON}
@@ -968,10 +1068,10 @@ export const SlideGenerator: React.FC = () => {
               <Presentation className="w-10 h-10 text-indigo-500" />
             </div>
             <h2 className="text-2xl font-bold text-neutral-200 mb-3">
-              Muse — turning inspiration into clear ideas.
+              Artifact — from spark to structure.
             </h2>
             <p className="max-w-md text-neutral-500 text-lg leading-relaxed">
-              A space where thoughts take shape and ideas become easy to understand.
+              Capture ideas, shape them, and make them instantly legible.
             </p>
           </div>
       )}
@@ -992,18 +1092,20 @@ export const SlideGenerator: React.FC = () => {
         )}
 
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
-          <span className="font-medium">Image source</span>
-          <select
-            value={imageProvider}
-            onChange={(e) => setImageProvider(e.target.value as ImageProviderName)}
-            className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
-          >
-            {IMAGE_PROVIDER_OPTIONS.map(option => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <label className="flex items-center gap-2">
+            <span className="font-medium">Image source</span>
+            <select
+              value={imageProvider}
+              onChange={(e) => setImageProvider(e.target.value as ImageProviderName)}
+              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
+            >
+              {IMAGE_PROVIDER_OPTIONS.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">
@@ -1011,7 +1113,7 @@ export const SlideGenerator: React.FC = () => {
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Describe your presentation... (e.g. 'A futuristic pitch deck for a quantum computing startup with dark aesthetic')"
+            placeholder="Describe your artifacts... (e.g. 'A futuristic identity kit for a quantum computing startup with dark aesthetic')"
             className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none px-4 py-3 pr-14 resize-none min-h-[60px] max-h-[200px] text-lg"
             rows={2}
           />

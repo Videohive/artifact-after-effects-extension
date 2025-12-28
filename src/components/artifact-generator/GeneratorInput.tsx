@@ -37,7 +37,7 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
         </div>
       )}
 
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
+      <div className="mb-2 flex flex-wrap items-center justify-end gap-2 px-1 text-xs text-neutral-400">
         <label className="flex items-center gap-2">
           <span className="font-medium">Image source</span>
           <select

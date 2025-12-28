@@ -223,6 +223,9 @@ PHASE 4: TECHNICAL EXECUTION
 - Return a SINGLE HTML block with embedded CSS.
 - Include a complete HTML document with <html>, <head>, and <body>.
 - Output ONLY raw HTML (no markdown, no explanations, no comments).
+- Every element MUST include a semantic, meaningful id that reflects its purpose/content.
+- This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
+- No element may be left without an id; ids must be unique within the document.
 
 - In <head>, include:
   - <title>
@@ -321,6 +324,9 @@ INSTRUCTIONS:
 9. If ARTIFACT MODE != slides:
    - return one <section class="artifact">
    - no narrative, no images
+10. Every element MUST include a semantic, meaningful id that reflects its purpose/content.
+    This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
+    No element may be left without an id; ids must be unique within the artifact.
 
 Return ONLY the updated artifact.
 `;
@@ -352,6 +358,9 @@ INSTRUCTIONS:
 9. If ARTIFACT MODE != slides:
    - return one <section class="artifact">
    - no narrative, no images
+10. Every element MUST include a semantic, meaningful id that reflects its purpose/content.
+    This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
+    No element may be left without an id; ids must be unique within the artifact.
 
 Return ONLY the HTML/SVG for the new artifact.
 `;

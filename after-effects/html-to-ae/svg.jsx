@@ -320,10 +320,20 @@
     }
 
     if (out.width <= 0 || out.height <= 0) {
-      var wMatch = svg.match(/width\s*=\s*["']([^"']+)["']/i);
-      var hMatch = svg.match(/height\s*=\s*["']([^"']+)["']/i);
-      var wRaw = wMatch && wMatch[1] ? String(wMatch[1]) : "";
-      var hRaw = hMatch && hMatch[1] ? String(hMatch[1]) : "";
+      var wRaw = "";
+      var hRaw = "";
+      var openTagMatch = svg.match(/<svg\b[^>]*>/i);
+      if (openTagMatch && openTagMatch[0]) {
+        var svgAttrs = parseSvgAttributes(openTagMatch[0]);
+        var styled = parseSvgStyleAttributes(svgAttrs);
+        wRaw = svgAttrs.width || styled.width || "";
+        hRaw = svgAttrs.height || styled.height || "";
+      } else {
+        var wMatch = svg.match(/width\s*=\s*["']([^"']+)["']/i);
+        var hMatch = svg.match(/height\s*=\s*["']([^"']+)["']/i);
+        wRaw = wMatch && wMatch[1] ? String(wMatch[1]) : "";
+        hRaw = hMatch && hMatch[1] ? String(hMatch[1]) : "";
+      }
       out.percentWidth = wRaw.indexOf("%") !== -1;
       out.percentHeight = hRaw.indexOf("%") !== -1;
       out.width = parseNumber(wRaw, 0);

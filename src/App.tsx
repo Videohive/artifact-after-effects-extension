@@ -10,7 +10,7 @@ export default function App() {
             <div className="p-2 bg-indigo-600 rounded-lg">
               <Presentation className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">Muse</h1>
+            <h1 className="text-xl font-bold tracking-tight">Artifact</h1>
           </div>
           <div className="text-sm text-neutral-400 hidden sm:block">
             Powered by AE2

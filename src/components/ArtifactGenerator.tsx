@@ -7,18 +7,23 @@ import {
   ArtifactMode
 } from '../services/aiService';
 import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtractor/index';
-import { Loader2, Sparkles, Code, Play, RefreshCw, ChevronLeft, ChevronRight, Plus, Trash2, AlertCircle, Send, Presentation, FileJson, Check, Copy } from 'lucide-react';
+import { ArtifactPreview } from './artifact-generator/ArtifactPreview';
+import { ArtifactToolbar } from './artifact-generator/ArtifactToolbar';
+import { EmptyState } from './artifact-generator/EmptyState';
+import { ExportControls } from './artifact-generator/ExportControls';
+import { GeneratorInput } from './artifact-generator/GeneratorInput';
+import { ProjectMetadataPanel } from './artifact-generator/ProjectMetadataPanel';
+import { ImageProviderOption, ResolutionOption, ViewMode } from './artifact-generator/types';
 
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
 
-const RESOLUTION_OPTIONS = [
+const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: '1080p', label: 'Full HD (1920x1080)', width: 1920, height: 1080 },
   { id: '2k', label: '2K (2560x1440)', width: 2560, height: 1440 },
   { id: '4k', label: '4K (3840x2160)', width: 3840, height: 2160 }
 ];
 
-const FPS_OPTIONS = [30, 60];
-const IMAGE_PROVIDER_OPTIONS: { id: ImageProviderName; label: string }[] = [
+const IMAGE_PROVIDER_OPTIONS: ImageProviderOption[] = [
   { id: 'random', label: 'Random (All)' },
   { id: 'pexels', label: 'Pexels' },
   { id: 'unsplash', label: 'Unsplash' },
@@ -233,13 +238,13 @@ export const ArtifactGenerator: React.FC = () => {
   const [headContent, setHeadContent] = useState<string>('');
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [currentArtifactIndex, setCurrentArtifactIndex] = useState(0);
-  const [animationsEnabled, setAnimationsEnabled] = useState(false);
+  const [animationsEnabled] = useState(false);
   const provider = 'gemini' as const;
   
   const [loading, setLoading] = useState(false);
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
   const [addingArtifact, setAddingArtifact] = useState(false);
-  const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
+  const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedJsonArtifact, setCopiedJsonArtifact] = useState(false);
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
@@ -270,7 +275,7 @@ export const ArtifactGenerator: React.FC = () => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
   const previewStageRef = useRef<HTMLDivElement>(null);
-  const prevViewModeRef = useRef<'preview' | 'code'>(viewMode);
+  const prevViewModeRef = useRef<ViewMode>(viewMode);
 
   useEffect(() => {
     const container = previewStageRef.current;
@@ -522,6 +527,14 @@ export const ArtifactGenerator: React.FC = () => {
     }
   };
 
+  const handlePrevArtifact = () => {
+    setCurrentArtifactIndex(prev => (prev === 0 ? artifacts.length - 1 : prev - 1));
+  };
+
+  const handleNextArtifact = () => {
+    setCurrentArtifactIndex(prev => (prev === artifacts.length - 1 ? 0 : prev + 1));
+  };
+
   const getHeadHtml = (headOverride = headContent) => {
     const base = headOverride.trim();
     const forceArtifactMarginReset = `<style>
@@ -722,6 +735,36 @@ export const ArtifactGenerator: React.FC = () => {
     applyHeadUpdates(projectTitle, projectTags, nextDescription);
   };
 
+  const startTitleEdit = () => {
+    setTitleDraft(projectTitle);
+    setEditingTitle(true);
+  };
+
+  const startTagsEdit = () => {
+    setTagsDraft(projectTags);
+    setEditingTags(true);
+  };
+
+  const startDescriptionEdit = () => {
+    setDescriptionDraft(projectDescription);
+    setEditingDescription(true);
+  };
+
+  const cancelTitleEdit = () => {
+    setTitleDraft(projectTitle);
+    setEditingTitle(false);
+  };
+
+  const cancelTagsEdit = () => {
+    setTagsDraft(projectTags);
+    setEditingTags(false);
+  };
+
+  const cancelDescriptionEdit = () => {
+    setDescriptionDraft(projectDescription);
+    setEditingDescription(false);
+  };
+
   const isEmpty = artifacts.length === 0;
 
   return (
@@ -729,354 +772,81 @@ export const ArtifactGenerator: React.FC = () => {
       {/* Main Content Area */}
       {artifacts.length > 0 ? (
         <div className="flex flex-col gap-4">
-          <div className="shrink-0 w-full flex justify-center px-4">
-            <div
-              className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4"
-              style={{ width: previewSize.width || '100%' }}
-            >
-              <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Project</div>
-              <div className="mt-2">
-                {editingTitle ? (
-                  <input
-                    value={titleDraft}
-                    onChange={(e) => setTitleDraft(e.target.value)}
-                    onBlur={saveProjectTitle}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.currentTarget.blur();
-                      if (e.key === 'Escape') {
-                        setTitleDraft(projectTitle);
-                        setEditingTitle(false);
-                      }
-                    }}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-lg font-semibold text-white focus:border-indigo-500 focus:outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTitleDraft(projectTitle);
-                      setEditingTitle(true);
-                    }}
-                    className="text-left text-lg font-semibold text-white hover:text-indigo-300"
-                  >
-                    {projectTitle || 'Untitled Project'}
-                  </button>
-                )}
-              </div>
-              <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Description</div>
-              <div className="mt-1">
-                {editingDescription ? (
-                  <textarea
-                    value={descriptionDraft}
-                    onChange={(e) => setDescriptionDraft(e.target.value)}
-                    onBlur={saveProjectDescription}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                        e.currentTarget.blur();
-                      }
-                      if (e.key === 'Escape') {
-                        setDescriptionDraft(projectDescription);
-                        setEditingDescription(false);
-                      }
-                    }}
-                    rows={3}
-                    placeholder="Short SEO description for stock listing"
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDescriptionDraft(projectDescription);
-                      setEditingDescription(true);
-                    }}
-                    className="text-left text-sm text-neutral-300 hover:text-indigo-300"
-                  >
-                    {projectDescription || 'Add description'}
-                  </button>
-                )}
-              </div>
-              <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Tags</div>
-              <div className="mt-1">
-                {editingTags ? (
-                  <input
-                    value={tagsDraft}
-                    onChange={(e) => setTagsDraft(e.target.value)}
-                    onBlur={saveProjectTags}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') e.currentTarget.blur();
-                      if (e.key === 'Escape') {
-                        setTagsDraft(projectTags);
-                        setEditingTags(false);
-                      }
-                    }}
-                    placeholder="tag1, tag2, tag3"
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTagsDraft(projectTags);
-                      setEditingTags(true);
-                    }}
-                    className="text-left text-sm text-neutral-300 hover:text-indigo-300"
-                  >
-                    {projectTags || 'Add tags'}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+          <ProjectMetadataPanel
+            previewWidth={previewSize.width}
+            projectTitle={projectTitle}
+            projectTags={projectTags}
+            projectDescription={projectDescription}
+            editingTitle={editingTitle}
+            editingTags={editingTags}
+            editingDescription={editingDescription}
+            titleDraft={titleDraft}
+            tagsDraft={tagsDraft}
+            descriptionDraft={descriptionDraft}
+            onTitleDraftChange={setTitleDraft}
+            onTagsDraftChange={setTagsDraft}
+            onDescriptionDraftChange={setDescriptionDraft}
+            onTitleEditStart={startTitleEdit}
+            onTagsEditStart={startTagsEdit}
+            onDescriptionEditStart={startDescriptionEdit}
+            onTitleEditCancel={cancelTitleEdit}
+            onTagsEditCancel={cancelTagsEdit}
+            onDescriptionEditCancel={cancelDescriptionEdit}
+            onTitleSave={saveProjectTitle}
+            onTagsSave={saveProjectTags}
+            onDescriptionSave={saveProjectDescription}
+          />
 
-          <div className="w-full flex flex-col items-center justify-center p-4">
-            {/* Artifact Preview - Centered */}
-            <div className="w-full max-w-6xl flex items-center justify-center" ref={previewStageRef}>
-              <div
-                className="relative bg-neutral-950 rounded-xl border border-neutral-800 shadow-2xl overflow-hidden group"
-                style={{
-                  width: previewSize.width || '100%',
-                  height: previewSize.height || '100%'
-                }}
-              >
-                {viewMode === 'preview' ? (
-                  <div
-                    className="absolute left-1/2 top-1/2 origin-center"
-                    style={{
-                      width: PREVIEW_BASE_WIDTH,
-                      height: PREVIEW_BASE_HEIGHT,
-                      transform: `translate(-50%, -50%) scale(${previewScale})`
-                    }}
-                  >
-                    <iframe
-                      ref={iframeRef}
-                      srcDoc={getCurrentFullHtml()}
-                      title="Artifact Preview"
-                      className="border-0"
-                      style={{ width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT }}
-                      sandbox="allow-scripts allow-same-origin"
-                    />
-                  </div>
-                ) : (
-                  <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
-                    <textarea
-                      value={codeDraft}
-                      onChange={(e) => handleCodeChange(e.target.value)}
-                      className="w-full h-full bg-transparent text-neutral-300 resize-none focus:outline-none custom-scrollbar"
-                      spellCheck={false}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <ArtifactPreview
+            previewStageRef={previewStageRef}
+            previewSize={previewSize}
+            previewScale={previewScale}
+            viewMode={viewMode}
+            codeDraft={codeDraft}
+            baseWidth={PREVIEW_BASE_WIDTH}
+            baseHeight={PREVIEW_BASE_HEIGHT}
+            iframeRef={iframeRef}
+            getCurrentFullHtml={getCurrentFullHtml}
+            onCodeChange={handleCodeChange}
+          />
 
           <div className="shrink-0 w-full flex justify-center px-4 pb-4">
-            <div
-              className="flex flex-col gap-3"
-              style={{ width: previewSize.width || '100%' }}
-            >
-              {/* Toolbar - Grid Layout for Center Alignment */}
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
-                
-                {/* Left: View Mode */}
-                <div className="flex items-center gap-3 justify-self-start">
-                  <div className="flex items-center gap-2 bg-neutral-950 rounded-lg p-1 border border-neutral-800">
-                    <button
-                      onClick={() => setViewMode('preview')}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                        viewMode === 'preview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
-                      }`}
-                    >
-                      <Play className="w-4 h-4" /> Preview
-                    </button>
-                    <button
-                      onClick={() => setViewMode('code')}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                        viewMode === 'code' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
-                      }`}
-                    >
-                      <Code className="w-4 h-4" /> Code
-                    </button>
-                  </div>
-                  <button
-                    onClick={handleCopyHtml}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border border-neutral-800 bg-neutral-950 ${
-                      copiedHtml
-                        ? 'text-emerald-400'
-                        : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
-                    }`}
-                    title="Copy HTML"
-                  >
-                    {copiedHtml ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    {copiedHtml ? 'Copied' : 'Copy HTML'}
-                  </button>
-                  {/* <button
-                    onClick={() => setAnimationsEnabled(prev => !prev)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                      animationsEnabled ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
-                    }`}
-                    title="Toggle animations"
-                  >
-                    <Sparkles className="w-4 h-4" /> {animationsEnabled ? 'Anim On' : 'Anim Off'}
-                  </button> */}
-                </div>
+            <div className="flex flex-col gap-3" style={{ width: previewSize.width || '100%' }}>
+              <ArtifactToolbar
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                onCopyHtml={handleCopyHtml}
+                copiedHtml={copiedHtml}
+                currentIndex={currentArtifactIndex}
+                totalCount={artifacts.length}
+                onPrev={handlePrevArtifact}
+                onNext={handleNextArtifact}
+                onRegenerate={handleRegenerateCurrentArtifact}
+                regenerating={regeneratingArtifact}
+                onAdd={handleAddArtifact}
+                adding={addingArtifact}
+                onDelete={handleDeleteArtifact}
+                canDelete={artifacts.length > 1}
+              />
 
-                {/* Center: Navigation Controls */}
-                <div className="flex items-center gap-4 px-4 py-2 bg-neutral-950 rounded-lg border border-neutral-800 justify-self-center w-full sm:w-auto justify-center">
-                   <button
-                      onClick={() => setCurrentArtifactIndex(prev => (prev === 0 ? artifacts.length - 1 : prev - 1))}
-                      disabled={artifacts.length <= 1}
-                      className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <span className="text-sm font-medium text-white min-w-[3rem] text-center select-none">
-                      {currentArtifactIndex + 1} / {artifacts.length}
-                    </span>
-                    <button
-                      onClick={() => setCurrentArtifactIndex(prev => (prev === artifacts.length - 1 ? 0 : prev + 1))}
-                      disabled={artifacts.length <= 1}
-                      className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
-                    >
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
-                </div>
-
-                {/* Right: Actions */}
-                <div className="flex items-center gap-2 justify-self-end w-full sm:w-auto justify-end">
-                  <button
-                    onClick={handleRegenerateCurrentArtifact}
-                    disabled={regeneratingArtifact}
-                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {regeneratingArtifact ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    Regenerate
-                  </button>
-                  <button
-                    onClick={handleAddArtifact}
-                    disabled={addingArtifact}
-                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {addingArtifact ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    Add Artifact
-                  </button>
-                  
-                  <div className="h-6 w-px bg-neutral-800 mx-2" />
-                  
-                  <button
-                    onClick={handleDeleteArtifact}
-                    disabled={artifacts.length <= 1}
-                    className="p-2 text-red-400 hover:bg-red-950/30 rounded-lg transition-colors disabled:opacity-50"
-                    title="Delete Artifact"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[auto_1fr] sm:items-center">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={handleExportArtifactJSON}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border ${
-                      copiedJsonArtifact 
-                        ? 'bg-emerald-950/50 text-emerald-400 border-emerald-900' 
-                        : 'text-neutral-300 hover:text-white hover:bg-neutral-800 border-transparent'
-                    }`}
-                    title="Copy AE JSON to Clipboard"
-                  >
-                    {copiedJsonArtifact ? <Check className="w-4 h-4" /> : <FileJson className="w-4 h-4" />}
-                    {copiedJsonArtifact ? 'Copied' : 'JSON Artifact'}
-                  </button>
-                  <button
-                    onClick={handleExportProjectJSON}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border ${
-                      copiedJsonProject 
-                        ? 'bg-emerald-950/50 text-emerald-400 border-emerald-900' 
-                        : 'text-neutral-300 hover:text-white hover:bg-neutral-800 border-transparent'
-                    }`}
-                    title="Copy AE JSON Project to Clipboard"
-                  >
-                    {copiedJsonProject ? <Check className="w-4 h-4" /> : <FileJson className="w-4 h-4" />}
-                    {copiedJsonProject ? 'Copied' : 'JSON Project'}
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
-                    <label className="mb-2 block text-xs font-medium text-neutral-400">FPS</label>
-                    <div className="inline-flex w-full rounded-md border border-neutral-800 bg-neutral-900 p-1">
-                      {FPS_OPTIONS.map(option => (
-                        <button
-                          key={option}
-                          type="button"
-                          onClick={() => setExportFps(option)}
-                          className={`flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
-                            exportFps === option
-                              ? 'bg-indigo-600 text-white shadow-sm'
-                              : 'text-neutral-300 hover:text-white'
-                          }`}
-                        >
-                          {option} fps
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
-                    <label className="mb-2 block text-xs font-medium text-neutral-400">Resolution</label>
-                    <select
-                      value={exportResolution.id}
-                      onChange={(e) => {
-                        const next = RESOLUTION_OPTIONS.find(option => option.id === e.target.value);
-                        if (next) setExportResolution(next);
-                      }}
-                      className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
-                    >
-                      {RESOLUTION_OPTIONS.map(option => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
-                    <label className="mb-2 block text-xs font-medium text-neutral-400">
-                      Duration: {exportDuration}s
-                    </label>
-                    <input
-                      type="range"
-                      min={5}
-                      max={15}
-                      step={1}
-                      value={exportDuration}
-                      onChange={(e) => setExportDuration(Number(e.target.value))}
-                      className="w-full accent-indigo-500"
-                    />
-                    <div className="mt-1 flex justify-between text-[11px] text-neutral-500">
-                      <span>5s</span>
-                      <span>15s</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <ExportControls
+                copiedJsonArtifact={copiedJsonArtifact}
+                copiedJsonProject={copiedJsonProject}
+                onExportArtifact={handleExportArtifactJSON}
+                onExportProject={handleExportProjectJSON}
+                exportFps={exportFps}
+                onExportFpsChange={setExportFps}
+                exportResolution={exportResolution}
+                resolutionOptions={RESOLUTION_OPTIONS}
+                onExportResolutionChange={setExportResolution}
+                exportDuration={exportDuration}
+                onExportDurationChange={setExportDuration}
+              />
             </div>
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center p-8 text-neutral-400 bg-neutral-900/20 border border-neutral-800/50 rounded-2xl border-dashed">
-            <div className="w-20 h-20 bg-neutral-900 rounded-3xl flex items-center justify-center mb-6 ring-1 ring-neutral-800 shadow-xl shadow-black/50">
-              <Presentation className="w-10 h-10 text-indigo-500" />
-            </div>
-            <h2 className="text-2xl font-bold text-neutral-200 mb-3">
-              Artifact — from spark to structure.
-            </h2>
-            <p className="max-w-md text-neutral-500 text-lg leading-relaxed">
-              Capture ideas, shape them, and make them instantly legible.
-            </p>
-          </div>
+        <EmptyState />
       )}
       <iframe
         ref={exportIframeRef}
@@ -1086,52 +856,18 @@ export const ArtifactGenerator: React.FC = () => {
       />
 
       {/* Input Area (Bottom) */}
-      <div className={`shrink-0 max-w-4xl mx-auto w-full${isEmpty ? ' mt-auto' : ''}`}>
-        {errorMsg && (
-          <div className="mb-4 p-3 bg-red-900/20 border border-red-800/50 rounded-lg text-red-200 text-sm flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
-            <AlertCircle className="w-4 h-4" />
-            {errorMsg}
-          </div>
-        )}
-
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
-          <label className="flex items-center gap-2">
-            <span className="font-medium">Image source</span>
-            <select
-              value={imageProvider}
-              onChange={(e) => setImageProvider(e.target.value as ImageProviderName)}
-              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
-            >
-              {IMAGE_PROVIDER_OPTIONS.map(option => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">
-          <textarea
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Describe your artifacts... (e.g. 'A futuristic identity kit for a quantum computing startup with dark aesthetic')"
-            className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none px-4 py-3 pr-14 resize-none min-h-[60px] max-h-[200px] text-lg"
-            rows={2}
-          />
-          <button
-            onClick={() => handleGenerate()}
-            disabled={loading || !topic.trim()}
-            className="absolute right-2 bottom-2 p-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-          </button>
-        </div>
-        <div className="text-center mt-3 text-xs text-neutral-500 font-medium">
-          Press <span className="text-neutral-400 font-bold">Enter</span> to generate
-        </div>
-      </div>
+      <GeneratorInput
+        errorMsg={errorMsg}
+        imageProvider={imageProvider}
+        imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
+        onImageProviderChange={setImageProvider}
+        topic={topic}
+        onTopicChange={setTopic}
+        onKeyDown={handleKeyDown}
+        onGenerate={handleGenerate}
+        loading={loading}
+        isEmpty={isEmpty}
+      />
     </div>
   );
 };

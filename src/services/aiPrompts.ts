@@ -159,7 +159,7 @@ CONSTRAINT:
 - SVG is never redundant if it establishes the requested aesthetic texture.
 - Never use pre-made icon sets. Every path must be authored specifically for this topic.
 
-4. **IMAGES (STOCK PHOTOS)**
+4. **IMAGES**
    - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.
    - Provide EXACTLY 10 concise, specific keywords/phrases (2-4 words each).
    - Prioritize precise, concrete descriptors over generic terms.
@@ -167,29 +167,7 @@ CONSTRAINT:
    - Photography must stay clean and natural.
    - Images MUST use the {{IMAGE:...}} placeholder (no direct URLs).
 
-   5. **AI ASSETS (TEXTURES, MASKS & ISOLATED ELEMENTS)**
-
-{{GEN_IMAGE}} is intended for generating visual assets that serve a structural, decorative, or procedural role within a design, rather than conveying narrative or informational content.
-
-It is most applicable in situations where:
-- the element is not part of the main subject matter
-- clean isolation or artificial generation is preferable to real-world photography
-- the asset will be reused, tiled, masked, or composited
-- the visual purpose is to add texture, depth, noise, or materiality
-
-Generated assets may function as:
-- masks or alpha maps (e.g. torn edges, brush strokes, grunge)
-- overlays that modify existing visuals through blending or opacity
-- isolated elements positioned as part of a collage or layout system
-
-The choice between {{GEN_IMAGE}} and {{IMAGE}} should be based on the role of the image:
-- structural or decorative support → {{GEN_IMAGE}}
-- content-bearing or narrative imagery → {{IMAGE}}
-
-Select the approach that best aligns with the user’s intent, visual hierarchy, and overall design context.
-
-
-6. **IMAGE SHAPING (ADVANCED)**
+5. **IMAGE SHAPING (ADVANCED)**
 Image shaping is a semantic action, not a stylistic choice.
 
 Any form may be used if it emerges from the meaning of the slide
@@ -343,7 +321,6 @@ INSTRUCTIONS:
 8. If ARTIFACT MODE includes "slides":
    - return one <section class="artifact slide">
    - images allowed via {{IMAGE:...}} (10 keywords)
-   - Use \`{{GEN_IMAGE:description}}\` for textures/masks/isolated elements.
 9. If ARTIFACT MODE != slides:
    - return one <section class="artifact">
    - no narrative, no images
@@ -378,7 +355,6 @@ INSTRUCTIONS:
 8. If ARTIFACT MODE includes "slides":
    - return one <section class="artifact slide">
    - images allowed via {{IMAGE:...}} (10 keywords)
-   - Use \`{{GEN_IMAGE:description}}\` for textures/masks/isolated elements.
 9. If ARTIFACT MODE != slides:
    - return one <section class="artifact">
    - no narrative, no images

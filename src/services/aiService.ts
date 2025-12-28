@@ -661,7 +661,6 @@ CONSTRAINT:
    - Prioritize precise, concrete descriptors over generic terms.
    - NO filters (no grayscale, opacity, blur).
    - Photography must stay clean and natural.
-   - If ARTIFACT MODE does NOT include "slides": Do NOT use images unless the user explicitly requests photographic imagery.
 
 5. **IMAGE SHAPING (ADVANCED)**
 Image shaping is a semantic action, not a stylistic choice.
@@ -753,13 +752,14 @@ PHASE 4: TECHNICAL EXECUTION
 - If ARTIFACT MODE does NOT include "slides":
   - The canvas may be any proportion, but must present artifacts clearly and beautifully in a curated layout.
 
-- Artifacts must be visible by default with no user interaction.
-- Do NOT use radio inputs or CSS that hides artifacts by default (no opacity: 0 or visibility: hidden on the main artifact blocks).
+  - Artifacts must be visible by default with no user interaction.
+  - Do NOT use radio inputs or CSS that hides artifacts by default (no opacity: 0 or visibility: hidden on the main artifact blocks).
+  - The main <section class="artifact"> / <section class="artifact slide"> wrapper MUST have no margin (margin: 0).
 
-- **PRO DIRECTION:**
-  - Do not feel constrained by standard flow.
-  - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the “web-page” feel.
-  - Feel free to use negative margins, calc-based offsets, and intentional overlapping for high-end editorial composition.
+  - **PRO DIRECTION:**
+    - Do not feel constrained by standard flow.
+    - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the “web-page” feel.
+    - Negative margins/calc offsets are allowed on inner elements only, NEVER on the artifact/slide wrapper.
 
 3. **CREATIVE MODE**
 - Bolder is better.
@@ -809,10 +809,11 @@ INSTRUCTIONS:
 6. SVG rules:
    - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
    - no external assets
-7. If ARTIFACT MODE includes "slides":
+7. The wrapper must keep margin: 0 (do not add margin to the <section class="artifact...">).
+8. If ARTIFACT MODE includes "slides":
    - return one <section class="artifact slide">
    - images allowed via {{IMAGE:...}} (10 keywords)
-8. If ARTIFACT MODE != slides:
+9. If ARTIFACT MODE != slides:
    - return one <section class="artifact">
    - no narrative, no images
 
@@ -840,10 +841,11 @@ INSTRUCTIONS:
 6. SVG rules:
    - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
    - no external assets
-7. If ARTIFACT MODE includes "slides":
+7. The wrapper must keep margin: 0 (do not add margin to the <section class="artifact...">).
+8. If ARTIFACT MODE includes "slides":
    - return one <section class="artifact slide">
    - images allowed via {{IMAGE:...}} (10 keywords)
-8. If ARTIFACT MODE != slides:
+9. If ARTIFACT MODE != slides:
    - return one <section class="artifact">
    - no narrative, no images
 

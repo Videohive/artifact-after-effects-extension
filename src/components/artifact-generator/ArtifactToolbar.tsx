@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Check, Code, Copy, Loader2, Play, Plus, RefreshCw, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { ViewMode } from './types';
 
@@ -35,6 +35,37 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   onDelete,
   canDelete
 }) => {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (totalCount <= 1) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+
+      if (isEditable) {
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onPrev();
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onNext();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onNext, onPrev, totalCount]);
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
       <div className="flex items-center gap-3 justify-self-start">

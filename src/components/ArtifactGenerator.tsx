@@ -175,6 +175,16 @@ const reindexArtifactClasses = (artifactHtmls: string[], includeSlideClass: bool
 const sanitizeLayout = (root: ParentNode) => {
   sanitizeImageAlts(root);
   fixTextUrlBlocks(root);
+  const artifacts = root.querySelectorAll('.artifact, .slide');
+  artifacts.forEach(el => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.style.transform) {
+      el.style.transform = '';
+    }
+    if (el.style.transformOrigin) {
+      el.style.transformOrigin = '';
+    }
+  });
 };
 
 const normalizeTags = (value: string) => {
@@ -339,7 +349,7 @@ export const ArtifactGenerator: React.FC = () => {
       html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
       body { background: #000; display: flex; align-items: center; justify-content: center; }
       /* Ensure artifacts fit the iframe bounds (container already keeps 16:9). */
-      .artifact, .slide { width: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; margin-bottom: 0 !important; }
+      .artifact, .slide { width: 100% !important; overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; margin-bottom: 0 !important; transform: none !important; transform-origin: initial !important; }
       /* Fallback styling for images */
       img {
         /* Hide alt text by making it transparent */

@@ -24,7 +24,14 @@
     if (!svgOpenTag || !topBlocks.length) {
       var fallbackData = parseSvgData(svg);
       normalizeSvgData(fallbackData, localBBox, rootData);
-      var single = buildSvgLayerFromData(comp, node, localBBox, fallbackData, node.name || "SVG");
+      var single = buildSvgLayerFromData(
+        comp,
+        node,
+        localBBox,
+        fallbackData,
+        node.name || "SVG",
+        null
+      );
       if (single) layers.push(single);
       if (fallbackData && fallbackData.textElements && fallbackData.textElements.length) {
         for (var ft = 0; ft < fallbackData.textElements.length; ft++) {
@@ -34,7 +41,8 @@
             fallbackData.textElements[ft],
             fallbackData,
             localBBox,
-            1
+            1,
+            null
           );
           if (fallbackText) layers.push(fallbackText);
         }
@@ -48,6 +56,7 @@
       var attrs = parseSvgAttributes(openTag);
       var styledAttrs = parseSvgStyleAttributes(attrs);
       var blockOpacity = parseNumber(styledAttrs.opacity, 1);
+      var blockTransform = parseSvgTransform(styledAttrs.transform);
       var id = styledAttrs.id || block.tag + "-" + (i + 1);
       var wrapped = svgOpenTag + block.raw + "</svg>";
       var svgData = parseSvgData(wrapped);
@@ -55,7 +64,7 @@
 
       var hasShapes = svgData && svgData.elements && svgData.elements.length;
       if (hasShapes) {
-        var layer = buildSvgLayerFromData(comp, node, localBBox, svgData, id);
+        var layer = buildSvgLayerFromData(comp, node, localBBox, svgData, id, blockTransform);
         if (layer) {
           if (isFinite(blockOpacity) && blockOpacity !== 1) {
             layer.property("Transform").property("Opacity").setValue(blockOpacity * 100);
@@ -72,7 +81,8 @@
             svgData.textElements[t],
             svgData,
             localBBox,
-            blockOpacity
+            blockOpacity,
+            blockTransform
           );
           if (textLayer) layers.push(textLayer);
         }
@@ -213,7 +223,7 @@
     }
   }
 
-  function buildSvgLayerFromData(comp, node, localBBox, svgData, name) {
+  function buildSvgLayerFromData(comp, node, localBBox, svgData, name, extraTransform) {
     if (!svgData || svgData.width <= 0 || svgData.height <= 0) return null;
     var layer = comp.layers.addShape();
     layer.name = safeName(name || node.name || "SVG");
@@ -245,12 +255,12 @@
       }
     }
 
-    applySvgViewBoxTransform(rootGroup, svgData, localBBox);
+    applySvgViewBoxTransform(rootGroup, svgData, localBBox, extraTransform);
     setLayerTopLeft(layer, localBBox);
     return layer;
   }
 
-  function applySvgViewBoxTransform(rootGroup, svgData, localBBox) {
+  function applySvgViewBoxTransform(rootGroup, svgData, localBBox, extraTransform) {
     // Map SVG viewBox to bbox via group transform (preserve aspect ratio).
     var scaleX = localBBox.w / svgData.width;
     var scaleY = localBBox.h / svgData.height;
@@ -261,10 +271,22 @@
     var padY = useNonUniformScale ? 0 : (localBBox.h - svgData.height * scale) / 2;
     var tr = rootGroup.property("Transform");
     tr.property("Anchor Point").setValue([0, 0]);
-    tr.property("Position").setValue([
-      -svgData.minX + padX,
-      -svgData.minY + padY
-    ]);
+    var posX = -svgData.minX + padX;
+    var posY = -svgData.minY + padY;
+    if (extraTransform && extraTransform.length >= 6) {
+      var tx = extraTransform[4] || 0;
+      var ty = extraTransform[5] || 0;
+      if (tx !== 0 || ty !== 0) {
+        if (useNonUniformScale) {
+          posX += tx * scaleX;
+          posY += ty * scaleY;
+        } else {
+          posX += tx * scale;
+          posY += ty * scale;
+        }
+      }
+    }
+    tr.property("Position").setValue([posX, posY]);
     if (useNonUniformScale) {
       tr.property("Scale").setValue([scaleX * 100, scaleY * 100]);
     } else {
@@ -1171,7 +1193,7 @@
     return anchorY;
   }
 
-  function addSvgTextLayer(comp, parentLayer, el, svgData, localBBox, extraOpacity) {
+  function addSvgTextLayer(comp, parentLayer, el, svgData, localBBox, extraOpacity, extraTransform) {
     if (!el || !el.text) return;
     var attrs = parseSvgStyleAttributes(el.attrs || {});
     var text = normalizeSvgTextContent(el.text, attrs);
@@ -1181,6 +1203,19 @@
     var y = parseSvgLengthList(attrs.y, svgData.height, 0);
     var scaleData = getSvgScaleData(svgData, localBBox);
     var pos = mapSvgPoint(x, y, svgData, localBBox, scaleData);
+    if (extraTransform && extraTransform.length >= 6) {
+      var tx = extraTransform[4] || 0;
+      var ty = extraTransform[5] || 0;
+      if (tx !== 0 || ty !== 0) {
+        if (scaleData.useNonUniformScale) {
+          pos.x += tx * scaleData.scaleX;
+          pos.y += ty * scaleData.scaleY;
+        } else {
+          pos.x += tx * scaleData.scale;
+          pos.y += ty * scaleData.scale;
+        }
+      }
+    }
 
     var layer = comp.layers.addText(text);
     layer.name = safeName("svg-text");

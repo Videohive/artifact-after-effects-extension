@@ -3,12 +3,186 @@
     function debugLog(msg) {}
   }
 
-  function createSvgShapeLayer(comp, node, localBBox, rootData) {
-    var layer = comp.layers.addShape();
-    layer.name = safeName(node.name || "SVG");
+  function createSvgShapeLayers(comp, node, localBBox, rootData) {
+    var layers = [];
+    var svg = String(node.content || "");
+    var svgOpenTag = extractSvgOpenTag(svg);
+    var svgInner = extractSvgInner(svg);
+    var topBlocks = extractSvgTopLevelBlocks(svgInner);
 
-    debugLog("SVG: create layer name=" + layer.name + " bbox=" + localBBox.w + "x" + localBBox.h);
-    var svgData = parseSvgData(node.content || "");
+    debugLog(
+      "SVG: create layers name=" +
+        safeName(node.name || "SVG") +
+        " bbox=" +
+        localBBox.w +
+        "x" +
+        localBBox.h +
+        " blocks=" +
+        topBlocks.length
+    );
+
+    if (!svgOpenTag || !topBlocks.length) {
+      var fallbackData = parseSvgData(svg);
+      normalizeSvgData(fallbackData, localBBox, rootData);
+      var single = buildSvgLayerFromData(comp, node, localBBox, fallbackData, node.name || "SVG");
+      if (single) layers.push(single);
+      if (fallbackData && fallbackData.textElements && fallbackData.textElements.length) {
+        for (var ft = 0; ft < fallbackData.textElements.length; ft++) {
+          var fallbackText = addSvgTextLayer(
+            comp,
+            null,
+            fallbackData.textElements[ft],
+            fallbackData,
+            localBBox,
+            1
+          );
+          if (fallbackText) layers.push(fallbackText);
+        }
+      }
+      return layers;
+    }
+
+    for (var i = 0; i < topBlocks.length; i++) {
+      var block = topBlocks[i];
+      var openTag = block.openTag;
+      var attrs = parseSvgAttributes(openTag);
+      var styledAttrs = parseSvgStyleAttributes(attrs);
+      var blockOpacity = parseNumber(styledAttrs.opacity, 1);
+      var id = styledAttrs.id || block.tag + "-" + (i + 1);
+      var wrapped = svgOpenTag + block.raw + "</svg>";
+      var svgData = parseSvgData(wrapped);
+      normalizeSvgData(svgData, localBBox, rootData);
+
+      var hasShapes = svgData && svgData.elements && svgData.elements.length;
+      if (hasShapes) {
+        var layer = buildSvgLayerFromData(comp, node, localBBox, svgData, id);
+        if (layer) {
+          if (isFinite(blockOpacity) && blockOpacity !== 1) {
+            layer.property("Transform").property("Opacity").setValue(blockOpacity * 100);
+          }
+          layers.push(layer);
+        }
+      }
+
+      if (svgData && svgData.textElements && svgData.textElements.length) {
+        for (var t = 0; t < svgData.textElements.length; t++) {
+          var textLayer = addSvgTextLayer(
+            comp,
+            null,
+            svgData.textElements[t],
+            svgData,
+            localBBox,
+            blockOpacity
+          );
+          if (textLayer) layers.push(textLayer);
+        }
+      }
+    }
+
+    return layers;
+  }
+
+  function extractSvgOpenTag(svg) {
+    if (!svg) return "";
+    var match = String(svg).match(/<svg\b[^>]*>/i);
+    return match ? match[0] : "";
+  }
+
+  function extractSvgInner(svg) {
+    if (!svg) return "";
+    var s = String(svg);
+    var openMatch = s.match(/<svg\b[^>]*>/i);
+    if (!openMatch) return "";
+    var start = openMatch.index + openMatch[0].length;
+    var end = s.lastIndexOf("</svg>");
+    if (end === -1) end = s.length;
+    return s.substring(start, end);
+  }
+
+  function extractSvgTopLevelBlocks(svgInner) {
+    var out = [];
+    var s = String(svgInner || "");
+    var i = 0;
+    var len = s.length;
+    var depth = 0;
+    var start = -1;
+    var topTag = "";
+    while (i < len) {
+      var lt = s.indexOf("<", i);
+      if (lt === -1) break;
+      if (s.substr(lt, 4) === "<!--") {
+        var endComment = s.indexOf("-->", lt + 4);
+        if (endComment === -1) break;
+        i = endComment + 3;
+        continue;
+      }
+
+      if (s.substr(lt, 2) === "</") {
+        var gtClose = s.indexOf(">", lt + 2);
+        if (gtClose === -1) break;
+        if (depth > 0) depth--;
+        if (depth === 0 && start !== -1) {
+          var raw = s.substring(start, gtClose + 1);
+          out.push({ raw: raw, tag: topTag, openTag: extractOpenTag(raw) });
+          start = -1;
+          topTag = "";
+        }
+        i = gtClose + 1;
+        continue;
+      }
+
+      var gt = s.indexOf(">", lt + 1);
+      if (gt === -1) break;
+      var tagText = s.substring(lt, gt + 1);
+      var tag = parseTagName(tagText);
+      var selfClosing = /\/>\s*$/.test(tagText);
+
+      if (tag.toLowerCase() === "defs") {
+        if (!selfClosing) {
+          var defsClose = s.indexOf("</defs", gt + 1);
+          if (defsClose !== -1) {
+            var defsEnd = s.indexOf(">", defsClose + 6);
+            if (defsEnd !== -1) {
+              i = defsEnd + 1;
+              continue;
+            }
+          }
+        }
+        i = gt + 1;
+        continue;
+      }
+
+      if (depth === 0) {
+        start = lt;
+        topTag = tag;
+      }
+
+      if (!selfClosing) {
+        depth++;
+      } else if (depth === 0) {
+        var rawSelf = s.substring(start, gt + 1);
+        out.push({ raw: rawSelf, tag: topTag, openTag: extractOpenTag(rawSelf) });
+        start = -1;
+        topTag = "";
+      }
+
+      i = gt + 1;
+    }
+    return out;
+  }
+
+  function parseTagName(tagText) {
+    var m = String(tagText).match(/<\s*([a-zA-Z0-9:_-]+)/);
+    return m && m[1] ? m[1] : "unknown";
+  }
+
+  function extractOpenTag(block) {
+    var m = String(block).match(/<[^>]+>/);
+    return m ? m[0] : "";
+  }
+
+  function normalizeSvgData(svgData, localBBox, rootData) {
+    if (!svgData) return;
     if (svgData && (svgData.percentWidth || svgData.percentHeight)) {
       var viewportScale = 1;
       if (rootData && rootData.viewport) {
@@ -26,6 +200,7 @@
       svgData.minX = 0;
       svgData.minY = 0;
     }
+
     if (svgData && (svgData.width <= 0 || svgData.height <= 0)) {
       var fallback = getSvgFallbackSize(localBBox, rootData);
       if (fallback.w > 0 && fallback.h > 0) {
@@ -36,17 +211,17 @@
         svgData.height = fallback.h;
       }
     }
-    debugLog("SVG: parsed viewBox=" + svgData.minX + "," + svgData.minY + " " + svgData.width + "x" + svgData.height + " elements=" + svgData.elements.length);
-    if (!svgData || svgData.width <= 0 || svgData.height <= 0) {
-      setLayerTransform(layer, localBBox);
-      return layer;
-    }
+  }
+
+  function buildSvgLayerFromData(comp, node, localBBox, svgData, name) {
+    if (!svgData || svgData.width <= 0 || svgData.height <= 0) return null;
+    var layer = comp.layers.addShape();
+    layer.name = safeName(name || node.name || "SVG");
 
     var contents = layer.property("Contents");
     var scaleData = getSvgScaleData(svgData, localBBox);
     var rootGroup = contents.addProperty("ADBE Vector Group");
     rootGroup.name = "SVG";
-
     var rootContents = rootGroup.property("Contents");
 
     for (var i = 0; i < svgData.elements.length; i++) {
@@ -67,11 +242,15 @@
         addSvgPolyline(rootContents, el.attrs, true, svgData, scaleData);
       } else if (el.tag === "path") {
         addSvgPath(rootContents, el.attrs, svgData, scaleData);
-      } else if (el.tag === "text") {
-        addSvgTextLayer(comp, layer, el, svgData, localBBox);
       }
     }
 
+    applySvgViewBoxTransform(rootGroup, svgData, localBBox);
+    setLayerTopLeft(layer, localBBox);
+    return layer;
+  }
+
+  function applySvgViewBoxTransform(rootGroup, svgData, localBBox) {
     // Map SVG viewBox to bbox via group transform (preserve aspect ratio).
     var scaleX = localBBox.w / svgData.width;
     var scaleY = localBBox.h / svgData.height;
@@ -91,15 +270,6 @@
     } else {
       tr.property("Scale").setValue([scale * 100, scale * 100]);
     }
-
-    if (svgData && svgData.textElements && svgData.textElements.length) {
-      for (var t = 0; t < svgData.textElements.length; t++) {
-        addSvgTextLayer(comp, layer, svgData.textElements[t], svgData, localBBox);
-      }
-    }
-
-    setLayerTopLeft(layer, localBBox);
-    return layer;
   }
 
   function parseSvgData(svg) {
@@ -219,7 +389,7 @@
     if (r <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
-    grp.name = "Circle";
+    grp.name = attrs && attrs.id ? attrs.id : "Circle";
     var grpContents = grp.property("Contents");
 
     var ellipse = grpContents.addProperty("ADBE Vector Shape - Ellipse");
@@ -237,7 +407,7 @@
     if (rx <= 0 || ry <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
-    grp.name = "Ellipse";
+    grp.name = attrs && attrs.id ? attrs.id : "Ellipse";
     var grpContents = grp.property("Contents");
 
     var ellipse = grpContents.addProperty("ADBE Vector Shape - Ellipse");
@@ -255,7 +425,7 @@
     if (w <= 0 || h <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
-    grp.name = "Rect";
+    grp.name = attrs && attrs.id ? attrs.id : "Rect";
     var grpContents = grp.property("Contents");
 
     var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
@@ -277,7 +447,7 @@
     var y2 = parseSvgLength(attrs.y2, svgData.height, 0);
 
     var grp = parentContents.addProperty("ADBE Vector Group");
-    grp.name = "Line";
+    grp.name = attrs && attrs.id ? attrs.id : "Line";
     var grpContents = grp.property("Contents");
 
     var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
@@ -305,7 +475,7 @@
     if (!points.length) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
-    grp.name = closed ? "Polygon" : "Polyline";
+    grp.name = attrs && attrs.id ? attrs.id : closed ? "Polygon" : "Polyline";
     var grpContents = grp.property("Contents");
 
     var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
@@ -353,7 +523,7 @@
       }
 
       var grp = parentContents.addProperty("ADBE Vector Group");
-      grp.name = "Path";
+      grp.name = attrs && attrs.id ? attrs.id : "Path";
       var grpContents = grp.property("Contents");
 
       var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
@@ -1001,7 +1171,7 @@
     return anchorY;
   }
 
-  function addSvgTextLayer(comp, parentLayer, el, svgData, localBBox) {
+  function addSvgTextLayer(comp, parentLayer, el, svgData, localBBox, extraOpacity) {
     if (!el || !el.text) return;
     var attrs = parseSvgStyleAttributes(el.attrs || {});
     var text = normalizeSvgTextContent(el.text, attrs);
@@ -1056,9 +1226,11 @@
 
     var opacity = parseNumber(attrs.opacity, 1);
     var fillOpacity = parseNumber(attrs["fill-opacity"], 1);
-    layer.property("Transform").property("Opacity").setValue(opacity * fillOpacity * 100);
+    var extra = typeof extraOpacity === "number" ? extraOpacity : 1;
+    layer.property("Transform").property("Opacity").setValue(opacity * fillOpacity * extra * 100);
 
     // Do not parent SVG text to avoid double transforms; position is absolute in comp space.
+    return layer;
   }
 
   function getSvgFallbackSize(localBBox, rootData) {

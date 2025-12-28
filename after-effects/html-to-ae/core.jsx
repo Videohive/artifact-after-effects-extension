@@ -282,12 +282,21 @@
     // ============================================================
     if (node.type === "svg") {
       var svgBBox = getLocalBBox(node, origin);
-      layer = createSvgShapeLayer(comp, node, svgBBox, rootData);
+      layer = createPrecompLayer(node, comp, svgBBox, rootData);
       if (parentLayer) layer.parent = parentLayer;
       applyOpacity(layer, node.style);
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, svgBBox);
       applyDropShadow(layer, node.style);
+
+      var childComp = layer.source;
+      var childBBox = {
+        x: 0,
+        y: 0,
+        w: childComp.width,
+        h: childComp.height,
+      };
+      createSvgShapeLayers(childComp, node, childBBox, rootData);
       return layer;
     }
     // ============================================================

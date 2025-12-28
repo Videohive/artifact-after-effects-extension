@@ -559,39 +559,22 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
    - Prefer scale, positioning, and contrast over heavy shadows.
    - ::before and ::after are encouraged for "fine details" (hairlines, coordinates, UI markers).
 
-3. SVG DESIGN LAYER (MEANING-FIRST, DESCRIPTION-LED)
+3. SVG DESIGN LAYER (MEANING-DRIVEN EXECUTION)
 
-SVG is a primary explanatory medium, not decoration.
+SVG is the functional and symbolic skeleton of the slide. It must be authored as a semantic layer that directly responds to the User's input.
 
-If the prompt includes any SVG description, metaphor, behavior, or logic,
-it MUST be treated as the authoritative source for SVG design.
-Do not reinterpret, replace, or invent an alternative logic.
+LOGIC FLOW:
+1. EXPLICIT SPECIFICATIONS: If the User's prompt contains any descriptions of visual forms, patterns, behaviors, or graphic elements, you MUST translate them into SVG code with absolute fidelity. Their intent is your primary technical constraint. 
+2. INFERRED SYSTEM: If no visual descriptions are provided, you must independently engineer an SVG system that reflects the underlying logic, rhythm, and "physics" of the TOPIC.
 
-Before authoring SVG:
+AUTHORING PROTOCOLS:
+- ARCHITECTURAL ROLE: SVG must be used as a primary design element: a complex background texture, a sophisticated frame, or an overlaying 'engraving' layer.
+- COMPLEXITY ENCOURAGED: For ornamental or technical topics, you are expected to use multiple SVG elements (paths, patterns, lines) to create visual density. High-end design requires detail.
+- PRIMITIVE CONSTRUCTION: Build from raw <path>, <line>, <rect>, <circle>, and <pattern>.
 
-1. Check for an explicit or implicit SVG description in the prompt.
-   If present:
-   - Extract its governing idea, behavior, or structure.
-   - Preserve its intent exactly.
-   - Translate it faithfully into SVG behavior.
-
-2. Only if NO SVG description is provided:
-   - Identify the governing logic or behavior of the TOPIC.
-   - Determine how relationships, flow, constraints, or systems operate.
-
-Translate meaning into SVG behavior through:
-- Spatial relationships
-- Rhythm, repetition, interruption
-- Framing, alignment, hierarchy
-- Continuity or rupture across slides
-
-Rules:
-- SVG must be semantically bound to the TOPIC or to the provided SVG description.
-- If the same SVG could work for a different topic or contradict the given description, it is INVALID.
-- SVG must interact with layout: guiding flow, framing content, encoding meaning.
-- SVG across slides must share a coherent authored logic, even if visual forms evolve.
-- SVG is subordinate to meaning, not aesthetics.
-- If SVG does not add understanding, it must be removed.
+CONSTRAINT:
+- SVG is never redundant if it establishes the requested aesthetic texture.
+- Never use pre-made icon sets. Every path must be authored specifically for this topic.
 
 4. **IMAGES**
    - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.
@@ -699,6 +682,8 @@ PHASE 4: TECHNICAL EXECUTION
   - Prefer bold compositions.
   - Slight asymmetry > perfect symmetry.
   - Avoid template-looking layouts.
+
+  Do not fear long HTML files. Complex SVG paths and detailed geometric patterns are encouraged to achieve the visual standards of the referenced agencies.
 
 PHASE 5: GENERATION
 

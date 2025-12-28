@@ -245,7 +245,7 @@ export const SlideGenerator: React.FC = () => {
     }
   }, [headContent, editingTitle, editingTags, editingDescription]);
 
-  const parseAndSetHtml = (html: string) => {
+  const parseAndSetHtml = (html: string, preserveIndex = false) => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     
@@ -298,6 +298,10 @@ export const SlideGenerator: React.FC = () => {
     `;
     doc.head.appendChild(script);
 
+    const nextIndex = preserveIndex
+      ? Math.min(currentSlideIndex, Math.max(0, sections.length - 1))
+      : 0;
+
     if (sections.length > 0) {
       setHeadContent(doc.head.innerHTML);
       const slideHtmls = sections.map((section, i) => {
@@ -305,7 +309,7 @@ export const SlideGenerator: React.FC = () => {
         return section.outerHTML;
       });
       setSlides(slideHtmls);
-      setCurrentSlideIndex(0);
+      setCurrentSlideIndex(nextIndex);
     } else {
       setHeadContent(doc.head.innerHTML);
       setSlides([doc.body.innerHTML]);
@@ -418,23 +422,26 @@ export const SlideGenerator: React.FC = () => {
     }
   };
 
-  const getSlideHtmlByIndex = (index: number) => {
-    if (slides.length === 0) return '';
-    const disableAnimations = !animationsEnabled;
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          ${headContent}
-          ${disableAnimations ? `
-          <style>
+  const getHeadHtml = (headOverride = headContent) => {
+    const base = headOverride.trim();
+    if (!animationsEnabled) {
+      return `${base}<style>
             /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
             *, *::before, *::after {
               animation: none !important;
               transition: none !important;
             }
-          </style>` : ''}
-        </head>
+          </style>`;
+    }
+    return base;
+  };
+
+  const getSlideHtmlByIndex = (index: number) => {
+    if (slides.length === 0) return '';
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>${getHeadHtml()}</head>
         <body>
           ${slides[index]}
         </body>
@@ -466,16 +473,7 @@ export const SlideGenerator: React.FC = () => {
       const html = `
         <!DOCTYPE html>
         <html>
-          <head>
-            ${headContent}
-            <style>
-              /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
-              *, *::before, *::after {
-                animation: none !important;
-                transition: none !important;
-              }
-            </style>
-          </head>
+          <head>${getHeadHtml()}</head>
           <body>
             ${slides[index]}
           </body>
@@ -548,21 +546,10 @@ export const SlideGenerator: React.FC = () => {
   };
 
   const getAllSlidesHtml = (headOverride = headContent) => {
-     const disableAnimations = !animationsEnabled;
      return `
       <!DOCTYPE html>
       <html>
-        <head>
-          ${headOverride}
-          ${disableAnimations ? `
-          <style>
-            /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
-            *, *::before, *::after {
-              animation: none !important;
-              transition: none !important;
-            }
-          </style>` : ''}
-        </head>
+        <head>${getHeadHtml(headOverride)}</head>
         <body>
           ${slides.join('\n')}
         </body>
@@ -585,7 +572,7 @@ export const SlideGenerator: React.FC = () => {
   useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode === 'preview') {
       if (codeDraft.trim()) {
-        parseAndSetHtml(codeDraft);
+        parseAndSetHtml(codeDraft, true);
       }
     }
     prevViewModeRef.current = viewMode;

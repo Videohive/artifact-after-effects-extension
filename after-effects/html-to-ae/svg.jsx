@@ -9,6 +9,23 @@
 
     debugLog("SVG: create layer name=" + layer.name + " bbox=" + localBBox.w + "x" + localBBox.h);
     var svgData = parseSvgData(node.content || "");
+    if (svgData && (svgData.percentWidth || svgData.percentHeight)) {
+      var viewportScale = 1;
+      if (rootData && rootData.viewport) {
+        viewportScale = parseNumber(rootData.viewport.scale, 1);
+        if (!isFinite(viewportScale) || viewportScale <= 0) viewportScale = 1;
+      }
+      var baseW = localBBox.w;
+      var baseH = localBBox.h;
+      if (viewportScale !== 1) {
+        if (baseW > 0) baseW = baseW / viewportScale;
+        if (baseH > 0) baseH = baseH / viewportScale;
+      }
+      if (svgData.percentWidth) svgData.width = baseW || svgData.width;
+      if (svgData.percentHeight) svgData.height = baseH || svgData.height;
+      svgData.minX = 0;
+      svgData.minY = 0;
+    }
     if (svgData && (svgData.width <= 0 || svgData.height <= 0)) {
       var fallback = getSvgFallbackSize(localBBox, rootData);
       if (fallback.w > 0 && fallback.h > 0) {
@@ -92,7 +109,9 @@
       width: 0,
       height: 0,
       elements: [],
-      preserveAspectRatio: ""
+      preserveAspectRatio: "",
+      percentWidth: false,
+      percentHeight: false
     };
     if (!svg) return out;
     debugLog("SVG: parseSvgData len=" + String(svg).length);
@@ -111,8 +130,14 @@
     if (out.width <= 0 || out.height <= 0) {
       var wMatch = svg.match(/width\s*=\s*["']([^"']+)["']/i);
       var hMatch = svg.match(/height\s*=\s*["']([^"']+)["']/i);
-      out.width = parseNumber(wMatch && wMatch[1], 0);
-      out.height = parseNumber(hMatch && hMatch[1], 0);
+      var wRaw = wMatch && wMatch[1] ? String(wMatch[1]) : "";
+      var hRaw = hMatch && hMatch[1] ? String(hMatch[1]) : "";
+      out.percentWidth = wRaw.indexOf("%") !== -1;
+      out.percentHeight = hRaw.indexOf("%") !== -1;
+      out.width = parseNumber(wRaw, 0);
+      out.height = parseNumber(hRaw, 0);
+      if (out.percentWidth) out.width = 0;
+      if (out.percentHeight) out.height = 0;
       out.minX = 0;
       out.minY = 0;
     }

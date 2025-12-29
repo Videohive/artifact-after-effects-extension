@@ -225,7 +225,7 @@
     return false;
   }
 
-  function buildFontCandidates(family, weight, style) {
+    function buildFontCandidates(family, weight, style) {
     var base = trim(family.replace(/['"]/g, ""));
     var baseNoSpaces = base.replace(/\s+/g, "");
 
@@ -233,6 +233,23 @@
     var isItalic = style === "italic";
 
     var names = [];
+    function pushUnique(list, value) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] === value) return;
+      }
+      list.push(value);
+    }
+    function addWeightNameCandidates(list, weightName) {
+      if (isItalic) {
+        pushUnique(list, base + "-" + weightName + "Italic");
+        pushUnique(list, base + "-" + weightName + " Italic");
+        pushUnique(list, baseNoSpaces + "-" + weightName + "Italic");
+      }
+      pushUnique(list, base + "-" + weightName);
+      pushUnique(list, base + " " + weightName);
+      pushUnique(list, baseNoSpaces + "-" + weightName);
+    }
+
 
     // ���������������� ��������
     var weightNames = [];
@@ -245,19 +262,17 @@
     else weightNames = ["Regular", "Book", "Normal"];
 
     for (var i = 0; i < weightNames.length; i++) {
-      if (isItalic) {
-        names.push(base + "-" + weightNames[i] + "Italic");
-        names.push(base + "-" + weightNames[i] + " Italic");
-        names.push(baseNoSpaces + "-" + weightNames[i] + "Italic");
-      }
-      names.push(base + "-" + weightNames[i]);
-      names.push(base + " " + weightNames[i]);
-      names.push(baseNoSpaces + "-" + weightNames[i]);
+      addWeightNameCandidates(names, weightNames[i]);
     }
 
+    // Try regular weight before falling back to the base family name.
+    addWeightNameCandidates(names, "Regular");
+    addWeightNameCandidates(names, "Book");
+    addWeightNameCandidates(names, "Normal");
+
     // fallback
-    names.push(base);
-    names.push(baseNoSpaces);
+    pushUnique(names, base);
+    pushUnique(names, baseNoSpaces);
 
     return names;
   }

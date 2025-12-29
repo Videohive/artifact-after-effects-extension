@@ -144,20 +144,20 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
 
 3. SVG DESIGN LAYER (MEANING-DRIVEN EXECUTION)
 
-SVG is the functional and symbolic skeleton of the artifact(s). It must be authored as a semantic layer that directly responds to the User's input.
+   SVG is the functional and symbolic skeleton of the artifact(s). It must be authored as a semantic layer that directly responds to the User's input.
 
-LOGIC FLOW:
-1. EXPLICIT SPECIFICATIONS: If the User's prompt contains any descriptions of visual forms, patterns, behaviors, or graphic elements, you MUST translate them into SVG code with absolute fidelity. Their intent is your primary technical constraint. 
-2. INFERRED SYSTEM: If no visual descriptions are provided, you must independently engineer an SVG system that reflects the underlying logic, rhythm, and "physics" of the TOPIC.
+   LOGIC FLOW:
+   1. EXPLICIT SPECIFICATIONS: If the User's prompt contains any descriptions of visual forms, patterns, behaviors, or graphic elements, you MUST translate them into SVG code with absolute fidelity. Their intent is your primary technical constraint. 
+   2. INFERRED SYSTEM: If no visual descriptions are provided, you must independently engineer an SVG system that reflects the underlying logic, rhythm, and "physics" of the TOPIC.
 
-AUTHORING PROTOCOLS:
-- ARCHITECTURAL ROLE: SVG must be used as a primary design element: a complex background texture, a sophisticated frame, or an overlaying 'engraving' layer.
-- COMPLEXITY ENCOURAGED: For ornamental or technical topics, you are expected to use multiple SVG elements (paths, patterns, lines) to create visual density. High-end design requires detail.
-- PRIMITIVE CONSTRUCTION: Build from raw <path>, <line>, <rect>, <circle>, and <pattern>.
+   AUTHORING PROTOCOLS:
+   - ARCHITECTURAL ROLE: SVG must be used as a primary design element: a complex background texture, a sophisticated frame, or an overlaying 'engraving' layer.
+   - COMPLEXITY ENCOURAGED: For ornamental or technical topics, you are expected to use multiple SVG elements (paths, patterns, lines) to create visual density. High-end design requires detail.
+   - PRIMITIVE CONSTRUCTION: Build from raw <path>, <line>, <rect>, <circle>, and <pattern>.
 
-CONSTRAINT:
-- SVG is never redundant if it establishes the requested aesthetic texture.
-- Never use pre-made icon sets. Every path must be authored specifically for this topic.
+   CONSTRAINT:
+   - SVG is never redundant if it establishes the requested aesthetic texture.
+   - Never use pre-made icon sets. Every path must be authored specifically for this topic.
 
 4. **IMAGES**
    - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.

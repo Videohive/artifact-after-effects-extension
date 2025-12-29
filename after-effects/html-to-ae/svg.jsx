@@ -230,9 +230,7 @@
 
     var contents = layer.property("Contents");
     var scaleData = getSvgScaleData(svgData, localBBox);
-    var rootGroup = contents.addProperty("ADBE Vector Group");
-    rootGroup.name = "SVG";
-    var rootContents = rootGroup.property("Contents");
+    var rootContents = contents;
 
     for (var i = 0; i < svgData.elements.length; i++) {
       var el = svgData.elements[i];
@@ -255,9 +253,20 @@
       }
     }
 
-    applySvgViewBoxTransform(rootGroup, svgData, localBBox, extraTransform);
+    applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform);
     setLayerTopLeft(layer, localBBox);
     return layer;
+  }
+
+  function applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform) {
+    if (!contents) return;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var group = contents.property(i);
+      if (group && group.matchName === "ADBE Vector Group") {
+        applySvgViewBoxTransform(group, svgData, localBBox, extraTransform);
+      }
+    }
   }
 
   function applySvgViewBoxTransform(rootGroup, svgData, localBBox, extraTransform) {

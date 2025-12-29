@@ -379,6 +379,24 @@
     }
   }
 
+  function pickTextPlacementBBox(node, localBBox) {
+    var textBBox = getLocalTextBounds(node, localBBox);
+    if (!textBBox) return localBBox;
+    if (!localBBox) return textBBox;
+
+    // If line bounds exceed the element box (common with large fonts/strokes),
+    // align to the element box to preserve CSS positioning.
+    var tolX = Math.max(2, localBBox.w * 0.05);
+    var tolY = Math.max(2, localBBox.h * 0.05);
+    var outside =
+      textBBox.x < localBBox.x - tolX ||
+      textBBox.y < localBBox.y - tolY ||
+      textBBox.x + textBBox.w > localBBox.x + localBBox.w + tolX ||
+      textBBox.y + textBBox.h > localBBox.y + localBBox.h + tolY;
+
+    return outside ? localBBox : textBBox;
+  }
+
   function createTextLayer(comp, node, localBBox) {
     // 1. ������ POINT TEXT
     var finalText = applyTextTransform(node.text || "", node.textTransform);
@@ -454,8 +472,8 @@
     addLineColorAnimators(layer, node);
 
     // 3. ������������� ��� TOP-LEFT (HTML-like)
-    var textBBox = getLocalTextBounds(node, localBBox);
-    placePointTextTopLeft(layer, textBBox || localBBox);
+    var placementBBox = pickTextPlacementBBox(node, localBBox);
+    placePointTextTopLeft(layer, placementBBox);
 
     return layer;
   }

@@ -1,10 +1,12 @@
 import React from 'react';
 import { AlertCircle, Loader2, Send } from 'lucide-react';
-import { ImageProviderName } from '../../services/aiService';
+import { AiProviderName, ImageProviderName } from '../../services/aiService';
 import { ImageProviderOption } from './types';
 
 type GeneratorInputProps = {
   errorMsg: string | null;
+  provider: AiProviderName;
+  onProviderChange: (value: AiProviderName) => void;
   imageProvider: ImageProviderName;
   imageProviderOptions: ImageProviderOption[];
   onImageProviderChange: (value: ImageProviderName) => void;
@@ -18,6 +20,8 @@ type GeneratorInputProps = {
 
 export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   errorMsg,
+  provider,
+  onProviderChange,
   imageProvider,
   imageProviderOptions,
   onImageProviderChange,
@@ -38,6 +42,35 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
       )}
 
       <div className="mb-2 flex flex-wrap items-center justify-end gap-2 px-1 text-xs text-neutral-400">
+        {/*
+        <div className="flex items-center gap-2">
+          <span className="font-medium">AI</span>
+          <div className="flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 p-0.5">
+            <button
+              type="button"
+              onClick={() => onProviderChange('gemini')}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                provider === 'gemini'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              Gemini
+            </button>
+            <button
+              type="button"
+              onClick={() => onProviderChange('openai')}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                provider === 'openai'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              ChatGPT
+            </button>
+          </div>
+        </div>
+        */}
         <label className="flex items-center gap-2">
           <span className="font-medium">Image source</span>
           <select

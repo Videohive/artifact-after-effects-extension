@@ -3,6 +3,7 @@ import {
   generateArtifacts,
   regenerateArtifact,
   generateNewArtifact,
+  AiProviderName,
   ImageProviderName,
   ArtifactMode
 } from '../services/aiService';
@@ -349,7 +350,7 @@ export const ArtifactGenerator: React.FC = () => {
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [currentArtifactIndex, setCurrentArtifactIndex] = useState(0);
   const [animationsEnabled] = useState(false);
-  const provider = 'gemini' as const;
+  const [provider, setProvider] = useState<AiProviderName>('gemini');
   
   const [loading, setLoading] = useState(false);
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
@@ -1059,6 +1060,8 @@ export const ArtifactGenerator: React.FC = () => {
       {/* Input Area (Bottom) */}
       <GeneratorInput
         errorMsg={errorMsg}
+        provider={provider}
+        onProviderChange={setProvider}
         imageProvider={imageProvider}
         imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
         onImageProviderChange={setImageProvider}

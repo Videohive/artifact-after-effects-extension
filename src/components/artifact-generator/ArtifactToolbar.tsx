@@ -1,6 +1,25 @@
-import React, { useEffect } from 'react';
-import { Check, Code, Copy, Loader2, Play, Plus, RefreshCw, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Check,
+  Code,
+  Copy,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
+  Palette
+} from 'lucide-react';
 import { ViewMode } from './types';
+
+type PaletteEntry = {
+  id: string;
+  label: string;
+  value: string;
+  hex: string | null;
+};
 
 type ArtifactToolbarProps = {
   viewMode: ViewMode;
@@ -17,6 +36,8 @@ type ArtifactToolbarProps = {
   adding: boolean;
   onDelete: () => void;
   canDelete: boolean;
+  paletteEntries: PaletteEntry[];
+  onPaletteColorChange: (id: string, nextColor: string) => void;
 };
 
 export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
@@ -33,8 +54,13 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   onAdd,
   adding,
   onDelete,
-  canDelete
+  canDelete,
+  paletteEntries,
+  onPaletteColorChange
 }) => {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (totalCount <= 1) {
@@ -65,6 +91,24 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onNext, onPrev, totalCount]);
+
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!paletteRef.current?.contains(event.target as Node)) {
+        setPaletteOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [paletteOpen]);
+
+  const openColorPicker = (inputId: string) => {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    if (input) {
+      input.click();
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
@@ -122,21 +166,69 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
       </div>
 
       <div className="flex items-center gap-2 justify-self-end w-full sm:w-auto justify-end">
+        <div className="relative" ref={paletteRef}>
+          <button
+            onClick={() => setPaletteOpen(prev => !prev)}
+            className={`p-2 rounded-lg transition-colors ${
+              paletteOpen ? 'bg-neutral-800 text-white' : 'text-neutral-300 hover:text-white hover:bg-neutral-800'
+            }`}
+            title="Project Palette"
+            type="button"
+          >
+            <Palette className="w-5 h-5" />
+          </button>
+          {paletteOpen ? (
+            <div className="absolute right-0 top-full mt-2 w-64 rounded-lg border border-neutral-800 bg-neutral-950 p-3 shadow-xl z-20">
+              <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-2">
+                Palette
+              </div>
+              {paletteEntries.length === 0 ? (
+                <div className="text-xs text-neutral-400">No palette found.</div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {paletteEntries.map(entry => (
+                    <div key={entry.id} className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-neutral-300">{entry.label}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-[11px] text-neutral-500">{entry.value}</div>
+                        <input
+                          type="color"
+                          id={`palette-${entry.id}`}
+                          className="sr-only"
+                          value={entry.hex || '#000000'}
+                          onChange={(e) => onPaletteColorChange(entry.id, e.target.value)}
+                          aria-label={`${entry.label} color`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openColorPicker(`palette-${entry.id}`)}
+                          className="h-6 w-6 rounded border border-neutral-700"
+                          style={{ backgroundColor: entry.hex || '#000000' }}
+                          aria-label={`Pick ${entry.label} color`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
         <button
           onClick={onRegenerate}
           disabled={regenerating}
-          className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
+          className="p-2 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
+          title="Regenerate"
         >
           {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Regenerate
         </button>
         <button
           onClick={onAdd}
           disabled={adding}
-          className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
+          className="p-2 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
+          title="Add Artifact"
         >
           {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          Add Artifact
         </button>
 
         <div className="h-6 w-px bg-neutral-800 mx-2" />

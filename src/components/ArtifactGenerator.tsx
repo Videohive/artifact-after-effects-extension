@@ -243,6 +243,106 @@ const updateHeadMetadata = (headHtml: string, title: string, tags: string, descr
   return head.innerHTML;
 };
 
+type RootVarEntry = {
+  name: string;
+  value: string;
+};
+
+const extractRootVariables = (headHtml: string): RootVarEntry[] => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const styles = Array.from(doc.head.querySelectorAll('style'));
+  const css = styles.map(style => style.textContent || '').join('\n');
+  const rootBlocks = css.match(/:root\s*{[\s\S]*?}/gi) || [];
+  const entries: RootVarEntry[] = [];
+  rootBlocks.forEach(block => {
+    const content = block.replace(/:root\s*{|}$/gi, '');
+    const varRe = /--([a-z0-9-]+)\s*:\s*([^;]+);/gi;
+    let m: RegExpExecArray | null;
+    while ((m = varRe.exec(content))) {
+      entries.push({ name: m[1], value: m[2].trim() });
+    }
+  });
+  return entries;
+};
+
+const buildRootBlock = (rootContent: string | null, updates: Record<string, string>) => {
+  const entries: string[] = [];
+  const used = new Set<string>();
+  if (rootContent) {
+    const varRe = /--([a-z0-9-]+)\s*:\s*([^;]+);/gi;
+    let m: RegExpExecArray | null;
+    while ((m = varRe.exec(rootContent))) {
+      const name = m[1];
+      const value = updates[name] ?? m[2].trim();
+      entries.push(`  --${name}: ${value};`);
+      used.add(name);
+    }
+  }
+  Object.entries(updates).forEach(([name, value]) => {
+    if (used.has(name)) return;
+    entries.push(`  --${name}: ${value};`);
+  });
+  return `:root {\n${entries.join('\n')}\n}\n`;
+};
+
+const updateRootVariablesInHead = (headHtml: string, updates: Record<string, string>) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const styles = Array.from(doc.head.querySelectorAll('style'));
+  let targetStyle = styles.find(style => /:root\s*{[\s\S]*?}/i.test(style.textContent || ''));
+  if (!targetStyle) {
+    targetStyle = doc.createElement('style');
+    targetStyle.textContent = buildRootBlock(null, updates);
+    doc.head.appendChild(targetStyle);
+    return doc.head.innerHTML;
+  }
+  const styleText = targetStyle.textContent || '';
+  const rootMatch = styleText.match(/:root\s*{([\s\S]*?)}/i);
+  if (!rootMatch) {
+    targetStyle.textContent = `${styleText}\n${buildRootBlock(null, updates)}`;
+    return doc.head.innerHTML;
+  }
+  const updatedRoot = buildRootBlock(rootMatch[1], updates).trim();
+  targetStyle.textContent = styleText.replace(/:root\s*{[\s\S]*?}/i, updatedRoot);
+  return doc.head.innerHTML;
+};
+
+const normalizeHex = (value: string) => {
+  const match = value.match(/#([0-9a-f]{6}|[0-9a-f]{3})/i);
+  if (!match) return null;
+  const hex = match[0];
+  if (hex.length === 4) {
+    const r = hex[1];
+    const g = hex[2];
+    const b = hex[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return hex.toLowerCase();
+};
+
+const normalizeColorToHex = (value?: string | null) => {
+  if (!value) return null;
+  const hex = normalizeHex(value);
+  if (hex) return hex;
+  const rgbMatch = value.match(
+    /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*[\d.]+)?\s*\)/i
+  );
+  if (!rgbMatch) return null;
+  const clamp = (n: number) => Math.min(255, Math.max(0, n));
+  const toHex = (n: number) => clamp(n).toString(16).padStart(2, '0');
+  const r = Number(rgbMatch[1]);
+  const g = Number(rgbMatch[2]);
+  const b = Number(rgbMatch[3]);
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
 export const ArtifactGenerator: React.FC = () => {
   const [topic, setTopic] = useState('');
   const [headContent, setHeadContent] = useState<string>('');
@@ -281,11 +381,13 @@ export const ArtifactGenerator: React.FC = () => {
     height: PREVIEW_BASE_HEIGHT
   });
   const [previewScale, setPreviewScale] = useState(1);
+  const [previewHtml, setPreviewHtml] = useState('');
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
   const previewStageRef = useRef<HTMLDivElement>(null);
   const prevViewModeRef = useRef<ViewMode>(viewMode);
+  const suppressPreviewReloadRef = useRef(false);
 
   useEffect(() => {
     const container = previewStageRef.current;
@@ -562,17 +664,21 @@ export const ArtifactGenerator: React.FC = () => {
     return `${base}${forceArtifactMarginReset}`;
   };
 
-  const getArtifactHtmlByIndex = (index: number) => {
-    if (artifacts.length === 0) return '';
+  const buildArtifactHtml = (headHtml: string, artifactHtml: string) => {
     return `
       <!DOCTYPE html>
       <html>
-        <head>${getHeadHtml()}</head>
+        <head>${headHtml}</head>
         <body>
-          ${artifacts[index]}
+          ${artifactHtml}
         </body>
       </html>
     `;
+  };
+
+  const getArtifactHtmlByIndex = (index: number) => {
+    if (artifacts.length === 0) return '';
+    return buildArtifactHtml(getHeadHtml(), artifacts[index]);
   };
 
   const loadArtifactIntoExportIframe = (index: number) => {
@@ -698,19 +804,23 @@ export const ArtifactGenerator: React.FC = () => {
   };
 
   const getCurrentFullHtml = () => {
-    return getArtifactHtmlByIndex(currentArtifactIndex);
+    return previewHtml || getArtifactHtmlByIndex(currentArtifactIndex);
   };
 
-  const getAllArtifactsHtml = (headOverride = headContent) => {
-     return `
+  const buildAllArtifactsHtml = (nextHead: string, nextArtifacts: string[]) => {
+    return `
       <!DOCTYPE html>
       <html>
-        <head>${getHeadHtml(headOverride)}</head>
+        <head>${getHeadHtml(nextHead)}</head>
         <body>
-          ${artifacts.join('\n')}
+          ${nextArtifacts.join('\n')}
         </body>
       </html>
     `;
+  };
+
+  const getAllArtifactsHtml = (headOverride = headContent) => {
+    return buildAllArtifactsHtml(headOverride, artifacts);
   };
 
   useEffect(() => {
@@ -724,6 +834,20 @@ export const ArtifactGenerator: React.FC = () => {
       setCodeDraft(getAllArtifactsHtml());
     }
   }, [viewMode, headContent, artifacts, animationsEnabled, isCodeDirty]);
+
+  useEffect(() => {
+    if (viewMode !== 'preview') return;
+    if (artifacts.length === 0) {
+      setPreviewHtml('');
+      return;
+    }
+    if (suppressPreviewReloadRef.current) {
+      suppressPreviewReloadRef.current = false;
+      return;
+    }
+    const html = buildArtifactHtml(getHeadHtml(), artifacts[currentArtifactIndex]);
+    setPreviewHtml(html);
+  }, [viewMode, headContent, artifacts, currentArtifactIndex, animationsEnabled]);
 
   useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode === 'preview') {
@@ -746,12 +870,17 @@ export const ArtifactGenerator: React.FC = () => {
     setTimeout(() => setCopiedHtml(false), 2000);
   };
 
+  const applyTemplateContent = (nextHead: string, nextArtifacts: string[]) => {
+    setHeadContent(nextHead);
+    setArtifacts(nextArtifacts);
+    if (viewMode === 'code' && !isCodeDirty) {
+      setCodeDraft(buildAllArtifactsHtml(nextHead, nextArtifacts));
+    }
+  };
+
   const applyHeadUpdates = (nextTitle: string, nextTags: string, nextDescription: string) => {
     const newHead = updateHeadMetadata(headContent, nextTitle, nextTags, nextDescription);
-    setHeadContent(newHead);
-    if (viewMode === 'code' && !isCodeDirty) {
-      setCodeDraft(getAllArtifactsHtml(newHead));
-    }
+    applyTemplateContent(newHead, artifacts);
   };
 
   const saveProjectTitle = () => {
@@ -803,6 +932,36 @@ export const ArtifactGenerator: React.FC = () => {
   const cancelDescriptionEdit = () => {
     setDescriptionDraft(projectDescription);
     setEditingDescription(false);
+  };
+
+  const paletteEntries = (() => {
+    const deduped = new Map<string, string>();
+    extractRootVariables(headContent).forEach(entry => {
+      deduped.set(entry.name, entry.value);
+    });
+    return Array.from(deduped.entries())
+      .map(([name, value]) => ({
+        id: name,
+        label: `--${name}`,
+        value,
+        hex: normalizeColorToHex(value)
+      }))
+      .filter(entry => entry.hex);
+  })();
+
+  const handlePaletteColorChange = (id: string, nextColor: string) => {
+    const toHex = normalizeHex(nextColor);
+    if (!toHex) return;
+    const updatedHead = updateRootVariablesInHead(headContent, { [id]: toHex });
+    suppressPreviewReloadRef.current = true;
+    setHeadContent(updatedHead);
+    if (viewMode === 'code' && !isCodeDirty) {
+      setCodeDraft(buildAllArtifactsHtml(updatedHead, artifacts));
+    }
+    const iframeRoot = iframeRef.current?.contentDocument?.documentElement;
+    if (iframeRoot) {
+      iframeRoot.style.setProperty(`--${id}`, toHex);
+    }
   };
 
   const isEmpty = artifacts.length === 0;
@@ -867,6 +1026,8 @@ export const ArtifactGenerator: React.FC = () => {
                 adding={addingArtifact}
                 onDelete={handleDeleteArtifact}
                 canDelete={artifacts.length > 1}
+                paletteEntries={paletteEntries}
+                onPaletteColorChange={handlePaletteColorChange}
               />
 
               <ExportControls

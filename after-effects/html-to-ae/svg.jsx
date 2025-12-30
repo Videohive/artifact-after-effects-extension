@@ -9,6 +9,8 @@
     var svgOpenTag = extractSvgOpenTag(svg);
     var svgInner = extractSvgInner(svg);
     var topBlocks = extractSvgTopLevelBlocks(svgInner);
+    var rootSvgData = parseSvgData(svg);
+    normalizeSvgData(rootSvgData, localBBox, rootData);
 
     debugLog(
       "SVG: create layers name=" +
@@ -22,8 +24,7 @@
     );
 
     if (!svgOpenTag || !topBlocks.length) {
-      var fallbackData = parseSvgData(svg);
-      normalizeSvgData(fallbackData, localBBox, rootData);
+      var fallbackData = rootSvgData;
       var single = buildSvgLayerFromData(
         comp,
         node,
@@ -42,7 +43,8 @@
             fallbackData,
             localBBox,
             1,
-            null
+            null,
+            rootSvgData
           );
           if (fallbackText) layers.push(fallbackText);
         }
@@ -82,7 +84,8 @@
             svgData,
             localBBox,
             blockOpacity,
-            blockTransform
+            blockTransform,
+            rootSvgData
           );
           if (textLayer) layers.push(textLayer);
         }
@@ -399,9 +402,28 @@
       var openTagMatch = block.match(/<text\b[^>]*>/i);
       var openTag = openTagMatch ? openTagMatch[0] : "<text>";
       var attrs = parseSvgAttributes(openTag);
-      var textContent = block.replace(/<text\b[^>]*>/i, "").replace(/<\/text>/i, "");
-      textContent = stripSvgTags(textContent);
-      list.push({ tag: "text", attrs: attrs, text: decodeSvgEntities(textContent) });
+      var textPathMatch = block.match(/<textPath\b[^>]*>[\s\S]*?<\/textPath>/i);
+      var textContent = "";
+      var pathRef = "";
+      if (textPathMatch) {
+        var textPathBlock = textPathMatch[0];
+        var textPathOpen = textPathBlock.match(/<textPath\b[^>]*>/i);
+        var textPathAttrs = parseSvgAttributes(textPathOpen ? textPathOpen[0] : "<textPath>");
+        var href = textPathAttrs.href || textPathAttrs["xlink:href"] || "";
+        if (href && href.charAt(0) === "#") pathRef = href.substring(1);
+        textContent = textPathBlock.replace(/<textPath\b[^>]*>/i, "").replace(/<\/textPath>/i, "");
+        textContent = stripSvgTags(textContent);
+        list.push({
+          tag: "text",
+          attrs: attrs,
+          text: decodeSvgEntities(textContent),
+          pathRef: pathRef
+        });
+      } else {
+        textContent = block.replace(/<text\b[^>]*>/i, "").replace(/<\/text>/i, "");
+        textContent = stripSvgTags(textContent);
+        list.push({ tag: "text", attrs: attrs, text: decodeSvgEntities(textContent) });
+      }
     }
   }
 
@@ -1212,26 +1234,40 @@
     return anchorY;
   }
 
-  function addSvgTextLayer(comp, parentLayer, el, svgData, localBBox, extraOpacity, extraTransform) {
+  function addSvgTextLayer(
+    comp,
+    parentLayer,
+    el,
+    svgData,
+    localBBox,
+    extraOpacity,
+    extraTransform,
+    rootSvgData
+  ) {
     if (!el || !el.text) return;
     var attrs = parseSvgStyleAttributes(el.attrs || {});
     var text = normalizeSvgTextContent(el.text, attrs);
     if (!text) return;
 
-    var x = parseSvgLengthList(attrs.x, svgData.width, 0);
-    var y = parseSvgLengthList(attrs.y, svgData.height, 0);
-    var scaleData = getSvgScaleData(svgData, localBBox);
-    var pos = mapSvgPoint(x, y, svgData, localBBox, scaleData);
-    if (extraTransform && extraTransform.length >= 6) {
-      var tx = extraTransform[4] || 0;
-      var ty = extraTransform[5] || 0;
-      if (tx !== 0 || ty !== 0) {
-        if (scaleData.useNonUniformScale) {
-          pos.x += tx * scaleData.scaleX;
-          pos.y += ty * scaleData.scaleY;
-        } else {
-          pos.x += tx * scaleData.scale;
-          pos.y += ty * scaleData.scale;
+    var baseSvgData = rootSvgData || svgData;
+    var scaleData = getSvgScaleData(baseSvgData, localBBox);
+    var pos = { x: 0, y: 0 };
+    var hasTextPath = !!el.pathRef;
+    if (!hasTextPath) {
+      var x = parseSvgLengthList(attrs.x, baseSvgData.width, 0);
+      var y = parseSvgLengthList(attrs.y, baseSvgData.height, 0);
+      pos = mapSvgPoint(x, y, baseSvgData, localBBox, scaleData);
+      if (extraTransform && extraTransform.length >= 6) {
+        var tx = extraTransform[4] || 0;
+        var ty = extraTransform[5] || 0;
+        if (tx !== 0 || ty !== 0) {
+          if (scaleData.useNonUniformScale) {
+            pos.x += tx * scaleData.scaleX;
+            pos.y += ty * scaleData.scaleY;
+          } else {
+            pos.x += tx * scaleData.scale;
+            pos.y += ty * scaleData.scale;
+          }
         }
       }
     }
@@ -1251,7 +1287,7 @@
       applyFontWithFallback(doc, candidates);
     }
 
-    var sizePx = parseSvgLength(attrs["font-size"], svgData.height, null);
+    var sizePx = parseSvgLength(attrs["font-size"], baseSvgData.height, null);
     if (sizePx !== null) {
       var scaledSize = sizePx * (scaleData.useNonUniformScale ? scaleData.scaleY : scaleData.scale);
       var clamped = clampFontSize(scaledSize);
@@ -1275,8 +1311,37 @@
     doc.justification = mapTextAlign(mapSvgTextAnchor(attrs["text-anchor"]));
     textProp.setValue(doc);
 
-    layer.property("Transform").property("Anchor Point").setValue([0, 0]);
-    layer.property("Transform").property("Position").setValue([pos.x, pos.y]);
+    if (hasTextPath) {
+      var pathEl = findSvgPathById(baseSvgData, el.pathRef);
+      var textPathShape = buildSvgTextPathShape(pathEl, baseSvgData, localBBox, extraTransform);
+      if (textPathShape) {
+        var masks = layer.property("ADBE Mask Parade") || layer.property("Masks");
+        var mask = masks ? masks.addProperty("ADBE Mask Atom") : null;
+        if (!mask && masks) mask = masks.addProperty("Mask");
+        if (mask) {
+          var maskShapeProp = mask.property("ADBE Mask Shape") || mask.property("Mask Path");
+          if (maskShapeProp) maskShapeProp.setValue(textPathShape);
+          var pathOptions =
+            layer.property("Text").property("ADBE Text Path Options") ||
+            layer.property("Text").property("Path Options");
+          if (pathOptions) {
+            var pathProp = pathOptions.property("ADBE Text Path") || pathOptions.property("Path");
+            if (pathProp) {
+              try {
+                pathProp.setValue(mask.index);
+              } catch (e) {
+                pathProp.setValue(1);
+              }
+            }
+          }
+        }
+      }
+      layer.property("Transform").property("Anchor Point").setValue([0, 0]);
+      layer.property("Transform").property("Position").setValue([0, 0]);
+    } else {
+      layer.property("Transform").property("Anchor Point").setValue([0, 0]);
+      layer.property("Transform").property("Position").setValue([pos.x, pos.y]);
+    }
 
     var opacity = parseNumber(attrs.opacity, 1);
     var fillOpacity = parseNumber(attrs["fill-opacity"], 1);
@@ -1416,6 +1481,67 @@
         sp.outTangents[i] = applySvgMatrixToVector(sp.outTangents[i], m);
       }
     }
+  }
+
+  function findSvgPathById(svgData, id) {
+    if (!svgData || !svgData.elements || !id) return null;
+    for (var i = 0; i < svgData.elements.length; i++) {
+      var el = svgData.elements[i];
+      if (!el || el.tag !== "path") continue;
+      var attrs = el.attrs || {};
+      if (attrs.id === id) return el;
+    }
+    return null;
+  }
+
+  function mapSvgVectorToComp(vec, scaleData) {
+    if (!vec) return [0, 0];
+    if (scaleData.useNonUniformScale) {
+      return [vec[0] * scaleData.scaleX, vec[1] * scaleData.scaleY];
+    }
+    return [vec[0] * scaleData.scale, vec[1] * scaleData.scale];
+  }
+
+  function buildSvgTextPathShape(pathEl, svgData, localBBox, extraTransform) {
+    if (!pathEl || !pathEl.attrs || !pathEl.attrs.d) return null;
+    var subpaths = parseSvgPathData(pathEl.attrs.d, svgData);
+    if (!subpaths.length) return null;
+    var tr = parseSvgTransform(pathEl.attrs.transform);
+    if (tr) {
+      for (var t = 0; t < subpaths.length; t++) {
+        applyTransformToSubpath(subpaths[t], tr);
+      }
+    }
+    if (extraTransform && extraTransform.length >= 6) {
+      for (var j = 0; j < subpaths.length; j++) {
+        applyTransformToSubpath(subpaths[j], extraTransform);
+      }
+    }
+
+    var sp = subpaths[0];
+    if (!sp || !sp.points || !sp.points.length) return null;
+    if (!allSvgPointsFinite(sp.points)) return null;
+
+    var scaleData = getSvgScaleData(svgData, localBBox);
+    var shape = new Shape();
+    var verts = [];
+    var inT = [];
+    var outT = [];
+    for (var i = 0; i < sp.points.length; i++) {
+      var p = sp.points[i];
+      var mapped = mapSvgPoint(p[0], p[1], svgData, localBBox, scaleData);
+      verts.push([mapped.x, mapped.y]);
+      var inVec = sp.inTangents ? sp.inTangents[i] : [0, 0];
+      var outVec = sp.outTangents ? sp.outTangents[i] : [0, 0];
+      inT.push(mapSvgVectorToComp(inVec, scaleData));
+      outT.push(mapSvgVectorToComp(outVec, scaleData));
+    }
+
+    shape.vertices = verts;
+    shape.inTangents = inT;
+    shape.outTangents = outT;
+    shape.closed = sp.closed;
+    return shape;
   }
 
   function namedSvgColor(name) {

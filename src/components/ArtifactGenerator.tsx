@@ -32,6 +32,557 @@ const IMAGE_PROVIDER_OPTIONS: ImageProviderOption[] = [
 ];
 const PREVIEW_BASE_WIDTH = 1280;
 const PREVIEW_BASE_HEIGHT = 720;
+const PREVIEW_EDITOR_STYLE = `
+  :root {
+    --ae2-edit-outline: #4cc9ff;
+    --ae2-edit-selected: #9ad8ff;
+    --ae2-edit-handle: #ffffff;
+  }
+  .ae2-edit-target {
+    outline: 1px solid transparent;
+    outline-offset: 0;
+  }
+  .ae2-edit-target:hover {
+    outline-color: var(--ae2-edit-outline);
+  }
+  .ae2-edit-target.ae2-selected {
+    outline: 2px solid var(--ae2-edit-selected);
+  }
+  #ae2-selection {
+    position: absolute;
+    border: 1px solid var(--ae2-edit-outline);
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 2147483646;
+  }
+  .ae2-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: var(--ae2-edit-handle);
+    border: 1px solid var(--ae2-edit-outline);
+    box-sizing: border-box;
+    border-radius: 2px;
+    z-index: 2147483647;
+  }
+  .ae2-handle-rotate {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #0b0f14;
+  }
+  svg.ae2-edit-target,
+  svg.ae2-edit-target * {
+    pointer-events: auto !important;
+  }
+  .svg-overlay {
+    pointer-events: none !important;
+  }
+  .svg-overlay * {
+    pointer-events: auto !important;
+  }
+`;
+
+const PREVIEW_EDITOR_SCRIPT = `
+  (function () {
+    if (window.__ae2PreviewEditor) return;
+    window.__ae2PreviewEditor = true;
+
+    var doc = document;
+    var body = doc.body;
+    if (body) {
+      body.setAttribute('tabindex', '0');
+    }
+    var selected = null;
+    var overlay = null;
+    var handles = {};
+    var dragging = null;
+    var dirty = false;
+    var history = [];
+    var historyIndex = -1;
+    var restoring = false;
+    var HISTORY_LIMIT = 50;
+
+    function isUi(el) {
+      return !!(el && el.getAttribute && el.getAttribute('data-ae2-ui') === 'true');
+    }
+
+    function isSvgElement(el) {
+      return !!(el && el.tagName && el.tagName.toLowerCase() === 'svg');
+    }
+
+    function isSvgGraphics(el) {
+      if (!el) return false;
+      if (typeof SVGGraphicsElement !== 'undefined') {
+        return el instanceof SVGGraphicsElement;
+      }
+      return typeof SVGElement !== 'undefined' && el instanceof SVGElement;
+    }
+
+    function isHtmlElement(el) {
+      if (!el) return false;
+      if (typeof HTMLElement !== 'undefined') {
+        return el instanceof HTMLElement;
+      }
+      return !!el.style;
+    }
+
+    function svgHasSelectableChild(svgEl) {
+      if (!svgEl || !svgEl.querySelectorAll) return false;
+      var nodes = svgEl.querySelectorAll('[id]');
+      for (var i = 0; i < nodes.length; i += 1) {
+        var node = nodes[i];
+        if (node === svgEl) continue;
+        if (isSvgGraphics(node)) return true;
+      }
+      return false;
+    }
+
+    function getSelectable(el) {
+      var node = el;
+      while (node && node !== body && node !== doc.documentElement) {
+        if (isUi(node)) return null;
+        if (isSvgElement(node)) {
+          if (node.id && !svgHasSelectableChild(node)) return node;
+          return null;
+        }
+        if (node.id) return node;
+        node = node.parentElement;
+      }
+      return null;
+    }
+
+    function markTargets() {
+      var nodes = body.querySelectorAll('[id]');
+      for (var i = 0; i < nodes.length; i += 1) {
+        var node = nodes[i];
+        if (!node || node === body || node === doc.documentElement) continue;
+        if (isUi(node)) continue;
+        if (isSvgElement(node) && svgHasSelectableChild(node)) continue;
+        node.classList.add('ae2-edit-target');
+      }
+    }
+
+    function getNum(el, key, fallback) {
+      var raw = el.getAttribute('data-ae2-' + key);
+      if (raw == null) return fallback;
+      var num = parseFloat(raw);
+      return isNaN(num) ? fallback : num;
+    }
+
+    function setNum(el, key, value) {
+      el.setAttribute('data-ae2-' + key, String(value));
+    }
+
+    function getBaseTransform(el) {
+      var base = el.getAttribute('data-ae2-base-transform');
+      if (base == null) {
+        var computed = window.getComputedStyle(el).transform;
+        base = computed && computed !== 'none' ? computed : '';
+        el.setAttribute('data-ae2-base-transform', base);
+      }
+      return base;
+    }
+
+    function applyTransform(el) {
+      var base = getBaseTransform(el);
+      var tx = getNum(el, 'tx', 0);
+      var ty = getNum(el, 'ty', 0);
+      var rot = getNum(el, 'rot', 0);
+      var sx = getNum(el, 'sx', 1);
+      var sy = getNum(el, 'sy', 1);
+      if (isSvgGraphics(el)) {
+        el.style.transformBox = 'fill-box';
+        el.style.transformOrigin = 'center';
+      } else if (isHtmlElement(el)) {
+        var computed = window.getComputedStyle(el);
+        if (computed && computed.display === 'inline') {
+          if (!el.getAttribute('data-ae2-display')) {
+            el.setAttribute('data-ae2-display', 'inline');
+          }
+          el.style.display = 'inline-block';
+        }
+        el.style.transformOrigin = 'center center';
+      } else {
+        el.style.transformOrigin = 'center center';
+      }
+      var transform = base ? base + ' ' : '';
+      transform += 'translate(' + tx + 'px,' + ty + 'px) rotate(' + rot + 'deg) scale(' + sx + ',' + sy + ')';
+      el.style.transform = transform;
+    }
+
+    function ensureUi() {
+      if (overlay) return;
+      overlay = doc.createElement('div');
+      overlay.id = 'ae2-selection';
+      overlay.setAttribute('data-ae2-ui', 'true');
+      body.appendChild(overlay);
+
+      var names = ['nw', 'ne', 'sw', 'se'];
+      for (var i = 0; i < names.length; i += 1) {
+        var name = names[i];
+        var handle = doc.createElement('div');
+        handle.className = 'ae2-handle ae2-handle-' + name;
+        handle.setAttribute('data-ae2-ui', 'true');
+        handle.setAttribute('data-ae2-handle', name);
+        body.appendChild(handle);
+        handles[name] = handle;
+      }
+
+      var rotate = doc.createElement('div');
+      rotate.className = 'ae2-handle ae2-handle-rotate';
+      rotate.setAttribute('data-ae2-ui', 'true');
+      rotate.setAttribute('data-ae2-handle', 'rotate');
+      body.appendChild(rotate);
+      handles.rotate = rotate;
+    }
+
+    function setOverlayVisible(visible) {
+      if (!overlay) return;
+      overlay.style.display = visible ? 'block' : 'none';
+      Object.keys(handles).forEach(function (key) {
+        handles[key].style.display = visible ? 'block' : 'none';
+      });
+    }
+
+    function updateOverlay() {
+      if (!selected || !overlay) return;
+      var rect = getSelectionRect(selected);
+      if (!rect) return;
+      var left = rect.left + window.scrollX;
+      var top = rect.top + window.scrollY;
+      overlay.style.left = left + 'px';
+      overlay.style.top = top + 'px';
+      overlay.style.width = rect.width + 'px';
+      overlay.style.height = rect.height + 'px';
+
+      var half = 5;
+      if (handles.nw) {
+        handles.nw.style.left = (left - half) + 'px';
+        handles.nw.style.top = (top - half) + 'px';
+      }
+      if (handles.ne) {
+        handles.ne.style.left = (left + rect.width - half) + 'px';
+        handles.ne.style.top = (top - half) + 'px';
+      }
+      if (handles.sw) {
+        handles.sw.style.left = (left - half) + 'px';
+        handles.sw.style.top = (top + rect.height - half) + 'px';
+      }
+      if (handles.se) {
+        handles.se.style.left = (left + rect.width - half) + 'px';
+        handles.se.style.top = (top + rect.height - half) + 'px';
+      }
+      if (handles.rotate) {
+        handles.rotate.style.left = (left + rect.width / 2 - 6) + 'px';
+        handles.rotate.style.top = (top - 26) + 'px';
+      }
+    }
+
+    function selectElement(el) {
+      if (selected === el) return;
+      if (selected) {
+        selected.classList.remove('ae2-selected');
+      }
+      selected = el;
+      if (selected) {
+        selected.classList.add('ae2-selected');
+        ensureUi();
+        setOverlayVisible(true);
+        applyTransform(selected);
+        updateOverlay();
+        if (body) body.focus();
+      } else {
+        setOverlayVisible(false);
+      }
+    }
+
+    function clearSelection() {
+      if (!selected) return;
+      selected.classList.remove('ae2-selected');
+      selected = null;
+      setOverlayVisible(false);
+    }
+
+    function startMove(e) {
+      if (!selected) return;
+      dragging = {
+        type: 'move',
+        startX: e.clientX,
+        startY: e.clientY,
+        tx: getNum(selected, 'tx', 0),
+        ty: getNum(selected, 'ty', 0)
+      };
+      dirty = false;
+    }
+
+    function startResize(e, handle) {
+      if (!selected) return;
+      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      dragging = {
+        type: 'resize',
+        handle: handle,
+        startX: e.clientX,
+        startY: e.clientY,
+        width: rect.width,
+        height: rect.height,
+        sx: getNum(selected, 'sx', 1),
+        sy: getNum(selected, 'sy', 1)
+      };
+      dirty = false;
+    }
+
+    function startRotate(e) {
+      if (!selected) return;
+      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      var cx = rect.left + rect.width / 2;
+      var cy = rect.top + rect.height / 2;
+      dragging = {
+        type: 'rotate',
+        startAngle: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI,
+        rot: getNum(selected, 'rot', 0),
+        centerX: cx,
+        centerY: cy
+      };
+      dirty = false;
+    }
+
+    function onMouseMove(e) {
+      if (!dragging || !selected) return;
+      if (dragging.type === 'move') {
+        var dx = e.clientX - dragging.startX;
+        var dy = e.clientY - dragging.startY;
+        setNum(selected, 'tx', dragging.tx + dx);
+        setNum(selected, 'ty', dragging.ty + dy);
+        applyTransform(selected);
+        updateOverlay();
+        dirty = true;
+        return;
+      }
+      if (dragging.type === 'resize') {
+        var dxr = e.clientX - dragging.startX;
+        var dyr = e.clientY - dragging.startY;
+        var scaleX = 1;
+        var scaleY = 1;
+        if (dragging.handle.indexOf('e') !== -1) {
+          scaleX = (dragging.width + dxr) / dragging.width;
+        }
+        if (dragging.handle.indexOf('w') !== -1) {
+          scaleX = (dragging.width - dxr) / dragging.width;
+        }
+        if (dragging.handle.indexOf('s') !== -1) {
+          scaleY = (dragging.height + dyr) / dragging.height;
+        }
+        if (dragging.handle.indexOf('n') !== -1) {
+          scaleY = (dragging.height - dyr) / dragging.height;
+        }
+        var nextSx = Math.max(0.05, dragging.sx * scaleX);
+        var nextSy = Math.max(0.05, dragging.sy * scaleY);
+        setNum(selected, 'sx', nextSx);
+        setNum(selected, 'sy', nextSy);
+        applyTransform(selected);
+        updateOverlay();
+        dirty = true;
+        return;
+      }
+      if (dragging.type === 'rotate') {
+        var angle = Math.atan2(e.clientY - dragging.centerY, e.clientX - dragging.centerX) * 180 / Math.PI;
+        var delta = angle - dragging.startAngle;
+        setNum(selected, 'rot', dragging.rot + delta);
+        applyTransform(selected);
+        updateOverlay();
+        dirty = true;
+      }
+    }
+
+    function finishDrag() {
+      dragging = null;
+      body.style.userSelect = '';
+      body.style.cursor = '';
+      if (dirty) {
+        dirty = false;
+        postUpdate();
+      }
+    }
+
+    function postUpdate() {
+      var root = getRoot();
+      var html = getRootHtml(root);
+      if (!restoring) {
+        pushHistory(html);
+      }
+      window.parent.postMessage({ source: 'ae2-preview-editor', type: 'update', html: html }, '*');
+    }
+
+    function onMouseDown(e) {
+      var target = e.target;
+      if (isUi(target)) return;
+      var selectable = getSelectable(target);
+      if (!selectable) {
+        clearSelection();
+        return;
+      }
+      selectElement(selectable);
+      if (body) body.focus();
+      body.style.userSelect = 'none';
+      body.style.cursor = 'move';
+      startMove(e);
+      e.preventDefault();
+    }
+
+    function onHandleDown(e) {
+      var handle = e.target.getAttribute('data-ae2-handle');
+      if (!handle || !selected) return;
+      body.style.userSelect = 'none';
+      if (handle === 'rotate') {
+        body.style.cursor = 'crosshair';
+        startRotate(e);
+      } else {
+        body.style.cursor = handle + '-resize';
+        startResize(e, handle);
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    function onKeyDown(e) {
+      var isUndo =
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        (e.code === 'KeyZ' || String(e.key).toLowerCase() === 'z');
+      var isRedo =
+        (e.ctrlKey || e.metaKey) &&
+        ((e.shiftKey && (e.code === 'KeyZ' || String(e.key).toLowerCase() === 'z')) || e.code === 'KeyY');
+      if (isUndo) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      if (isRedo) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (!selected) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        selected.parentElement.removeChild(selected);
+        clearSelection();
+        markTargets();
+        postUpdate();
+      }
+    }
+
+    function getSelectionRect(el) {
+      if (!el) return null;
+      if (el.tagName && el.tagName.toLowerCase() === 'svg') {
+        var svgRect = getSvgContentsRect(el);
+        if (svgRect) return svgRect;
+      }
+      return el.getBoundingClientRect();
+    }
+
+    function getRoot() {
+      return doc.querySelector('.artifact') || doc.querySelector('.slide') || body;
+    }
+
+    function getRootHtml(root) {
+      return root === body ? body.innerHTML : root.outerHTML;
+    }
+
+    function pushHistory(html) {
+      if (historyIndex >= 0 && history[historyIndex] === html) return;
+      history = history.slice(0, historyIndex + 1);
+      history.push(html);
+      historyIndex = history.length - 1;
+      if (history.length > HISTORY_LIMIT) {
+        history.shift();
+        historyIndex = history.length - 1;
+      }
+    }
+
+    function restoreHtml(html) {
+      var root = getRoot();
+      if (root === body) {
+        body.innerHTML = html;
+      } else {
+        var container = doc.createElement('div');
+        container.innerHTML = html;
+        var next = container.firstElementChild;
+        if (next && root.parentElement) {
+          root.parentElement.replaceChild(next, root);
+        }
+      }
+      selected = null;
+      ensureUi();
+      markTargets();
+      setOverlayVisible(false);
+    }
+
+    function undo() {
+      if (historyIndex <= 0) return;
+      historyIndex -= 1;
+      restoring = true;
+      restoreHtml(history[historyIndex]);
+      postUpdate();
+      restoring = false;
+    }
+
+    function redo() {
+      if (historyIndex >= history.length - 1) return;
+      historyIndex += 1;
+      restoring = true;
+      restoreHtml(history[historyIndex]);
+      postUpdate();
+      restoring = false;
+    }
+
+    function getSvgContentsRect(svgEl) {
+      if (!svgEl || !svgEl.querySelectorAll) return null;
+      var nodes = svgEl.querySelectorAll('*');
+      var minLeft = Infinity;
+      var minTop = Infinity;
+      var maxRight = -Infinity;
+      var maxBottom = -Infinity;
+      for (var i = 0; i < nodes.length; i += 1) {
+        var node = nodes[i];
+        if (!node || !node.getBoundingClientRect) continue;
+        if (node.tagName && node.tagName.toLowerCase() === 'svg') continue;
+        if (!isSvgGraphics(node)) continue;
+        var rect = node.getBoundingClientRect();
+        if (!rect || (rect.width === 0 && rect.height === 0)) continue;
+        minLeft = Math.min(minLeft, rect.left);
+        minTop = Math.min(minTop, rect.top);
+        maxRight = Math.max(maxRight, rect.right);
+        maxBottom = Math.max(maxBottom, rect.bottom);
+      }
+      if (minLeft === Infinity) return null;
+      return {
+        left: minLeft,
+        top: minTop,
+        width: Math.max(0, maxRight - minLeft),
+        height: Math.max(0, maxBottom - minTop),
+        right: maxRight,
+        bottom: maxBottom
+      };
+    }
+
+    markTargets();
+    ensureUi();
+    setOverlayVisible(false);
+    pushHistory(getRootHtml(getRoot()));
+
+    doc.addEventListener('mousedown', onMouseDown, true);
+    doc.addEventListener('mousemove', onMouseMove, true);
+    doc.addEventListener('mouseup', finishDrag, true);
+    window.addEventListener('resize', updateOverlay);
+    window.addEventListener('scroll', updateOverlay, true);
+    doc.addEventListener('keydown', onKeyDown, true);
+
+    Object.keys(handles).forEach(function (key) {
+      handles[key].addEventListener('mousedown', onHandleDown, true);
+    });
+  })();
+`;
 
 const sanitizeImageAlts = (root: ParentNode) => {
   const images = root.querySelectorAll('img');
@@ -703,6 +1254,22 @@ export const ArtifactGenerator: React.FC = () => {
     `;
   };
 
+  const buildPreviewHtml = (headHtml: string, artifactHtml: string, index: number) => {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          ${headHtml}
+          <style>${PREVIEW_EDITOR_STYLE}</style>
+        </head>
+        <body data-ae2-artifact-index="${index}">
+          ${artifactHtml}
+          <script>${PREVIEW_EDITOR_SCRIPT}</script>
+        </body>
+      </html>
+    `;
+  };
+
   const getArtifactHtmlByIndex = (index: number) => {
     if (artifacts.length === 0) return '';
     return buildArtifactHtml(getHeadHtml(), artifacts[index]);
@@ -831,6 +1398,9 @@ export const ArtifactGenerator: React.FC = () => {
   };
 
   const getCurrentFullHtml = () => {
+    if (viewMode === 'preview' && artifacts.length > 0) {
+      return previewHtml || buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex);
+    }
     return previewHtml || getArtifactHtmlByIndex(currentArtifactIndex);
   };
 
@@ -872,7 +1442,7 @@ export const ArtifactGenerator: React.FC = () => {
       suppressPreviewReloadRef.current = false;
       return;
     }
-    const html = buildArtifactHtml(getHeadHtml(), artifacts[currentArtifactIndex]);
+    const html = buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex);
     setPreviewHtml(html);
   }, [viewMode, headContent, artifacts, currentArtifactIndex, animationsEnabled]);
 
@@ -889,6 +1459,26 @@ export const ArtifactGenerator: React.FC = () => {
     setCodeDraft(value);
     setIsCodeDirty(true);
   };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const payload = event.data as { source?: string; type?: string; html?: string };
+      if (!payload || payload.source !== 'ae2-preview-editor') return;
+      if (payload.type !== 'update') return;
+      if (!payload.html || artifacts.length === 0) return;
+
+      suppressPreviewReloadRef.current = true;
+      setArtifacts(prev => {
+        if (prev.length === 0) return prev;
+        const next = [...prev];
+        next[currentArtifactIndex] = payload.html as string;
+        return reindexArtifactClasses(next, includeSlideClass);
+      });
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [currentArtifactIndex, includeSlideClass, artifacts.length]);
 
   const handleCopyHtml = async () => {
     const html = getAllArtifactsHtml();

@@ -33,7 +33,7 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   isEmpty
 }) => {
   return (
-    <div className={`shrink-0 max-w-4xl mx-auto w-full${isEmpty ? ' mt-auto' : ''}`}>
+    <div className={`shrink-0 w-full${isEmpty ? ' mt-auto' : ''}`}>
       {errorMsg && (
         <div className="mb-4 p-3 bg-red-900/20 border border-red-800/50 rounded-lg text-red-200 text-sm flex items-center gap-2 animate-in slide-in-from-bottom-2 fade-in">
           <AlertCircle className="w-4 h-4" />

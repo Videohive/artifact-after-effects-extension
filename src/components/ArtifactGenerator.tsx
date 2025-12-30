@@ -10,11 +10,21 @@ import {
 import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtractor/index';
 import { ArtifactPreview } from './artifact-generator/ArtifactPreview';
 import { ArtifactToolbar } from './artifact-generator/ArtifactToolbar';
+import { ArtifactHistoryPanel } from './artifact-generator/ArtifactHistoryPanel';
 import { EmptyState } from './artifact-generator/EmptyState';
 import { ExportControls } from './artifact-generator/ExportControls';
 import { GeneratorInput } from './artifact-generator/GeneratorInput';
 import { ProjectMetadataPanel } from './artifact-generator/ProjectMetadataPanel';
 import { ImageProviderOption, ResolutionOption, ViewMode } from './artifact-generator/types';
+import {
+  listArtifactHistory,
+  getArtifactHistory,
+  createArtifactHistory,
+  updateArtifactHistory,
+  deleteArtifactHistory,
+  ArtifactHistoryItem
+} from '../services/artifactHistoryService';
+import { getAuthToken } from '../services/authService';
 
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
 
@@ -876,6 +886,55 @@ const parseHeadMetadata = (headHtml: string) => {
   return { title, tags, description, artifactMode };
 };
 
+const stripRuntimeHead = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const head = doc.head;
+  const nodes = Array.from(head.querySelectorAll('style, script'));
+  nodes.forEach(node => {
+    const marker = node.getAttribute('data-ae2-runtime');
+    const text = node.textContent || '';
+    const isRuntimeStyle =
+      node.tagName.toLowerCase() === 'style' &&
+      (marker === 'true' ||
+        text.includes('html, body { width: 100%; height: 100%;') ||
+        text.includes('.artifact, .slide {overflow: hidden') ||
+        text.includes('FALLBACK'));
+    const isRuntimeScript =
+      node.tagName.toLowerCase() === 'script' &&
+      (marker === 'true' ||
+        text.includes('window.addEventListener(\'error\'') ||
+        text.includes('data:image/svg+xml'));
+    if (isRuntimeStyle || isRuntimeScript) {
+      node.parentElement?.removeChild(node);
+    }
+  });
+  return head.innerHTML;
+};
+
+const buildPersistedHtml = (headHtml: string, artifactHtmls: string[]) => {
+  const cleanHead = stripRuntimeHead(headHtml);
+  return `<!DOCTYPE html>
+      <html>
+        <head>${cleanHead}</head>
+        <body>
+          ${artifactHtmls.join('\n')}
+        </body>
+      </html>
+    `;
+};
+
+const hashString = (value: string) => {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 33) ^ value.charCodeAt(i);
+  }
+  return hash >>> 0;
+};
+
 const updateHeadMetadata = (headHtml: string, title: string, tags: string, description: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
@@ -1006,6 +1065,8 @@ const normalizeColorToHex = (value?: string | null) => {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 };
 
+const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
+
 export const ArtifactGenerator: React.FC = () => {
   const [topic, setTopic] = useState('');
   const [headContent, setHeadContent] = useState<string>('');
@@ -1046,12 +1107,20 @@ export const ArtifactGenerator: React.FC = () => {
   });
   const [previewScale, setPreviewScale] = useState(1);
   const [previewHtml, setPreviewHtml] = useState('');
+  const [historyItems, setHistoryItems] = useState<ArtifactHistoryItem[]>([]);
+  const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
   const previewStageRef = useRef<HTMLDivElement>(null);
   const prevViewModeRef = useRef<ViewMode>(viewMode);
   const suppressPreviewReloadRef = useRef(false);
+  const historySkipCountRef = useRef(0);
+  const historyUpdateTimerRef = useRef<number | null>(null);
+  const pendingSaveDelayRef = useRef<number | null>(null);
+  const lastSavedHashRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = previewStageRef.current;
@@ -1075,6 +1144,11 @@ export const ArtifactGenerator: React.FC = () => {
   }, [artifacts.length]);
 
   useEffect(() => {
+    loadHistory();
+  }, []);
+
+
+  useEffect(() => {
     const { title, tags, description, artifactMode: headMode } = parseHeadMetadata(headContent);
     if (!editingTitle) {
       setProjectTitle(title);
@@ -1092,6 +1166,57 @@ export const ArtifactGenerator: React.FC = () => {
       setArtifactMode(headMode);
     }
   }, [headContent, editingTitle, editingTags, editingDescription, artifactMode]);
+
+  useEffect(() => {
+    if (!currentHistoryId || artifacts.length === 0) return;
+    if (!getAuthToken()) return;
+    if (historySkipCountRef.current > 0) {
+      historySkipCountRef.current -= 1;
+      return;
+    }
+
+    const name = (projectTitle || '').trim() || 'Untitled Project';
+    const responseHtml = buildPersistedHtml(headContent, artifacts);
+    const responseHash = hashString(responseHtml);
+    if (lastSavedHashRef.current === responseHash) {
+      return;
+    }
+
+    if (historyUpdateTimerRef.current) {
+      window.clearTimeout(historyUpdateTimerRef.current);
+    }
+
+    const delay = pendingSaveDelayRef.current ?? 1200;
+    pendingSaveDelayRef.current = null;
+    historyUpdateTimerRef.current = window.setTimeout(async () => {
+      try {
+        const updated = await updateArtifactHistory(currentHistoryId, {
+          name,
+          response: responseHtml
+        });
+        lastSavedHashRef.current = responseHash;
+        setHistoryItems(prev =>
+          prev.map(item =>
+            item.id === updated.id
+              ? {
+                  ...item,
+                  name: updated.name,
+                  updatedAt: updated.updatedAt
+                }
+              : item
+          )
+        );
+      } catch (error) {
+        console.error(error);
+      }
+    }, 1200);
+
+    return () => {
+      if (historyUpdateTimerRef.current) {
+        window.clearTimeout(historyUpdateTimerRef.current);
+      }
+    };
+  }, [headContent, artifacts, projectTitle, currentHistoryId]);
 
   const parseAndSetHtml = (html: string, preserveIndex = false) => {
     const parser = new DOMParser();
@@ -1111,6 +1236,7 @@ export const ArtifactGenerator: React.FC = () => {
     
     // Inject global reset for strict 16:9
     const style = doc.createElement('style');
+    style.setAttribute('data-ae2-runtime', 'true');
     style.innerHTML = `
       html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
       body { background: #000; display: flex; align-items: center; justify-content: center; }
@@ -1130,6 +1256,7 @@ export const ArtifactGenerator: React.FC = () => {
 
     // Inject error handling script for images (Runtime fallback)
     const script = doc.createElement('script');
+    script.setAttribute('data-ae2-runtime', 'true');
     script.innerHTML = `
       // Capture error events on images during the loading phase
       window.addEventListener('error', function(e) {
@@ -1159,21 +1286,25 @@ export const ArtifactGenerator: React.FC = () => {
       : 0;
 
       if (sections.length > 0) {
-        setHeadContent(doc.head.innerHTML);
+        const nextHead = doc.head.innerHTML;
         const artifactHtmls = sections.map((section, i) => {
           normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
           return section.outerHTML;
         });
+        setHeadContent(nextHead);
         setArtifacts(artifactHtmls);
         setCurrentArtifactIndex(nextIndex);
         setArtifactMode(resolvedMode);
+        return { headHtml: nextHead, artifacts: artifactHtmls, resolvedMode };
       } else {
-        setHeadContent(doc.head.innerHTML);
+        const nextHead = doc.head.innerHTML;
         const fallbackHtml = doc.body.innerHTML.trim();
         const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
+        setHeadContent(nextHead);
         setArtifacts([wrapped]);
         setCurrentArtifactIndex(0);
         setArtifactMode(resolvedMode);
+        return { headHtml: nextHead, artifacts: [wrapped], resolvedMode };
       }
   };
 
@@ -1201,6 +1332,110 @@ export const ArtifactGenerator: React.FC = () => {
     return styleMatch ? styleMatch[1] : '';
   };
 
+  const loadHistory = async () => {
+    if (!getAuthToken()) {
+      setHistoryItems([]);
+      setHistoryError('Sign in to load artifacts.');
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const items = await listArtifactHistory(50);
+      setHistoryItems(items);
+      if (!currentHistoryId && items.length > 0) {
+        const savedId =
+          typeof window !== 'undefined' ? window.localStorage.getItem(LAST_ARTIFACT_KEY) : null;
+        const candidate = savedId && items.some(item => item.id === savedId) ? savedId : items[0].id;
+        if (candidate) {
+          await handleHistorySelect(candidate);
+        }
+      }
+    } catch (error: any) {
+      console.error(error);
+      setHistoryError('Failed to load saved artifacts.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const saveHistorySnapshot = async (
+    nextArtifacts: string[] = artifacts,
+    nextHead: string = headContent,
+    nameOverride?: string
+  ) => {
+    if (!currentHistoryId || nextArtifacts.length === 0) return;
+    if (!getAuthToken()) return;
+    const nameSource = nameOverride ?? projectTitle ?? '';
+    const name = nameSource.trim() || 'Untitled Project';
+    const responseHtml = buildPersistedHtml(nextHead, nextArtifacts);
+    const responseHash = hashString(responseHtml);
+    if (lastSavedHashRef.current === responseHash) return;
+
+    try {
+      const updated = await updateArtifactHistory(currentHistoryId, {
+        name,
+        response: responseHtml
+      });
+      lastSavedHashRef.current = responseHash;
+      setHistoryItems(prev =>
+        prev.map(item =>
+          item.id === updated.id
+            ? {
+                ...item,
+                name: updated.name,
+                updatedAt: updated.updatedAt
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      console.error(error);
+      setHistoryError('Failed to update artifact.');
+    }
+  };
+
+  const handleHistorySelect = async (id: string) => {
+    if (!id || id === currentHistoryId) return;
+    setHistoryError(null);
+    try {
+      const detail = await getArtifactHistory(id);
+      if (!detail?.response) return;
+      historySkipCountRef.current = 3;
+      setCurrentHistoryId(id);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(LAST_ARTIFACT_KEY, id);
+      }
+      lastSavedHashRef.current = hashString(detail.response);
+      parseAndSetHtml(detail.response);
+      setTopic(detail.prompt || '');
+      setProvider(detail.provider);
+    } catch (error: any) {
+      console.error(error);
+      setHistoryError('Failed to load selected artifact.');
+    }
+  };
+
+  const handleHistoryDelete = async (id: string) => {
+    if (!id) return;
+    const confirmed = window.confirm('Delete this saved artifact?');
+    if (!confirmed) return;
+    try {
+      await deleteArtifactHistory(id);
+      setHistoryItems(prev => prev.filter(item => item.id !== id));
+        if (currentHistoryId === id) {
+          setCurrentHistoryId(null);
+          lastSavedHashRef.current = null;
+          if (typeof window !== 'undefined') {
+            window.localStorage.removeItem(LAST_ARTIFACT_KEY);
+          }
+        }
+      } catch (error: any) {
+        console.error(error);
+        setHistoryError('Failed to delete artifact.');
+    }
+  };
+
   const handleGenerate = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!topic.trim()) return;
@@ -1213,7 +1448,30 @@ export const ArtifactGenerator: React.FC = () => {
     setErrorMsg(null);
     try {
       const generatedHtml = await generateArtifacts(provider, topic, requestedMode, imageProvider);
-      parseAndSetHtml(generatedHtml);
+      const parsed = parseAndSetHtml(generatedHtml);
+      if (parsed) {
+        const { title } = parseHeadMetadata(parsed.headHtml);
+        const name = (title || projectTitle || topic).trim() || 'Untitled Project';
+        const responseHtml = buildPersistedHtml(parsed.headHtml, parsed.artifacts);
+        if (getAuthToken()) {
+          const created = await createArtifactHistory({
+            name,
+            provider,
+            prompt: topic,
+            response: responseHtml
+          });
+          historySkipCountRef.current = 1;
+          setCurrentHistoryId(created.id);
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(LAST_ARTIFACT_KEY, created.id);
+          }
+          lastSavedHashRef.current = hashString(responseHtml);
+          setHistoryItems(prev => {
+            const next = [created, ...prev.filter(item => item.id !== created.id)];
+            return next;
+          });
+        }
+      }
     } catch (error: any) {
       console.error(error);
       if (error?.status === 429 || error?.message?.includes('429')) {
@@ -1254,6 +1512,7 @@ export const ArtifactGenerator: React.FC = () => {
     if (artifacts.length === 0) return;
     setRegeneratingArtifact(true);
     try {
+      pendingSaveDelayRef.current = 200;
       if (regenerateMode === 'project') {
         const cssContext = getCssContext();
         const nextArtifacts = [...artifacts];
@@ -1267,6 +1526,7 @@ export const ArtifactGenerator: React.FC = () => {
         }
 
         setArtifacts(reindexArtifactClasses(nextArtifacts, includeSlideClass));
+        await saveHistorySnapshot(reindexArtifactClasses(nextArtifacts, includeSlideClass));
         return;
       }
 
@@ -1275,7 +1535,9 @@ export const ArtifactGenerator: React.FC = () => {
       const regenerated = await regenerateSingleArtifact(currentArtifactIndex, excluded, cssContext);
       const newArtifacts = [...artifacts];
       newArtifacts[currentArtifactIndex] = regenerated;
-      setArtifacts(reindexArtifactClasses(newArtifacts, includeSlideClass));
+      const reindexed = reindexArtifactClasses(newArtifacts, includeSlideClass);
+      setArtifacts(reindexed);
+      await saveHistorySnapshot(reindexed);
     } catch (error) {
       console.error(error);
     } finally {
@@ -1287,6 +1549,7 @@ export const ArtifactGenerator: React.FC = () => {
     if (artifacts.length === 0) return;
     setAddingArtifact(true);
     try {
+      pendingSaveDelayRef.current = 200;
       const excluded = getUsedImageUrls();
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
@@ -1310,6 +1573,7 @@ export const ArtifactGenerator: React.FC = () => {
       );
       setArtifacts(newArtifacts);
       setCurrentArtifactIndex(newArtifacts.length - 1);
+      await saveHistorySnapshot(newArtifacts);
       
     } catch (error) {
       console.error(error);
@@ -1320,11 +1584,13 @@ export const ArtifactGenerator: React.FC = () => {
 
   const handleDeleteArtifact = () => {
     if (artifacts.length <= 1) return;
+    pendingSaveDelayRef.current = 200;
     const newArtifacts = reindexArtifactClasses(
       artifacts.filter((_, i) => i !== currentArtifactIndex),
       includeSlideClass
     );
     setArtifacts(newArtifacts);
+    void saveHistorySnapshot(newArtifacts);
     if (currentArtifactIndex >= newArtifacts.length) {
       setCurrentArtifactIndex(newArtifacts.length - 1);
     }
@@ -1618,23 +1884,39 @@ export const ArtifactGenerator: React.FC = () => {
 
   const saveProjectTitle = () => {
     const nextTitle = titleDraft.trim();
+    const updatedHead = updateHeadMetadata(headContent, nextTitle, projectTags, projectDescription);
     setEditingTitle(false);
     setProjectTitle(nextTitle);
-    applyHeadUpdates(nextTitle, projectTags, projectDescription);
+    applyTemplateContent(updatedHead, artifacts);
+    setHistoryItems(prev =>
+      prev.map(item =>
+        item.id === currentHistoryId
+          ? {
+              ...item,
+              name: nextTitle || 'Untitled Project'
+            }
+          : item
+      )
+    );
+    void saveHistorySnapshot(artifacts, updatedHead, nextTitle);
   };
 
   const saveProjectTags = () => {
     const nextTags = normalizeTags(tagsDraft);
+    const updatedHead = updateHeadMetadata(headContent, projectTitle, nextTags, projectDescription);
     setEditingTags(false);
     setProjectTags(nextTags);
-    applyHeadUpdates(projectTitle, nextTags, projectDescription);
+    applyTemplateContent(updatedHead, artifacts);
+    void saveHistorySnapshot(artifacts, updatedHead);
   };
 
   const saveProjectDescription = () => {
     const nextDescription = descriptionDraft.trim();
+    const updatedHead = updateHeadMetadata(headContent, projectTitle, projectTags, nextDescription);
     setEditingDescription(false);
     setProjectDescription(nextDescription);
-    applyHeadUpdates(projectTitle, projectTags, nextDescription);
+    applyTemplateContent(updatedHead, artifacts);
+    void saveHistorySnapshot(artifacts, updatedHead);
   };
 
   const startTitleEdit = () => {
@@ -1688,6 +1970,7 @@ export const ArtifactGenerator: React.FC = () => {
     const updatedHead = updateRootVariablesInHead(headContent, { [id]: toHex });
     suppressPreviewReloadRef.current = true;
     setHeadContent(updatedHead);
+    pendingSaveDelayRef.current = 400;
     if (viewMode === 'code' && !isCodeDirty) {
       setCodeDraft(buildAllArtifactsHtml(updatedHead, artifacts));
     }
@@ -1701,89 +1984,120 @@ export const ArtifactGenerator: React.FC = () => {
 
   return (
     <div className={`flex flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
-      {/* Main Content Area */}
-      {artifacts.length > 0 ? (
-        <div className="flex flex-col gap-4">
-          <ProjectMetadataPanel
-            previewWidth={previewSize.width}
-            projectTitle={projectTitle}
-            projectTags={projectTags}
-            projectDescription={projectDescription}
-            editingTitle={editingTitle}
-            editingTags={editingTags}
-            editingDescription={editingDescription}
-            titleDraft={titleDraft}
-            tagsDraft={tagsDraft}
-            descriptionDraft={descriptionDraft}
-            onTitleDraftChange={setTitleDraft}
-            onTagsDraftChange={setTagsDraft}
-            onDescriptionDraftChange={setDescriptionDraft}
-            onTitleEditStart={startTitleEdit}
-            onTagsEditStart={startTagsEdit}
-            onDescriptionEditStart={startDescriptionEdit}
-            onTitleEditCancel={cancelTitleEdit}
-            onTagsEditCancel={cancelTagsEdit}
-            onDescriptionEditCancel={cancelDescriptionEdit}
-            onTitleSave={saveProjectTitle}
-            onTagsSave={saveProjectTags}
-            onDescriptionSave={saveProjectDescription}
-          />
-
-          <ArtifactPreview
-            previewStageRef={previewStageRef}
-            previewSize={previewSize}
-            previewScale={previewScale}
-            viewMode={viewMode}
-            codeDraft={codeDraft}
-            baseWidth={PREVIEW_BASE_WIDTH}
-            baseHeight={PREVIEW_BASE_HEIGHT}
-            iframeRef={iframeRef}
-            getCurrentFullHtml={getCurrentFullHtml}
-            onCodeChange={handleCodeChange}
-          />
-
-          <div className="shrink-0 w-full flex justify-center px-4 pb-4">
-            <div className="flex flex-col gap-3" style={{ width: previewSize.width || '100%' }}>
-              <ArtifactToolbar
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-                onCopyHtml={handleCopyHtml}
-                copiedHtml={copiedHtml}
-                currentIndex={currentArtifactIndex}
-                totalCount={artifacts.length}
-                onPrev={handlePrevArtifact}
-                onNext={handleNextArtifact}
-                onRegenerate={handleRegenerateCurrentArtifact}
-                regenerateMode={regenerateMode}
-                onRegenerateModeChange={setRegenerateMode}
-                regenerating={regeneratingArtifact}
-                onAdd={handleAddArtifact}
-                adding={addingArtifact}
-                onDelete={handleDeleteArtifact}
-                canDelete={artifacts.length > 1}
-                paletteEntries={paletteEntries}
-                onPaletteColorChange={handlePaletteColorChange}
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <ArtifactHistoryPanel
+          items={historyItems}
+          loading={historyLoading}
+          selectedId={currentHistoryId}
+          error={historyError}
+          onSelect={handleHistorySelect}
+          onDelete={handleHistoryDelete}
+          onRefresh={loadHistory}
+        />
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          {artifacts.length > 0 ? (
+            <div className="flex flex-col gap-4">
+              <ProjectMetadataPanel
+                previewWidth={previewSize.width}
+                projectTitle={projectTitle}
+                projectTags={projectTags}
+                projectDescription={projectDescription}
+                editingTitle={editingTitle}
+                editingTags={editingTags}
+                editingDescription={editingDescription}
+                titleDraft={titleDraft}
+                tagsDraft={tagsDraft}
+                descriptionDraft={descriptionDraft}
+                onTitleDraftChange={setTitleDraft}
+                onTagsDraftChange={setTagsDraft}
+                onDescriptionDraftChange={setDescriptionDraft}
+                onTitleEditStart={startTitleEdit}
+                onTagsEditStart={startTagsEdit}
+                onDescriptionEditStart={startDescriptionEdit}
+                onTitleEditCancel={cancelTitleEdit}
+                onTagsEditCancel={cancelTagsEdit}
+                onDescriptionEditCancel={cancelDescriptionEdit}
+                onTitleSave={saveProjectTitle}
+                onTagsSave={saveProjectTags}
+                onDescriptionSave={saveProjectDescription}
               />
 
-              <ExportControls
-                copiedJsonArtifact={copiedJsonArtifact}
-                copiedJsonProject={copiedJsonProject}
-                onExportArtifact={handleExportArtifactJSON}
-                onExportProject={handleExportProjectJSON}
-                exportFps={exportFps}
-                onExportFpsChange={setExportFps}
-                exportResolution={exportResolution}
-                resolutionOptions={RESOLUTION_OPTIONS}
-                onExportResolutionChange={setExportResolution}
-                exportDuration={exportDuration}
-                onExportDurationChange={setExportDuration}
+              <ArtifactPreview
+                previewStageRef={previewStageRef}
+                previewSize={previewSize}
+                previewScale={previewScale}
+                viewMode={viewMode}
+                codeDraft={codeDraft}
+                baseWidth={PREVIEW_BASE_WIDTH}
+                baseHeight={PREVIEW_BASE_HEIGHT}
+                iframeRef={iframeRef}
+                getCurrentFullHtml={getCurrentFullHtml}
+                onCodeChange={handleCodeChange}
+              />
+
+              <div className="shrink-0 w-full flex justify-center px-4 pb-4">
+                <div className="flex flex-col gap-3" style={{ width: previewSize.width || '100%' }}>
+                  <ArtifactToolbar
+                    viewMode={viewMode}
+                    onViewModeChange={setViewMode}
+                    onCopyHtml={handleCopyHtml}
+                    copiedHtml={copiedHtml}
+                    currentIndex={currentArtifactIndex}
+                    totalCount={artifacts.length}
+                    onPrev={handlePrevArtifact}
+                    onNext={handleNextArtifact}
+                    onRegenerate={handleRegenerateCurrentArtifact}
+                    regenerateMode={regenerateMode}
+                    onRegenerateModeChange={setRegenerateMode}
+                    regenerating={regeneratingArtifact}
+                    onAdd={handleAddArtifact}
+                    adding={addingArtifact}
+                    onDelete={handleDeleteArtifact}
+                    canDelete={artifacts.length > 1}
+                    paletteEntries={paletteEntries}
+                    onPaletteColorChange={handlePaletteColorChange}
+                  />
+
+                  <ExportControls
+                    copiedJsonArtifact={copiedJsonArtifact}
+                    copiedJsonProject={copiedJsonProject}
+                    onExportArtifact={handleExportArtifactJSON}
+                    onExportProject={handleExportProjectJSON}
+                    exportFps={exportFps}
+                    onExportFpsChange={setExportFps}
+                    exportResolution={exportResolution}
+                    resolutionOptions={RESOLUTION_OPTIONS}
+                    onExportResolutionChange={setExportResolution}
+                    exportDuration={exportDuration}
+                    onExportDurationChange={setExportDuration}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <EmptyState />
+          )}
+          <div className="flex justify-center px-4 pb-2">
+            <div style={{ width: isEmpty ? '100%' : previewSize.width, maxWidth: '100%' }}>
+              <GeneratorInput
+                errorMsg={errorMsg}
+                provider={provider}
+                onProviderChange={setProvider}
+                imageProvider={imageProvider}
+                imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
+                onImageProviderChange={setImageProvider}
+                topic={topic}
+                onTopicChange={setTopic}
+                onKeyDown={handleKeyDown}
+                onGenerate={handleGenerate}
+                loading={loading}
+                isEmpty={isEmpty}
               />
             </div>
           </div>
         </div>
-      ) : (
-        <EmptyState />
-      )}
+      </div>
+
       <iframe
         ref={exportIframeRef}
         title="AE Export Frame"
@@ -1791,21 +2105,6 @@ export const ArtifactGenerator: React.FC = () => {
         sandbox="allow-scripts allow-same-origin"
       />
 
-      {/* Input Area (Bottom) */}
-      <GeneratorInput
-        errorMsg={errorMsg}
-        provider={provider}
-        onProviderChange={setProvider}
-        imageProvider={imageProvider}
-        imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
-        onImageProviderChange={setImageProvider}
-        topic={topic}
-        onTopicChange={setTopic}
-        onKeyDown={handleKeyDown}
-        onGenerate={handleGenerate}
-        loading={loading}
-        isEmpty={isEmpty}
-      />
     </div>
   );
 };

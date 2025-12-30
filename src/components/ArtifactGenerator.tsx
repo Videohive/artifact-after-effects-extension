@@ -45,6 +45,9 @@ const PREVIEW_EDITOR_STYLE = `
   .ae2-edit-target:hover {
     outline-color: var(--ae2-edit-outline);
   }
+  .ae2-has-selection .ae2-edit-target:hover {
+    outline-color: transparent;
+  }
   .ae2-edit-target.ae2-selected {
     outline: 2px solid var(--ae2-edit-selected);
   }
@@ -119,6 +122,13 @@ const PREVIEW_EDITOR_SCRIPT = `
       return typeof SVGElement !== 'undefined' && el instanceof SVGElement;
     }
 
+    function getSvgRoot(el) {
+      if (!el) return null;
+      if (isSvgElement(el)) return el;
+      if (isSvgGraphics(el)) return el.ownerSVGElement || el.closest('svg');
+      return null;
+    }
+
     function isHtmlElement(el) {
       if (!el) return false;
       if (typeof HTMLElement !== 'undefined') {
@@ -143,7 +153,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       while (node && node !== body && node !== doc.documentElement) {
         if (isUi(node)) return null;
         if (isSvgElement(node)) {
-          if (node.id && !svgHasSelectableChild(node)) return node;
+          if (node.id) return node;
           return null;
         }
         if (node.id) return node;
@@ -152,13 +162,35 @@ const PREVIEW_EDITOR_SCRIPT = `
       return null;
     }
 
+    function getUnderlyingSelectable(x, y, svgEl) {
+      if (!svgEl || !svgEl.style) return null;
+      var nodes = [svgEl];
+      try {
+        var descendants = svgEl.querySelectorAll ? svgEl.querySelectorAll('*') : [];
+        for (var i = 0; i < descendants.length; i += 1) {
+          nodes.push(descendants[i]);
+        }
+      } catch (err) {}
+      var prev = [];
+      for (var j = 0; j < nodes.length; j += 1) {
+        prev.push(nodes[j].style ? nodes[j].style.pointerEvents : '');
+        if (nodes[j].style) nodes[j].style.pointerEvents = 'none';
+      }
+      var under = doc.elementFromPoint(x, y);
+      for (var k = 0; k < nodes.length; k += 1) {
+        if (nodes[k].style) nodes[k].style.pointerEvents = prev[k] || '';
+      }
+      if (!under || under === svgEl) return null;
+      if (getSvgRoot(under) === svgEl) return null;
+      return getSelectable(under);
+    }
+
     function markTargets() {
       var nodes = body.querySelectorAll('[id]');
       for (var i = 0; i < nodes.length; i += 1) {
         var node = nodes[i];
         if (!node || node === body || node === doc.documentElement) continue;
         if (isUi(node)) continue;
-        if (isSvgElement(node) && svgHasSelectableChild(node)) continue;
         node.classList.add('ae2-edit-target');
       }
     }
@@ -191,23 +223,16 @@ const PREVIEW_EDITOR_SCRIPT = `
       var rot = getNum(el, 'rot', 0);
       var sx = getNum(el, 'sx', 1);
       var sy = getNum(el, 'sy', 1);
-      if (isSvgGraphics(el)) {
-        el.style.transformBox = 'fill-box';
-        el.style.transformOrigin = 'center';
-      } else if (isHtmlElement(el)) {
-        var computed = window.getComputedStyle(el);
-        if (computed && computed.display === 'inline') {
-          if (!el.getAttribute('data-ae2-display')) {
-            el.setAttribute('data-ae2-display', 'inline');
-          }
-          el.style.display = 'inline-block';
-        }
-        el.style.transformOrigin = 'center center';
+      setTransformOrigin(el);
+      var baseTransform = base ? base + ' ' : '';
+      var tail = 'rotate(' + rot + 'deg) scale(' + sx + ',' + sy + ')';
+      var translate = 'translate(' + tx + 'px,' + ty + 'px)';
+      var transform = '';
+      if (base && base.indexOf('matrix') === 0) {
+        transform = translate + ' ' + baseTransform + tail;
       } else {
-        el.style.transformOrigin = 'center center';
+        transform = baseTransform + translate + ' ' + tail;
       }
-      var transform = base ? base + ' ' : '';
-      transform += 'translate(' + tx + 'px,' + ty + 'px) rotate(' + rot + 'deg) scale(' + sx + ',' + sy + ')';
       el.style.transform = transform;
     }
 
@@ -287,6 +312,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       selected = el;
       if (selected) {
         selected.classList.add('ae2-selected');
+        if (body) body.classList.add('ae2-has-selection');
         ensureUi();
         setOverlayVisible(true);
         applyTransform(selected);
@@ -301,6 +327,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       if (!selected) return;
       selected.classList.remove('ae2-selected');
       selected = null;
+      if (body) body.classList.remove('ae2-has-selection');
       setOverlayVisible(false);
     }
 
@@ -311,7 +338,8 @@ const PREVIEW_EDITOR_SCRIPT = `
         startX: e.clientX,
         startY: e.clientY,
         tx: getNum(selected, 'tx', 0),
-        ty: getNum(selected, 'ty', 0)
+        ty: getNum(selected, 'ty', 0),
+        started: false
       };
       dirty = false;
     }
@@ -352,6 +380,10 @@ const PREVIEW_EDITOR_SCRIPT = `
       if (dragging.type === 'move') {
         var dx = e.clientX - dragging.startX;
         var dy = e.clientY - dragging.startY;
+        if (!dragging.started) {
+          if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+          dragging.started = true;
+        }
         setNum(selected, 'tx', dragging.tx + dx);
         setNum(selected, 'ty', dragging.ty + dy);
         applyTransform(selected);
@@ -396,6 +428,12 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function finishDrag() {
+      if (dragging && dragging.type === 'move' && !dragging.started) {
+        dragging = null;
+        body.style.userSelect = '';
+        body.style.cursor = '';
+        return;
+      }
       dragging = null;
       body.style.userSelect = '';
       body.style.cursor = '';
@@ -418,6 +456,13 @@ const PREVIEW_EDITOR_SCRIPT = `
       var target = e.target;
       if (isUi(target)) return;
       var selectable = getSelectable(target);
+      var svgRoot = getSvgRoot(target);
+      if (svgRoot && !e.altKey) {
+        var passthrough = getUnderlyingSelectable(e.clientX, e.clientY, svgRoot);
+        if (passthrough) {
+          selectable = passthrough;
+        }
+      }
       if (!selectable) {
         clearSelection();
         return;
@@ -479,6 +524,57 @@ const PREVIEW_EDITOR_SCRIPT = `
         if (svgRect) return svgRect;
       }
       return el.getBoundingClientRect();
+    }
+
+    function setTransformOrigin(el) {
+      if (!el) return;
+      if (isSvgGraphics(el)) {
+        el.style.transformBox = 'fill-box';
+        el.style.transformOrigin = 'center';
+        return;
+      }
+
+      if (isHtmlElement(el)) {
+        var computed = window.getComputedStyle(el);
+        if (computed && computed.display === 'inline') {
+          if (!el.getAttribute('data-ae2-display')) {
+            el.setAttribute('data-ae2-display', 'inline');
+          }
+          el.style.display = 'inline-block';
+        }
+      }
+
+      var base = getBaseTransform(el);
+      if (base && base.indexOf('matrix') === 0) {
+        var saved = el.getAttribute('data-ae2-origin');
+        var computedOrigin = '';
+        try {
+          computedOrigin = window.getComputedStyle(el).transformOrigin || '';
+        } catch (err) {}
+        if (!saved) {
+          saved = el.style.transformOrigin || computedOrigin;
+          if (saved) {
+            el.setAttribute('data-ae2-origin', saved);
+          }
+        }
+        if (saved) {
+          el.style.transformOrigin = saved;
+        } else if (computedOrigin) {
+          el.style.transformOrigin = computedOrigin;
+        }
+        return;
+      }
+
+      var rect = getSelectionRect(el);
+      if (!rect) return;
+      var elRect = el.getBoundingClientRect();
+      if (!elRect || (!elRect.width && !elRect.height)) return;
+      var originX = rect.left - elRect.left + rect.width / 2;
+      var originY = rect.top - elRect.top + rect.height / 2;
+      if (isSvgElement(el)) {
+        el.style.transformBox = 'fill-box';
+      }
+      el.style.transformOrigin = originX + 'px ' + originY + 'px';
     }
 
     function getRoot() {

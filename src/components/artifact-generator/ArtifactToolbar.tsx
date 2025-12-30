@@ -31,6 +31,8 @@ type ArtifactToolbarProps = {
   onPrev: () => void;
   onNext: () => void;
   onRegenerate: () => void;
+  regenerateMode: 'slide' | 'project';
+  onRegenerateModeChange: (mode: 'slide' | 'project') => void;
   regenerating: boolean;
   onAdd: () => void;
   adding: boolean;
@@ -50,6 +52,8 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   onPrev,
   onNext,
   onRegenerate,
+  regenerateMode,
+  onRegenerateModeChange,
   regenerating,
   onAdd,
   adding,
@@ -213,6 +217,32 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
               )}
             </div>
           ) : null}
+        </div>
+        <div className="flex items-center gap-1 bg-neutral-950 rounded-lg p-1 border border-neutral-800">
+          <button
+            onClick={() => onRegenerateModeChange('slide')}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+              regenerateMode === 'slide'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+            type="button"
+            title="Regenerate current slide"
+          >
+            Slide
+          </button>
+          <button
+            onClick={() => onRegenerateModeChange('project')}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+              regenerateMode === 'project'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+            type="button"
+            title="Regenerate all slides"
+          >
+            Project
+          </button>
         </div>
         <button
           onClick={onRegenerate}

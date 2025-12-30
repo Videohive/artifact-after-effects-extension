@@ -356,6 +356,7 @@ export const ArtifactGenerator: React.FC = () => {
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
   const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
+  const [regenerateMode, setRegenerateMode] = useState<'slide' | 'project'>('slide');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedJsonArtifact, setCopiedJsonArtifact] = useState(false);
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
@@ -512,11 +513,9 @@ export const ArtifactGenerator: React.FC = () => {
     }
   };
 
-  const getUsedImageUrls = () => {
-    if (artifacts.length === 0) return [];
-    const allHtml = artifacts.join('');
+  const extractImageUrlsFromHtml = (html: string) => {
     const parser = new DOMParser();
-    const doc = parser.parseFromString(allHtml, 'text/html');
+    const doc = parser.parseFromString(html, 'text/html');
     const imgs = Array.from(doc.querySelectorAll('img')).map(img => img.src);
     const elementsWithStyle = doc.querySelectorAll('[style*="background-image"]');
     const bgImages = Array.from(elementsWithStyle).map(el => {
@@ -525,6 +524,17 @@ export const ArtifactGenerator: React.FC = () => {
        return match ? match[1] : null;
     }).filter(Boolean) as string[];
     return [...new Set([...imgs, ...bgImages])];
+  };
+
+  const getUsedImageUrls = () => {
+    if (artifacts.length === 0) return [];
+    const allHtml = artifacts.join('');
+    return extractImageUrlsFromHtml(allHtml);
+  };
+
+  const getCssContext = () => {
+    const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
+    return styleMatch ? styleMatch[1] : '';
   };
 
   const handleGenerate = async (e?: React.FormEvent) => {
@@ -559,32 +569,48 @@ export const ArtifactGenerator: React.FC = () => {
     }
   };
 
+  const regenerateSingleArtifact = async (index: number, excludedImages: string[], cssContext: string) => {
+    const currentContent = artifacts[index];
+    const newArtifactHtml = await regenerateArtifact(
+      provider,
+      topic,
+      currentContent,
+      cssContext,
+      excludedImages,
+      artifactMode,
+      imageProvider
+    );
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = newArtifactHtml;
+    sanitizeLayout(tempDiv);
+    return tempDiv.innerHTML;
+  };
+
   const handleRegenerateCurrentArtifact = async () => {
     if (artifacts.length === 0) return;
     setRegeneratingArtifact(true);
     try {
-      const currentContent = artifacts[currentArtifactIndex];
+      if (regenerateMode === 'project') {
+        const cssContext = getCssContext();
+        const nextArtifacts = [...artifacts];
+        const used = new Set<string>();
+
+        for (let i = 0; i < artifacts.length; i += 1) {
+          const excluded = Array.from(used);
+          const regenerated = await regenerateSingleArtifact(i, excluded, cssContext);
+          nextArtifacts[i] = regenerated;
+          extractImageUrlsFromHtml(regenerated).forEach(url => used.add(url));
+        }
+
+        setArtifacts(reindexArtifactClasses(nextArtifacts, includeSlideClass));
+        return;
+      }
+
       const excluded = getUsedImageUrls();
-      const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
-      const cssContext = styleMatch ? styleMatch[1] : '';
-      
-      const newArtifactHtml = await regenerateArtifact(
-        provider,
-        topic,
-        currentContent,
-        cssContext,
-        excluded,
-        artifactMode,
-        imageProvider
-      );
+      const cssContext = getCssContext();
+      const regenerated = await regenerateSingleArtifact(currentArtifactIndex, excluded, cssContext);
       const newArtifacts = [...artifacts];
-      newArtifacts[currentArtifactIndex] = newArtifactHtml;
-      // Simple sanitization
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = newArtifactHtml;
-      sanitizeLayout(tempDiv);
-      newArtifacts[currentArtifactIndex] = tempDiv.innerHTML;
-      
+      newArtifacts[currentArtifactIndex] = regenerated;
       setArtifacts(reindexArtifactClasses(newArtifacts, includeSlideClass));
     } catch (error) {
       console.error(error);
@@ -1022,6 +1048,8 @@ export const ArtifactGenerator: React.FC = () => {
                 onPrev={handlePrevArtifact}
                 onNext={handleNextArtifact}
                 onRegenerate={handleRegenerateCurrentArtifact}
+                regenerateMode={regenerateMode}
+                onRegenerateModeChange={setRegenerateMode}
                 regenerating={regeneratingArtifact}
                 onAdd={handleAddArtifact}
                 adding={addingArtifact}

@@ -112,7 +112,7 @@ const createResponseText = async (provider: AiProviderName, prompt: string, temp
       apiKey,
       dangerouslyAllowBrowser: true,
     });
-    const model: string = 'gpt-5-mini';
+    const model: string = 'gpt-5.2';
     const payload: {
       model: string;
       input: string;

@@ -42,8 +42,22 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
       )}
 
       <div className="mb-2 flex flex-wrap items-center justify-end gap-2 px-1 text-xs text-neutral-400">
-        {/*
-        <div className="flex items-center gap-2">
+        <label className="flex items-center gap-2">
+          <span className="font-medium">Image source</span>
+          <select
+            value={imageProvider}
+            onChange={(e) => onImageProviderChange(e.target.value as ImageProviderName)}
+            className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
+          >
+            {imageProviderOptions.map(option => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* <div className="flex items-center gap-2">
           <span className="font-medium">AI</span>
           <div className="flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 p-0.5">
             <button
@@ -69,22 +83,7 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
               ChatGPT
             </button>
           </div>
-        </div>
-        */}
-        <label className="flex items-center gap-2">
-          <span className="font-medium">Image source</span>
-          <select
-            value={imageProvider}
-            onChange={(e) => onImageProviderChange(e.target.value as ImageProviderName)}
-            className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
-          >
-            {imageProviderOptions.map(option => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        </div> */}
       </div>
 
       <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">

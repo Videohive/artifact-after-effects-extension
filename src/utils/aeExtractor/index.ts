@@ -142,6 +142,14 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
     const stroke = style.getPropertyValue('stroke') || style.stroke;
     const fill = style.getPropertyValue('fill') || style.fill;
     const strokeWidth = style.getPropertyValue('stroke-width') || (style as any).strokeWidth;
+    const strokeDasharray =
+      style.getPropertyValue('stroke-dasharray') || (style as any).strokeDasharray;
+    const strokeDashoffset =
+      style.getPropertyValue('stroke-dashoffset') || (style as any).strokeDashoffset;
+    const strokeLinecap = style.getPropertyValue('stroke-linecap') || (style as any).strokeLinecap;
+    const strokeLinejoin = style.getPropertyValue('stroke-linejoin') || (style as any).strokeLinejoin;
+    const strokeMiterlimit =
+      style.getPropertyValue('stroke-miterlimit') || (style as any).strokeMiterlimit;
     const opacity = style.getPropertyValue('opacity') || style.opacity;
     const strokeOpacity = style.getPropertyValue('stroke-opacity') || (style as any).strokeOpacity;
     const fillOpacity = style.getPropertyValue('fill-opacity') || (style as any).fillOpacity;
@@ -158,6 +166,16 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
     if (fill) copy.setAttribute('fill', fill);
     if (!copy.getAttribute('stroke-width') && strokeWidth)
       copy.setAttribute('stroke-width', strokeWidth);
+    if (!copy.getAttribute('stroke-dasharray') && strokeDasharray && strokeDasharray !== 'none')
+      copy.setAttribute('stroke-dasharray', strokeDasharray);
+    if (!copy.getAttribute('stroke-dashoffset') && strokeDashoffset && strokeDashoffset !== '0')
+      copy.setAttribute('stroke-dashoffset', strokeDashoffset);
+    if (!copy.getAttribute('stroke-linecap') && strokeLinecap)
+      copy.setAttribute('stroke-linecap', strokeLinecap);
+    if (!copy.getAttribute('stroke-linejoin') && strokeLinejoin)
+      copy.setAttribute('stroke-linejoin', strokeLinejoin);
+    if (!copy.getAttribute('stroke-miterlimit') && strokeMiterlimit)
+      copy.setAttribute('stroke-miterlimit', strokeMiterlimit);
     if (!copy.getAttribute('opacity') && opacity) copy.setAttribute('opacity', opacity);
     if (!copy.getAttribute('stroke-opacity') && strokeOpacity)
       copy.setAttribute('stroke-opacity', strokeOpacity);

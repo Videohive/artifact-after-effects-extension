@@ -1,8 +1,6 @@
-﻿import OpenAI from "openai";
-import { GoogleGenAI } from "@google/genai";
 import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT } from "./aiPrompts";
 
-export type AiProviderName = 'gemini' | 'openai';
+export type AiProviderName = 'gemini' | 'openai' | 'claude';
 export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay';
 export type ArtifactMode =
   | 'auto'
@@ -34,98 +32,53 @@ async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, backoff = 200
   }
 }
 
-const getGeminiApiKey = (): string | undefined => {
+const getApiBaseUrl = (): string | undefined => {
   if (typeof process !== 'undefined' && process.env) {
-    const fromProcess =
-      process.env.GEMINI_API_KEY ||
-      process.env.REACT_APP_GEMINI_API_KEY ||
-      process.env.REACT_APP_API_KEY ||
-      process.env.API_KEY;
-    if (fromProcess && fromProcess.trim()) return fromProcess;
+    const fromProcess = process.env.REACT_APP_API_BASE_URL || process.env.API_BASE_URL;
+    if (fromProcess && fromProcess.trim()) return fromProcess.replace(/\/$/, '');
   }
   if (typeof window !== 'undefined') {
     const win = window as unknown as {
-      GEMINI_API_KEY?: string;
-      REACT_APP_GEMINI_API_KEY?: string;
-      __ENV__?: { GEMINI_API_KEY?: string; REACT_APP_GEMINI_API_KEY?: string };
+      API_BASE_URL?: string;
+      REACT_APP_API_BASE_URL?: string;
+      __ENV__?: { API_BASE_URL?: string; REACT_APP_API_BASE_URL?: string };
     };
     const fromWindow =
-      win.REACT_APP_GEMINI_API_KEY ||
-      win.GEMINI_API_KEY ||
-      win.__ENV__?.REACT_APP_GEMINI_API_KEY ||
-      win.__ENV__?.GEMINI_API_KEY;
-    if (fromWindow && fromWindow.trim()) return fromWindow;
+      win.REACT_APP_API_BASE_URL ||
+      win.API_BASE_URL ||
+      win.__ENV__?.REACT_APP_API_BASE_URL ||
+      win.__ENV__?.API_BASE_URL;
+    if (fromWindow && fromWindow.trim()) return fromWindow.replace(/\/$/, '');
   }
   return undefined;
 };
 
-const getOpenAiApiKey = (): string | undefined => {
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env.REACT_APP_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-  }
-  if (typeof window !== 'undefined') {
-    const win = window as unknown as {
-      OPENAI_API_KEY?: string;
-      REACT_APP_OPENAI_API_KEY?: string;
-      __ENV__?: { OPENAI_API_KEY?: string; REACT_APP_OPENAI_API_KEY?: string };
-    };
-    const fromWindow =
-      win.REACT_APP_OPENAI_API_KEY ||
-      win.OPENAI_API_KEY ||
-      win.__ENV__?.REACT_APP_OPENAI_API_KEY ||
-      win.__ENV__?.OPENAI_API_KEY;
-    if (fromWindow && fromWindow.trim()) return fromWindow;
-  }
-  return undefined;
-};
-
-const getProviderError = (provider: AiProviderName) => {
-  if (provider === 'gemini') {
-    return 'API key is missing. Set REACT_APP_GEMINI_API_KEY in .env.local and restart `npm start`.';
-  }
-  return 'API key is missing. Set REACT_APP_OPENAI_API_KEY in .env.local and restart `npm start`.';
-};
+const getApiError = () =>
+  'API base URL is missing. Set REACT_APP_API_BASE_URL in .env.local and restart `npm start`.';
 
 const cleanResponseText = (text: string) =>
   text.replace(/```html/g, "").replace(/```/g, "");
 
 const createResponseText = async (provider: AiProviderName, prompt: string, temperature: number) => {
   return callWithRetry(async () => {
-    if (provider === 'gemini') {
-      const apiKey = getGeminiApiKey();
-      if (!apiKey) throw new Error(getProviderError(provider));
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          thinkingConfig: { thinkingBudget: 0 },
-          temperature,
-        }
-      });
-      return cleanResponseText(response.text || '');
-    }
-
-    const apiKey = getOpenAiApiKey();
-    if (!apiKey) throw new Error(getProviderError(provider));
-    const client = new OpenAI({
-      apiKey,
-      dangerouslyAllowBrowser: true,
+    const apiBaseUrl = getApiBaseUrl();
+    if (!apiBaseUrl) throw new Error(getApiError());
+    const response = await fetch(`${apiBaseUrl}/artifact/ai`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider, prompt, temperature })
     });
-    const model: string = 'gpt-5.2';
-    const payload: {
-      model: string;
-      input: string;
-      temperature?: number;
-    } = {
-      model,
-      input: prompt,
-    };
-    if (model !== 'gpt-5-mini' && model !== 'gpt-5-nano') {
-      payload.temperature = temperature;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`AI API error (${response.status}): ${errorText}`);
     }
-    const response = await client.responses.create(payload);
-    return cleanResponseText(response.output_text || "");
+    const data = await response.json();
+    const rawText = data?.text || data?.response || '';
+    console.log('[AI raw response]', { provider, rawText, responseData: data });
+    if (!rawText) {
+      console.warn('[AI raw response] empty payload', { provider, responseData: data });
+    }
+    return cleanResponseText(rawText);
   });
 };
 
@@ -159,94 +112,6 @@ const extractArtifactSection = (html: string, artifactMode: ArtifactMode): strin
   } catch (e) {
     return html;
   }
-};
-
-// Robust API Key Retrieval for Pexels
-const getPexelsApiKey = (): string | undefined => {
-  if (typeof process !== 'undefined' && process.env) {
-    if (process.env.PEXELS_API_KEY) return process.env.PEXELS_API_KEY;
-    if (process.env.VITE_PEXELS_API_KEY) return process.env.VITE_PEXELS_API_KEY;
-    if (process.env.REACT_APP_PEXELS_API_KEY) return process.env.REACT_APP_PEXELS_API_KEY;
-    if (process.env.NEXT_PUBLIC_PEXELS_API_KEY) return process.env.NEXT_PUBLIC_PEXELS_API_KEY;
-  }
-  if (typeof window !== 'undefined') {
-    const win = window as unknown as {
-      PEXELS_API_KEY?: string;
-      REACT_APP_PEXELS_API_KEY?: string;
-      __ENV__?: { PEXELS_API_KEY?: string; REACT_APP_PEXELS_API_KEY?: string };
-    };
-    const fromWindow =
-      win.REACT_APP_PEXELS_API_KEY ||
-      win.PEXELS_API_KEY ||
-      win.__ENV__?.REACT_APP_PEXELS_API_KEY ||
-      win.__ENV__?.PEXELS_API_KEY;
-    if (fromWindow && fromWindow.trim()) return fromWindow;
-  }
-  return undefined;
-};
-
-const getUnsplashApiKey = (): string | undefined => {
-  if (typeof process !== 'undefined' && process.env) {
-    return (
-      process.env.UNSPLASH_ACCESS_KEY ||
-      process.env.UNSPLASH_API_KEY ||
-      process.env.VITE_UNSPLASH_ACCESS_KEY ||
-      process.env.VITE_UNSPLASH_API_KEY ||
-      process.env.REACT_APP_UNSPLASH_ACCESS_KEY ||
-      process.env.REACT_APP_UNSPLASH_API_KEY ||
-      process.env.NEXT_PUBLIC_UNSPLASH_ACCESS_KEY
-    );
-  }
-  if (typeof window !== 'undefined') {
-    const win = window as unknown as {
-      UNSPLASH_ACCESS_KEY?: string;
-      UNSPLASH_API_KEY?: string;
-      REACT_APP_UNSPLASH_ACCESS_KEY?: string;
-      REACT_APP_UNSPLASH_API_KEY?: string;
-      __ENV__?: {
-        UNSPLASH_ACCESS_KEY?: string;
-        UNSPLASH_API_KEY?: string;
-        REACT_APP_UNSPLASH_ACCESS_KEY?: string;
-        REACT_APP_UNSPLASH_API_KEY?: string;
-      };
-    };
-    const fromWindow =
-      win.REACT_APP_UNSPLASH_API_KEY ||
-      win.REACT_APP_UNSPLASH_ACCESS_KEY ||
-      win.UNSPLASH_API_KEY ||
-      win.UNSPLASH_ACCESS_KEY ||
-      win.__ENV__?.REACT_APP_UNSPLASH_API_KEY ||
-      win.__ENV__?.REACT_APP_UNSPLASH_ACCESS_KEY ||
-      win.__ENV__?.UNSPLASH_API_KEY ||
-      win.__ENV__?.UNSPLASH_ACCESS_KEY;
-    if (fromWindow && fromWindow.trim()) return fromWindow;
-  }
-  return undefined;
-};
-
-const getPixabayApiKey = (): string | undefined => {
-  if (typeof process !== 'undefined' && process.env) {
-    return (
-      process.env.PIXABAY_API_KEY ||
-      process.env.VITE_PIXABAY_API_KEY ||
-      process.env.REACT_APP_PIXABAY_API_KEY ||
-      process.env.NEXT_PUBLIC_PIXABAY_API_KEY
-    );
-  }
-  if (typeof window !== 'undefined') {
-    const win = window as unknown as {
-      PIXABAY_API_KEY?: string;
-      REACT_APP_PIXABAY_API_KEY?: string;
-      __ENV__?: { PIXABAY_API_KEY?: string; REACT_APP_PIXABAY_API_KEY?: string };
-    };
-    const fromWindow =
-      win.REACT_APP_PIXABAY_API_KEY ||
-      win.PIXABAY_API_KEY ||
-      win.__ENV__?.REACT_APP_PIXABAY_API_KEY ||
-      win.__ENV__?.PIXABAY_API_KEY;
-    if (fromWindow && fromWindow.trim()) return fromWindow;
-  }
-  return undefined;
 };
 
 // Smart keyword extraction
@@ -319,45 +184,39 @@ const searchWithVariants = async (
   return await searchFn(randomGeneric);
 };
 
+const searchImageProvider = async (
+  provider: 'pexels' | 'unsplash' | 'pixabay',
+  query: string,
+  usedUrls: Set<string>,
+  color?: string
+): Promise<string | null> => {
+  const apiBaseUrl = getApiBaseUrl();
+  if (!apiBaseUrl) return null;
+  try {
+    const response = await fetch(`${apiBaseUrl}/artifact/images/search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider,
+        query,
+        color,
+        excludeUrls: Array.from(usedUrls)
+      })
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const url = data?.url || null;
+    if (url) usedUrls.add(url);
+    return url;
+  } catch (e) {
+    return null;
+  }
+};
+
 // Pexels API Integration
 async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: string): Promise<string> {
-  const apiKey = getPexelsApiKey();
-
-  if (!apiKey) {
-    console.warn("Pexels API Key not found. Using placeholder.");
-    return FALLBACK_IMAGE_URL;
-  }
-
   const searchPexels = async (query: string): Promise<string | null> => {
-    try {
-      const colorParam = color ? `&color=${encodeURIComponent(color)}` : '';
-      const response = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=40&orientation=landscape&size=large${colorParam}`, {
-        headers: { Authorization: apiKey }
-      });
-      if (!response.ok) return null;
-      const data = await response.json();
-      if (data.photos && data.photos.length > 0) {
-        // Filter out photos that have already been used
-        const availablePhotos = data.photos.filter((p: any) =>
-          !usedUrls.has(p.src.large2x) && !usedUrls.has(p.src.large)
-        );
-
-        // If all photos for this term are used, we might have to reuse one,
-        // or just pick from the full list to avoid breaking.
-        // Let's prefer available, but fallback to any if pool is empty.
-        const pool = availablePhotos.length > 0 ? availablePhotos : data.photos;
-
-        const randomIndex = Math.floor(Math.random() * pool.length);
-        const photo = pool[randomIndex];
-        const url = photo.src.large2x || photo.src.large;
-
-        usedUrls.add(url); // Mark as used
-        return url;
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
+    return await searchImageProvider('pexels', query, usedUrls, color);
   };
 
   const result = await searchWithVariants(term, searchPexels);
@@ -365,36 +224,8 @@ async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: str
 }
 
 async function fetchUnsplashImage(term: string, usedUrls: Set<string>): Promise<string> {
-  const apiKey = getUnsplashApiKey();
-  if (!apiKey) {
-    console.warn("Unsplash API Key not found. Using placeholder.");
-    return FALLBACK_IMAGE_URL;
-  }
-
   const searchUnsplash = async (query: string): Promise<string | null> => {
-    try {
-      const response = await fetch(
-        `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=30&orientation=landscape`,
-        { headers: { Authorization: `Client-ID ${apiKey}` } }
-      );
-      if (!response.ok) return null;
-      const data = await response.json();
-      if (data.results && data.results.length > 0) {
-        const available = data.results.filter((p: any) =>
-          !usedUrls.has(p.urls?.regular) && !usedUrls.has(p.urls?.full)
-        );
-        const pool = available.length > 0 ? available : data.results;
-        const randomIndex = Math.floor(Math.random() * pool.length);
-        const photo = pool[randomIndex];
-        const url = photo.urls?.regular || photo.urls?.full;
-        if (!url) return null;
-        usedUrls.add(url);
-        return url;
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
+    return await searchImageProvider('unsplash', query, usedUrls);
   };
 
   const result = await searchWithVariants(term, searchUnsplash);
@@ -402,35 +233,8 @@ async function fetchUnsplashImage(term: string, usedUrls: Set<string>): Promise<
 }
 
 async function fetchPixabayImage(term: string, usedUrls: Set<string>): Promise<string> {
-  const apiKey = getPixabayApiKey();
-  if (!apiKey) {
-    console.warn("Pixabay API Key not found. Using placeholder.");
-    return FALLBACK_IMAGE_URL;
-  }
-
   const searchPixabay = async (query: string): Promise<string | null> => {
-    try {
-      const response = await fetch(
-        `https://pixabay.com/api/?key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(query)}&image_type=photo&orientation=horizontal&per_page=40&safesearch=true`
-      );
-      if (!response.ok) return null;
-      const data = await response.json();
-      if (data.hits && data.hits.length > 0) {
-        const available = data.hits.filter((p: any) =>
-          !usedUrls.has(p.largeImageURL) && !usedUrls.has(p.webformatURL)
-        );
-        const pool = available.length > 0 ? available : data.hits;
-        const randomIndex = Math.floor(Math.random() * pool.length);
-        const photo = pool[randomIndex];
-        const url = photo.largeImageURL || photo.webformatURL;
-        if (!url) return null;
-        usedUrls.add(url);
-        return url;
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
+    return await searchImageProvider('pixabay', query, usedUrls);
   };
 
   const result = await searchWithVariants(term, searchPixabay);
@@ -438,11 +242,7 @@ async function fetchPixabayImage(term: string, usedUrls: Set<string>): Promise<s
 }
 
 const getAvailableImageProviders = (): ImageProviderName[] => {
-  const providers: ImageProviderName[] = [];
-  if (getPexelsApiKey()) providers.push('pexels');
-  if (getUnsplashApiKey()) providers.push('unsplash');
-  if (getPixabayApiKey()) providers.push('pixabay');
-  return providers;
+  return ['pexels', 'unsplash', 'pixabay'];
 };
 
 const pickImageProvider = (provider: ImageProviderName): ImageProviderName => {
@@ -564,4 +364,13 @@ export const generateNewArtifact = async (
     throw error;
   }
 };
+
+
+
+
+
+
+
+
+
 

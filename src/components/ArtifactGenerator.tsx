@@ -820,12 +820,27 @@ const reindexArtifactClasses = (artifactHtmls: string[], includeSlideClass: bool
   return artifactHtmls.map((html, i) => applyArtifactIndexClass(html, i + 1, includeSlideClass));
 };
 
-const sanitizeLayout = (root: ParentNode) => {
-  sanitizeImageAlts(root);
-  fixTextUrlBlocks(root);
-  const artifacts = root.querySelectorAll('.artifact, .slide');
-  artifacts.forEach(el => {
-    if (!(el instanceof HTMLElement)) return;
+  const sanitizeLayout = (root: ParentNode) => {
+    const uiNodes = root.querySelectorAll('[data-ae2-ui="true"]');
+    uiNodes.forEach(node => {
+      if (node.parentElement) {
+        node.parentElement.removeChild(node);
+      }
+    });
+    const scripts = root.querySelectorAll('script');
+    scripts.forEach(script => {
+      const text = script.textContent || '';
+      if (text.includes('__ae2PreviewEditor') || text.includes('ae2-preview-editor')) {
+        if (script.parentElement) {
+          script.parentElement.removeChild(script);
+        }
+      }
+    });
+    sanitizeImageAlts(root);
+    fixTextUrlBlocks(root);
+    const artifacts = root.querySelectorAll('.artifact, .slide');
+    artifacts.forEach(el => {
+      if (!(el instanceof HTMLElement)) return;
     if (el.style.transform) {
       el.style.transform = '';
     }
@@ -1143,21 +1158,23 @@ export const ArtifactGenerator: React.FC = () => {
       ? Math.min(currentArtifactIndex, Math.max(0, sections.length - 1))
       : 0;
 
-    if (sections.length > 0) {
-      setHeadContent(doc.head.innerHTML);
-      const artifactHtmls = sections.map((section, i) => {
-        normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
-        return section.outerHTML;
-      });
-      setArtifacts(artifactHtmls);
-      setCurrentArtifactIndex(nextIndex);
-      setArtifactMode(resolvedMode);
-    } else {
-      setHeadContent(doc.head.innerHTML);
-      setArtifacts([doc.body.innerHTML]);
-      setCurrentArtifactIndex(0);
-      setArtifactMode(resolvedMode);
-    }
+      if (sections.length > 0) {
+        setHeadContent(doc.head.innerHTML);
+        const artifactHtmls = sections.map((section, i) => {
+          normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
+          return section.outerHTML;
+        });
+        setArtifacts(artifactHtmls);
+        setCurrentArtifactIndex(nextIndex);
+        setArtifactMode(resolvedMode);
+      } else {
+        setHeadContent(doc.head.innerHTML);
+        const fallbackHtml = doc.body.innerHTML.trim();
+        const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
+        setArtifacts([wrapped]);
+        setCurrentArtifactIndex(0);
+        setArtifactMode(resolvedMode);
+      }
   };
 
   const extractImageUrlsFromHtml = (html: string) => {
@@ -1567,7 +1584,10 @@ export const ArtifactGenerator: React.FC = () => {
       setArtifacts(prev => {
         if (prev.length === 0) return prev;
         const next = [...prev];
-        next[currentArtifactIndex] = payload.html as string;
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = payload.html as string;
+        sanitizeLayout(tempDiv);
+        next[currentArtifactIndex] = tempDiv.innerHTML;
         return reindexArtifactClasses(next, includeSlideClass);
       });
     };

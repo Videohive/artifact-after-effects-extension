@@ -82,6 +82,17 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
             >
               ChatGPT
             </button>
+            <button
+              type="button"
+              onClick={() => onProviderChange('claude')}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                provider === 'claude'
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-neutral-400 hover:text-white'
+              }`}
+            >
+              Claude
+            </button>
           </div>
         </div> */}
       </div>

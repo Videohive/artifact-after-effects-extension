@@ -220,10 +220,11 @@ HARD CONSTRAINT: TEXT ORIENTATION (NON-NEGOTIABLE)
 PHASE 4: TECHNICAL EXECUTION
 
 1. **OUTPUT**
-- Return a SINGLE HTML block with embedded CSS.
-- Include a complete HTML document with <html>, <head>, and <body>.
-- Output ONLY raw HTML (no markdown, no explanations, no comments).
-- Every element MUST include a semantic, meaningful id that reflects its purpose/content.
+  - Return a SINGLE HTML block with embedded CSS.
+  - Include a complete HTML document with <html>, <head>, and <body>.
+  - Output ONLY raw HTML (no markdown, no explanations, no comments).
+  - NEVER ask questions or request confirmation. Do not add preambles or commentary.
+  - Every element MUST include a semantic, meaningful id that reflects its purpose/content.
 - This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
 - No element may be left without an id; ids must be unique within the document.
 

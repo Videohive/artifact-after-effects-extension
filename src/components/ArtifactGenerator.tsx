@@ -674,6 +674,24 @@ const PREVIEW_EDITOR_SCRIPT = `
   })();
 `;
 
+const getArtifactIdFromUrl = () => {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('artifact');
+  return id && id.trim() ? id.trim() : null;
+};
+
+const setArtifactIdInUrl = (id: string | null) => {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (id) {
+    url.searchParams.set('artifact', id);
+  } else {
+    url.searchParams.delete('artifact');
+  }
+  window.history.replaceState({}, '', url.toString());
+};
+
 const sanitizeImageAlts = (root: ParentNode) => {
   const images = root.querySelectorAll('img');
   images.forEach(img => {
@@ -1049,7 +1067,6 @@ const normalizeColorToHex = (value?: string | null) => {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 };
 
-const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
 
 type HistorySnapshot = {
   headContent: string;
@@ -1483,9 +1500,8 @@ export const ArtifactGenerator: React.FC = () => {
         return;
       }
       if (!currentHistoryId && items.length > 0) {
-        const savedId =
-          typeof window !== 'undefined' ? window.localStorage.getItem(LAST_ARTIFACT_KEY) : null;
-        const candidate = savedId && items.some(item => item.id === savedId) ? savedId : items[0].id;
+        const urlId = getArtifactIdFromUrl();
+        const candidate = urlId && items.some(item => item.id === urlId) ? urlId : null;
         if (candidate) {
           await handleHistorySelect(candidate);
         }
@@ -1544,9 +1560,7 @@ export const ArtifactGenerator: React.FC = () => {
       setCurrentHistoryId(id);
       historyRef.current = { past: [], future: [] };
       historyLastHashRef.current = null;
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(LAST_ARTIFACT_KEY, id);
-      }
+      setArtifactIdInUrl(id);
       lastSavedHashRef.current = hashString(detail.response);
         parseAndSetHtml(detail.response);
       setProvider(detail.provider);
@@ -1578,9 +1592,7 @@ export const ArtifactGenerator: React.FC = () => {
     lastSavedHashRef.current = null;
     historyRef.current = { past: [], future: [] };
     historyLastHashRef.current = null;
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(LAST_ARTIFACT_KEY);
-    }
+    setArtifactIdInUrl(null);
     setArtifacts([]);
     setHeadContent('');
     setCurrentArtifactIndex(0);
@@ -1654,9 +1666,7 @@ export const ArtifactGenerator: React.FC = () => {
           });
           historySkipCountRef.current = 1;
           setCurrentHistoryId(created.id);
-          if (typeof window !== 'undefined') {
-            window.localStorage.setItem(LAST_ARTIFACT_KEY, created.id);
-          }
+          setArtifactIdInUrl(created.id);
           lastSavedHashRef.current = hashString(responseHtml);
           setHistoryItems(prev => {
             const next = [created, ...prev.filter(item => item.id !== created.id)];

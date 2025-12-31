@@ -502,6 +502,24 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function onKeyDown(e) {
+      var isUndo =
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ');
+      var isRedo =
+        (e.ctrlKey || e.metaKey) &&
+        ((e.shiftKey && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ')) ||
+          e.key === 'y' ||
+          e.key === 'Y' ||
+          e.code === 'KeyY');
+      if (isUndo || isRedo) {
+        window.parent.postMessage(
+          { source: 'ae2-preview-editor', type: isUndo ? 'undo' : 'redo' },
+          '*'
+        );
+        e.preventDefault();
+        return;
+      }
       if (!selected) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         selected.parentElement.removeChild(selected);
@@ -1102,6 +1120,12 @@ export const ArtifactGenerator: React.FC = () => {
   });
   const historyTimerRef = useRef<number | null>(null);
   const applyingHistoryRef = useRef(false);
+  const historyImmediateNextRef = useRef(false);
+  const historySuspendUntilRef = useRef(0);
+  const historyLastHashRef = useRef<number | null>(null);
+  const generateRequestIdRef = useRef(0);
+  const regenerateRequestIdRef = useRef(0);
+  const addArtifactRequestIdRef = useRef(0);
 
   useEffect(() => {
     const container = previewStageRef.current;
@@ -1148,8 +1172,15 @@ export const ArtifactGenerator: React.FC = () => {
     }
   }, [headContent, editingTitle, editingTags, editingDescription, artifactMode]);
 
+  const getHistoryHash = (snapshot: HistorySnapshot) =>
+    hashString(
+      `${snapshot.headContent}::${snapshot.artifacts.join('')}::${snapshot.currentArtifactIndex}::${snapshot.artifactMode}`
+    );
+
   const applyHistorySnapshot = (snapshot: HistorySnapshot) => {
     applyingHistoryRef.current = true;
+    historySuspendUntilRef.current = Date.now() + 80;
+    historyLastHashRef.current = getHistoryHash(snapshot);
     setHeadContent(snapshot.headContent);
     setArtifacts(snapshot.artifacts);
     setCurrentArtifactIndex(snapshot.currentArtifactIndex);
@@ -1157,6 +1188,53 @@ export const ArtifactGenerator: React.FC = () => {
     if (viewMode === 'code' && !isCodeDirty) {
       setCodeDraft(buildAllArtifactsHtml(snapshot.headContent, snapshot.artifacts));
     }
+  };
+
+  const queueHistorySnapshot = (snapshot: HistorySnapshot, immediate = false) => {
+    if (applyingHistoryRef.current) return;
+    if (Date.now() < historySuspendUntilRef.current) return;
+    const hash = getHistoryHash(snapshot);
+    if (historyLastHashRef.current === hash) return;
+
+    if (historyTimerRef.current) {
+      window.clearTimeout(historyTimerRef.current);
+    }
+
+    const commit = () => {
+      const history = historyRef.current;
+      const last = history.past[history.past.length - 1];
+      const lastHash = last ? getHistoryHash(last) : null;
+      if (lastHash === hash) return;
+      history.past.push(snapshot);
+      if (history.past.length > 60) {
+        history.past.shift();
+      }
+      history.future = [];
+      historyLastHashRef.current = hash;
+    };
+
+    if (immediate) {
+      commit();
+    } else {
+      historyTimerRef.current = window.setTimeout(commit, 150);
+    }
+  };
+
+  const performUndo = () => {
+    const history = historyRef.current;
+    if (history.past.length <= 1) return;
+    const current = history.past.pop() as HistorySnapshot;
+    history.future.push(current);
+    const previous = history.past[history.past.length - 1];
+    applyHistorySnapshot(previous);
+  };
+
+  const performRedo = () => {
+    const history = historyRef.current;
+    if (history.future.length === 0) return;
+    const next = history.future.pop() as HistorySnapshot;
+    history.past.push(next);
+    applyHistorySnapshot(next);
   };
 
   useEffect(() => {
@@ -1181,33 +1259,21 @@ export const ArtifactGenerator: React.FC = () => {
 
       if (!isUndo && !isRedo) return;
 
-      const history = historyRef.current;
       if (isUndo) {
-        if (history.past.length <= 1) return;
         event.preventDefault();
-        const current = history.past.pop() as HistorySnapshot;
-        history.future.push(current);
-        const previous = history.past[history.past.length - 1];
-        applyHistorySnapshot(previous);
+        performUndo();
         return;
       }
 
-      if (history.future.length === 0) return;
       event.preventDefault();
-      const next = history.future.pop() as HistorySnapshot;
-      history.past.push(next);
-      applyHistorySnapshot(next);
+      performRedo();
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [isCodeDirty, viewMode]);
 
   useEffect(() => {
-    if (applyingHistoryRef.current) {
-      applyingHistoryRef.current = false;
-      return;
-    }
     if (!headContent && artifacts.length === 0) return;
 
     const snapshot: HistorySnapshot = {
@@ -1216,28 +1282,14 @@ export const ArtifactGenerator: React.FC = () => {
       currentArtifactIndex,
       artifactMode
     };
-    const hash = hashString(
-      `${snapshot.headContent}::${snapshot.artifacts.join('')}::${snapshot.currentArtifactIndex}::${snapshot.artifactMode}`
-    );
-
-    if (historyTimerRef.current) {
-      window.clearTimeout(historyTimerRef.current);
+    if (applyingHistoryRef.current) {
+      applyingHistoryRef.current = false;
+      historySuspendUntilRef.current = Date.now() + 80;
+      return;
     }
-    historyTimerRef.current = window.setTimeout(() => {
-      const history = historyRef.current;
-      const last = history.past[history.past.length - 1];
-      const lastHash = last
-        ? hashString(
-            `${last.headContent}::${last.artifacts.join('')}::${last.currentArtifactIndex}::${last.artifactMode}`
-          )
-        : null;
-      if (lastHash === hash) return;
-      history.past.push(snapshot);
-      if (history.past.length > 60) {
-        history.past.shift();
-      }
-      history.future = [];
-    }, 150);
+    const immediate = historyImmediateNextRef.current;
+    historyImmediateNextRef.current = false;
+    queueHistorySnapshot(snapshot, immediate);
 
     return () => {
       if (historyTimerRef.current) {
@@ -1371,6 +1423,7 @@ export const ArtifactGenerator: React.FC = () => {
           return section.outerHTML;
         });
         historyRef.current = { past: [], future: [] };
+        historyLastHashRef.current = null;
         setHeadContent(nextHead);
         setArtifacts(artifactHtmls);
         setCurrentArtifactIndex(nextIndex);
@@ -1381,6 +1434,7 @@ export const ArtifactGenerator: React.FC = () => {
         const fallbackHtml = doc.body.innerHTML.trim();
         const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
         historyRef.current = { past: [], future: [] };
+        historyLastHashRef.current = null;
         setHeadContent(nextHead);
         setArtifacts([wrapped]);
         setCurrentArtifactIndex(0);
@@ -1489,6 +1543,7 @@ export const ArtifactGenerator: React.FC = () => {
       historySkipCountRef.current = 3;
       setCurrentHistoryId(id);
       historyRef.current = { past: [], future: [] };
+      historyLastHashRef.current = null;
       if (typeof window !== 'undefined') {
         window.localStorage.setItem(LAST_ARTIFACT_KEY, id);
       }
@@ -1523,6 +1578,7 @@ export const ArtifactGenerator: React.FC = () => {
     setCurrentHistoryId(null);
     lastSavedHashRef.current = null;
     historyRef.current = { past: [], future: [] };
+    historyLastHashRef.current = null;
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(LAST_ARTIFACT_KEY);
     }
@@ -1543,6 +1599,7 @@ export const ArtifactGenerator: React.FC = () => {
     if (e) e.preventDefault();
     if (!topic.trim() && !chatImage) return;
 
+    const requestId = ++generateRequestIdRef.current;
     const promptText =
       topic.trim() ||
       'Use the attached image as the primary reference. If no confident change is possible, return the HTML unchanged.';
@@ -1581,6 +1638,8 @@ export const ArtifactGenerator: React.FC = () => {
             undefined,
             imageData
           );
+      if (requestId !== generateRequestIdRef.current) return;
+      historyImmediateNextRef.current = true;
       const parsed = parseAndSetHtml(generatedHtml, Boolean(contextHtml));
       if (parsed && getAuthToken()) {
         const { title } = parseHeadMetadata(parsed.headHtml);
@@ -1635,7 +1694,9 @@ export const ArtifactGenerator: React.FC = () => {
         setErrorMsg("Failed to generate artifacts. Please try again.");
       }
     } finally {
-      setLoading(false);
+      if (requestId === generateRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1665,6 +1726,7 @@ export const ArtifactGenerator: React.FC = () => {
 
   const handleRegenerateCurrentArtifact = async () => {
     if (artifacts.length === 0) return;
+    const requestId = ++regenerateRequestIdRef.current;
     setRegeneratingArtifact(true);
     try {
       pendingSaveDelayRef.current = 200;
@@ -1676,10 +1738,12 @@ export const ArtifactGenerator: React.FC = () => {
         for (let i = 0; i < artifacts.length; i += 1) {
           const excluded = Array.from(used);
           const regenerated = await regenerateSingleArtifact(i, excluded, cssContext);
+          if (requestId !== regenerateRequestIdRef.current) return;
           nextArtifacts[i] = regenerated;
           extractImageUrlsFromHtml(regenerated).forEach(url => used.add(url));
         }
 
+        historyImmediateNextRef.current = true;
         setArtifacts(reindexArtifactClasses(nextArtifacts, includeSlideClass));
         await saveHistorySnapshot(reindexArtifactClasses(nextArtifacts, includeSlideClass));
         return;
@@ -1688,20 +1752,25 @@ export const ArtifactGenerator: React.FC = () => {
       const excluded = getUsedImageUrls();
       const cssContext = getCssContext();
       const regenerated = await regenerateSingleArtifact(currentArtifactIndex, excluded, cssContext);
+      if (requestId !== regenerateRequestIdRef.current) return;
       const newArtifacts = [...artifacts];
       newArtifacts[currentArtifactIndex] = regenerated;
       const reindexed = reindexArtifactClasses(newArtifacts, includeSlideClass);
+      historyImmediateNextRef.current = true;
       setArtifacts(reindexed);
       await saveHistorySnapshot(reindexed);
     } catch (error) {
       console.error(error);
     } finally {
-      setRegeneratingArtifact(false);
+      if (requestId === regenerateRequestIdRef.current) {
+        setRegeneratingArtifact(false);
+      }
     }
   };
 
   const handleAddArtifact = async () => {
     if (artifacts.length === 0) return;
+    const requestId = ++addArtifactRequestIdRef.current;
     setAddingArtifact(true);
     try {
       pendingSaveDelayRef.current = 200;
@@ -1717,6 +1786,7 @@ export const ArtifactGenerator: React.FC = () => {
         artifactMode,
         imageProvider
       );
+      if (requestId !== addArtifactRequestIdRef.current) return;
       
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = newArtifactHtml;
@@ -1726,6 +1796,7 @@ export const ArtifactGenerator: React.FC = () => {
         [...artifacts, tempDiv.innerHTML],
         includeSlideClass
       );
+      historyImmediateNextRef.current = true;
       setArtifacts(newArtifacts);
       setCurrentArtifactIndex(newArtifacts.length - 1);
       await saveHistorySnapshot(newArtifacts);
@@ -1733,7 +1804,9 @@ export const ArtifactGenerator: React.FC = () => {
     } catch (error) {
       console.error(error);
     } finally {
-      setAddingArtifact(false);
+      if (requestId === addArtifactRequestIdRef.current) {
+        setAddingArtifact(false);
+      }
     }
   };
 
@@ -1998,10 +2071,19 @@ export const ArtifactGenerator: React.FC = () => {
     const handleMessage = (event: MessageEvent) => {
       const payload = event.data as { source?: string; type?: string; html?: string };
       if (!payload || payload.source !== 'ae2-preview-editor') return;
+      if (payload.type === 'undo') {
+        performUndo();
+        return;
+      }
+      if (payload.type === 'redo') {
+        performRedo();
+        return;
+      }
       if (payload.type !== 'update') return;
       if (!payload.html || artifacts.length === 0) return;
 
       suppressPreviewReloadRef.current = true;
+      historyImmediateNextRef.current = true;
       setArtifacts(prev => {
         if (prev.length === 0) return prev;
         const next = [...prev];

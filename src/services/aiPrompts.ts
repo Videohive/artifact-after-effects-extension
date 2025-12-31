@@ -365,3 +365,27 @@ INSTRUCTIONS:
 
 Return ONLY the HTML/SVG for the new artifact.
 `;
+
+export const UPDATE_FROM_CONTEXT_PROMPT = `
+Role: Senior Frontend Developer & Art Director.
+Task: Update an EXISTING project based on a new user prompt, using the provided HTML context.
+
+CONTEXT:
+ARTIFACT MODE: {artifact_mode}
+User Prompt: {topic}
+CONTEXT_HTML (full project): {contextHtml}
+
+INSTRUCTIONS:
+1. Determine scope from the User Prompt:
+   - If it clearly targets a single slide/artifact, update ONLY that artifact.
+   - If it clearly targets the whole project, update all relevant artifacts.
+2. Preserve existing structure, layout system, and identity unless explicitly asked to change them.
+3. Do NOT invent new CSS variables unless explicitly requested.
+4. Maintain existing artifact count unless explicitly requested to add/remove.
+5. If the request is ambiguous or you are not confident, return the CONTEXT_HTML unchanged.
+6. Output MUST be a complete HTML document with <html>, <head>, and <body>.
+7. Return ONLY raw HTML (no markdown, no comments, no explanations).
+8. Every element MUST include a semantic, meaningful id. No element may be left without an id.
+
+Return the updated full HTML (or the unchanged CONTEXT_HTML if no confident change is possible).
+`;

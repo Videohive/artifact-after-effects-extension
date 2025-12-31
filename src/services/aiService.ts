@@ -1,4 +1,4 @@
-import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT } from "./aiPrompts";
+﻿import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT, UPDATE_FROM_CONTEXT_PROMPT } from "./aiPrompts";
 
 export type AiProviderName = 'gemini' | 'openai' | 'claude';
 export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay';
@@ -59,14 +59,19 @@ const getApiError = () =>
 const cleanResponseText = (text: string) =>
   text.replace(/```html/g, "").replace(/```/g, "");
 
-const createResponseText = async (provider: AiProviderName, prompt: string, temperature: number) => {
+const createResponseText = async (
+  provider: AiProviderName,
+  prompt: string,
+  temperature: number,
+  imageData?: string | null
+) => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) throw new Error(getApiError());
     const response = await fetch(`${apiBaseUrl}/artifact/ai`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider, prompt, temperature })
+      body: JSON.stringify({ provider, prompt, temperature, imageData })
     });
     if (!response.ok) {
       const errorText = await response.text();
@@ -74,9 +79,9 @@ const createResponseText = async (provider: AiProviderName, prompt: string, temp
     }
     const data = await response.json();
     const rawText = data?.text || data?.response || '';
-    console.log('[AI raw response]', { provider, rawText, responseData: data });
+    // console.log('[AI raw response]', { provider, rawText, responseData: data });
     if (!rawText) {
-      console.warn('[AI raw response] empty payload', { provider, responseData: data });
+      // console.warn('[AI raw response] empty payload', { provider, responseData: data });
     }
     return cleanResponseText(rawText);
   });
@@ -300,7 +305,8 @@ export const generateArtifacts = async (
   topic: string,
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
-  contextHtml?: string
+  contextHtml?: string,
+  imageData?: string | null
 ): Promise<string> => {
   try {
     const finalPrompt = BASE_PROMPT
@@ -309,10 +315,31 @@ export const generateArtifacts = async (
     const promptWithContext = contextHtml
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
       : finalPrompt;
-    const text = await createResponseText(provider, promptWithContext, 1.5);
+    const text = await createResponseText(provider, promptWithContext, 1.5, imageData);
     return await replaceImagePlaceholders(text, [], undefined, imageProvider);
   } catch (error) {
     console.error("Error generating artifacts:", error);
+    throw error;
+  }
+};
+
+export const updateArtifactsFromContext = async (
+  provider: AiProviderName,
+  topic: string,
+  artifactMode: ArtifactMode,
+  contextHtml: string,
+  imageProvider: ImageProviderName,
+  imageData?: string | null
+): Promise<string> => {
+  try {
+    const finalPrompt = UPDATE_FROM_CONTEXT_PROMPT
+      .replace(/{topic}/g, topic)
+      .replace(/{artifact_mode}/g, artifactMode)
+      .replace(/{contextHtml}/g, contextHtml);
+    const text = await createResponseText(provider, finalPrompt, 0.7, imageData);
+    return await replaceImagePlaceholders(text, [], undefined, imageProvider);
+  } catch (error) {
+    console.error("Error updating artifacts:", error);
     throw error;
   }
 };
@@ -324,7 +351,8 @@ export const regenerateArtifact = async (
   cssContext: string,
   excludedImages: string[] = [],
   artifactMode: ArtifactMode,
-  imageProvider: ImageProviderName
+  imageProvider: ImageProviderName,
+  imageData?: string | null
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
@@ -335,7 +363,7 @@ export const regenerateArtifact = async (
       .replace('{cssContext}', truncatedCss)
       .replace('{currentArtifact}', currentArtifact);
 
-    const text = await createResponseText(provider, filledPrompt, 0.7);
+    const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
     return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
   } catch (error) {
@@ -350,7 +378,8 @@ export const generateNewArtifact = async (
   cssContext: string,
   excludedImages: string[] = [],
   artifactMode: ArtifactMode,
-  imageProvider: ImageProviderName
+  imageProvider: ImageProviderName,
+  imageData?: string | null
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
@@ -360,7 +389,7 @@ export const generateNewArtifact = async (
       .replace('{artifact_mode}', artifactMode)
       .replace('{cssContext}', truncatedCss);
 
-    const text = await createResponseText(provider, filledPrompt, 0.7);
+    const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
     return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
   } catch (error) {

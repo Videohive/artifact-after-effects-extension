@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, Loader2, Send } from 'lucide-react';
+import { AlertCircle, Loader2, Send, X } from 'lucide-react';
 import { AiProviderName, ImageProviderName } from '../../services/aiService';
 import { ImageProviderOption } from './types';
 
@@ -16,6 +16,9 @@ type GeneratorInputProps = {
   onGenerate: () => void;
   loading: boolean;
   isEmpty: boolean;
+  attachedImage: string | null;
+  onImageAttach: (dataUrl: string) => void;
+  onImageClear: () => void;
 };
 
 export const GeneratorInput: React.FC<GeneratorInputProps> = ({
@@ -30,8 +33,47 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   onKeyDown,
   onGenerate,
   loading,
-  isEmpty
+  isEmpty,
+  attachedImage,
+  onImageAttach,
+  onImageClear
 }) => {
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = event.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            onImageAttach(reader.result);
+          }
+        };
+        reader.readAsDataURL(file);
+        event.preventDefault();
+        return;
+      }
+    }
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer?.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        onImageAttach(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  };
+
   return (
     <div className={`shrink-0 w-full${isEmpty ? ' mt-auto' : ''}`}>
       {errorMsg && (
@@ -97,18 +139,42 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
         </div> */}
       </div>
 
-      <div className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300">
+      <div
+        className="relative bg-neutral-900 border border-neutral-800 rounded-2xl p-2 shadow-2xl focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all duration-300"
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+      >
+        {attachedImage ? (
+          <div className="flex items-center gap-3 px-2 pt-2">
+            <div className="relative h-12 w-12">
+              <img
+                src={attachedImage}
+                alt="Attachment preview"
+                className="h-12 w-12 rounded-lg object-cover border border-neutral-800"
+              />
+              <button
+                type="button"
+                onClick={onImageClear}
+                className="absolute -right-2 -top-2 rounded-full bg-neutral-950/90 p-1 text-neutral-300 hover:text-red-300 border border-neutral-800"
+                aria-label="Remove image"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        ) : null}
         <textarea
           value={topic}
           onChange={(e) => onTopicChange(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={handlePaste}
           placeholder="Describe your artifacts... (e.g. 'A futuristic identity kit for a quantum computing startup with dark aesthetic')"
           className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none px-4 py-3 pr-14 resize-none min-h-[60px] max-h-[200px] text-lg"
           rows={2}
         />
         <button
           onClick={onGenerate}
-          disabled={loading || !topic.trim()}
+          disabled={loading || (!topic.trim() && !attachedImage)}
           className="absolute right-2 bottom-2 p-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20"
         >
           {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}

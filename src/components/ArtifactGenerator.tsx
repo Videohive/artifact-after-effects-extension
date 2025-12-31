@@ -3,6 +3,7 @@ import {
   generateArtifacts,
   regenerateArtifact,
   generateNewArtifact,
+  updateArtifactsFromContext,
   AiProviderName,
   ImageProviderName,
   ArtifactMode
@@ -1041,6 +1042,7 @@ type HistorySnapshot = {
 
 export const ArtifactGenerator: React.FC = () => {
   const [topic, setTopic] = useState('');
+  const [chatImage, setChatImage] = useState<string | null>(null);
   const [headContent, setHeadContent] = useState<string>('');
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [currentArtifactIndex, setCurrentArtifactIndex] = useState(0);
@@ -1235,7 +1237,7 @@ export const ArtifactGenerator: React.FC = () => {
         history.past.shift();
       }
       history.future = [];
-    }, 400);
+    }, 150);
 
     return () => {
       if (historyTimerRef.current) {
@@ -1449,7 +1451,7 @@ export const ArtifactGenerator: React.FC = () => {
   ) => {
     if (!currentHistoryId || nextArtifacts.length === 0) return;
     if (!getAuthToken()) return;
-    const nameSource = nameOverride ?? projectTitle ?? '';
+    const nameSource = nameOverride != null ? nameOverride : (projectTitle || '');
     const name = nameSource.trim() || 'Untitled Project';
     const responseHtml = buildPersistedHtml(nextHead, nextArtifacts);
     const responseHash = hashString(responseHtml);
@@ -1534,15 +1536,23 @@ export const ArtifactGenerator: React.FC = () => {
     setTagsDraft('');
     setDescriptionDraft('');
     setTopic('');
+    setChatImage(null);
   };
 
   const handleGenerate = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!topic.trim()) return;
+    if (!topic.trim() && !chatImage) return;
 
-    const requestedMode = inferArtifactModeFromTopic(topic);
-    setArtifactMode(requestedMode);
+    const promptText =
+      topic.trim() ||
+      'Use the attached image as the primary reference. If no confident change is possible, return the HTML unchanged.';
+    const requestedMode = inferArtifactModeFromTopic(promptText);
+    if (!currentHistoryId) {
+      setArtifactMode(requestedMode);
+    }
     setTopic('');
+    const imageData = chatImage;
+    setChatImage(null);
     setLoading(true);
     if (!currentHistoryId) {
       setArtifacts([]);
@@ -1554,24 +1564,34 @@ export const ArtifactGenerator: React.FC = () => {
         currentHistoryId && artifacts.length > 0
           ? buildPersistedHtml(headContent, artifacts)
           : undefined;
-      const generatedHtml = await generateArtifacts(
-        provider,
-        topic,
-        requestedMode,
-        imageProvider,
-        contextHtml
-      );
-      const parsed = parseAndSetHtml(generatedHtml);
+      const generatedHtml = contextHtml
+        ? await updateArtifactsFromContext(
+            provider,
+            promptText,
+            artifactMode,
+            contextHtml,
+            imageProvider,
+            imageData
+          )
+        : await generateArtifacts(
+            provider,
+            promptText,
+            requestedMode,
+            imageProvider,
+            undefined,
+            imageData
+          );
+      const parsed = parseAndSetHtml(generatedHtml, Boolean(contextHtml));
       if (parsed && getAuthToken()) {
         const { title } = parseHeadMetadata(parsed.headHtml);
-        const name = (title || projectTitle || topic).trim() || 'Untitled Project';
+        const name = (title || projectTitle || promptText).trim() || 'Untitled Project';
         const responseHtml = buildPersistedHtml(parsed.headHtml, parsed.artifacts);
 
         if (!currentHistoryId) {
           const created = await createArtifactHistory({
             name,
             provider,
-            prompt: topic,
+            prompt: promptText,
             response: responseHtml
           });
           historySkipCountRef.current = 1;
@@ -1588,7 +1608,7 @@ export const ArtifactGenerator: React.FC = () => {
           const updated = await updateArtifactHistory(currentHistoryId, {
             name,
             provider,
-            prompt: topic,
+            prompt: promptText,
             response: responseHtml
           });
           lastSavedHashRef.current = hashString(responseHtml);
@@ -2213,26 +2233,27 @@ export const ArtifactGenerator: React.FC = () => {
           ) : (
             <EmptyState />
           )}
-          {isEmpty ? (
-            <div className={`flex justify-center px-4 pb-2${isEmpty ? ' mt-auto' : ''}`}>
-              <div style={{ width: isEmpty ? '100%' : previewSize.width, maxWidth: '100%' }}>
-                <GeneratorInput
-                  errorMsg={errorMsg}
-                  provider={provider}
-                  onProviderChange={setProvider}
-                  imageProvider={imageProvider}
-                  imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
-                  onImageProviderChange={setImageProvider}
-                  topic={topic}
-                  onTopicChange={setTopic}
-                  onKeyDown={handleKeyDown}
-                  onGenerate={handleGenerate}
-                  loading={loading}
-                  isEmpty={isEmpty}
-                />
-              </div>
+          <div className={`flex justify-center px-4 pb-2${isEmpty ? ' mt-auto' : ''}`}>
+            <div style={{ width: isEmpty ? '100%' : previewSize.width, maxWidth: '100%' }}>
+              <GeneratorInput
+                errorMsg={errorMsg}
+                provider={provider}
+                onProviderChange={setProvider}
+                imageProvider={imageProvider}
+                imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
+                onImageProviderChange={setImageProvider}
+                topic={topic}
+                onTopicChange={setTopic}
+                onKeyDown={handleKeyDown}
+                onGenerate={handleGenerate}
+                loading={loading}
+                isEmpty={isEmpty}
+                attachedImage={chatImage}
+                onImageAttach={setChatImage}
+                onImageClear={() => setChatImage(null)}
+              />
             </div>
-          ) : null}
+          </div>
         </div>
       </div>
 

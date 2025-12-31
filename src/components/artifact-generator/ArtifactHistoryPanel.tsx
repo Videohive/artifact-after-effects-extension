@@ -10,6 +10,7 @@ type ArtifactHistoryPanelProps = {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRefresh: () => void;
+  onNewChat: () => void;
 };
 
 const formatTimestamp = (value: string) => {
@@ -27,19 +28,29 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
   onSelect,
   onDelete,
   onRefresh,
+  onNewChat,
 }) => {
   return (
     <div className="w-full lg:w-80 shrink-0 -ml-4 sm:-ml-6 lg:-ml-8">
       <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
         <div className="flex items-center justify-between">
           <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Artifacts</div>
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="text-xs font-semibold text-neutral-400 hover:text-indigo-300"
-          >
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onNewChat}
+              className="text-xs font-semibold text-neutral-400 hover:text-indigo-300"
+            >
+              New chat
+            </button>
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="text-xs font-semibold text-neutral-400 hover:text-indigo-300"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
         {error ? (
           <div className="mt-3 text-xs text-red-300">{error}</div>

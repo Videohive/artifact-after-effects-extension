@@ -299,13 +299,17 @@ export const generateArtifacts = async (
   provider: AiProviderName,
   topic: string,
   artifactMode: ArtifactMode,
-  imageProvider: ImageProviderName
+  imageProvider: ImageProviderName,
+  contextHtml?: string
 ): Promise<string> => {
   try {
     const finalPrompt = BASE_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode);
-    const text = await createResponseText(provider, finalPrompt, 1.5);
+    const promptWithContext = contextHtml
+      ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
+      : finalPrompt;
+    const text = await createResponseText(provider, promptWithContext, 1.5);
     return await replaceImagePlaceholders(text, [], undefined, imageProvider);
   } catch (error) {
     console.error("Error generating artifacts:", error);

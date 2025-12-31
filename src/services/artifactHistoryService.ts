@@ -119,7 +119,7 @@ export const createArtifactHistory = async (payload: {
 
 export const updateArtifactHistory = async (
   id: string,
-  payload: { name?: string; response?: string }
+  payload: { name?: string; response?: string; prompt?: string; provider?: AiProviderName }
 ): Promise<ArtifactHistoryDetail> => {
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) throw new Error(getApiError());

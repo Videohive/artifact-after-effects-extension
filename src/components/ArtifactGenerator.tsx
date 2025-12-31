@@ -501,23 +501,6 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function onKeyDown(e) {
-      var isUndo =
-        (e.ctrlKey || e.metaKey) &&
-        !e.shiftKey &&
-        (e.code === 'KeyZ' || String(e.key).toLowerCase() === 'z');
-      var isRedo =
-        (e.ctrlKey || e.metaKey) &&
-        ((e.shiftKey && (e.code === 'KeyZ' || String(e.key).toLowerCase() === 'z')) || e.code === 'KeyY');
-      if (isUndo) {
-        e.preventDefault();
-        undo();
-        return;
-      }
-      if (isRedo) {
-        e.preventDefault();
-        redo();
-        return;
-      }
       if (!selected) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         selected.parentElement.removeChild(selected);
@@ -622,24 +605,6 @@ const PREVIEW_EDITOR_SCRIPT = `
       ensureUi();
       markTargets();
       setOverlayVisible(false);
-    }
-
-    function undo() {
-      if (historyIndex <= 0) return;
-      historyIndex -= 1;
-      restoring = true;
-      restoreHtml(history[historyIndex]);
-      postUpdate();
-      restoring = false;
-    }
-
-    function redo() {
-      if (historyIndex >= history.length - 1) return;
-      historyIndex += 1;
-      restoring = true;
-      restoreHtml(history[historyIndex]);
-      postUpdate();
-      restoring = false;
     }
 
     function getSvgContentsRect(svgEl) {
@@ -1067,6 +1032,13 @@ const normalizeColorToHex = (value?: string | null) => {
 
 const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
 
+type HistorySnapshot = {
+  headContent: string;
+  artifacts: string[];
+  currentArtifactIndex: number;
+  artifactMode: ArtifactMode;
+};
+
 export const ArtifactGenerator: React.FC = () => {
   const [topic, setTopic] = useState('');
   const [headContent, setHeadContent] = useState<string>('');
@@ -1121,6 +1093,13 @@ export const ArtifactGenerator: React.FC = () => {
   const historyUpdateTimerRef = useRef<number | null>(null);
   const pendingSaveDelayRef = useRef<number | null>(null);
   const lastSavedHashRef = useRef<number | null>(null);
+  const suppressAutoSelectRef = useRef(false);
+  const historyRef = useRef<{ past: HistorySnapshot[]; future: HistorySnapshot[] }>({
+    past: [],
+    future: []
+  });
+  const historyTimerRef = useRef<number | null>(null);
+  const applyingHistoryRef = useRef(false);
 
   useEffect(() => {
     const container = previewStageRef.current;
@@ -1166,6 +1145,104 @@ export const ArtifactGenerator: React.FC = () => {
       setArtifactMode(headMode);
     }
   }, [headContent, editingTitle, editingTags, editingDescription, artifactMode]);
+
+  const applyHistorySnapshot = (snapshot: HistorySnapshot) => {
+    applyingHistoryRef.current = true;
+    setHeadContent(snapshot.headContent);
+    setArtifacts(snapshot.artifacts);
+    setCurrentArtifactIndex(snapshot.currentArtifactIndex);
+    setArtifactMode(snapshot.artifactMode);
+    if (viewMode === 'code' && !isCodeDirty) {
+      setCodeDraft(buildAllArtifactsHtml(snapshot.headContent, snapshot.artifacts));
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (isEditable) return;
+
+      const isUndo =
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        (event.code === 'KeyZ' || String(event.key).toLowerCase() === 'z');
+      const isRedo =
+        (event.ctrlKey || event.metaKey) &&
+        ((event.shiftKey && (event.code === 'KeyZ' || String(event.key).toLowerCase() === 'z')) ||
+          event.code === 'KeyY');
+
+      if (!isUndo && !isRedo) return;
+
+      const history = historyRef.current;
+      if (isUndo) {
+        if (history.past.length <= 1) return;
+        event.preventDefault();
+        const current = history.past.pop() as HistorySnapshot;
+        history.future.push(current);
+        const previous = history.past[history.past.length - 1];
+        applyHistorySnapshot(previous);
+        return;
+      }
+
+      if (history.future.length === 0) return;
+      event.preventDefault();
+      const next = history.future.pop() as HistorySnapshot;
+      history.past.push(next);
+      applyHistorySnapshot(next);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCodeDirty, viewMode]);
+
+  useEffect(() => {
+    if (applyingHistoryRef.current) {
+      applyingHistoryRef.current = false;
+      return;
+    }
+    if (!headContent && artifacts.length === 0) return;
+
+    const snapshot: HistorySnapshot = {
+      headContent,
+      artifacts,
+      currentArtifactIndex,
+      artifactMode
+    };
+    const hash = hashString(
+      `${snapshot.headContent}::${snapshot.artifacts.join('')}::${snapshot.currentArtifactIndex}::${snapshot.artifactMode}`
+    );
+
+    if (historyTimerRef.current) {
+      window.clearTimeout(historyTimerRef.current);
+    }
+    historyTimerRef.current = window.setTimeout(() => {
+      const history = historyRef.current;
+      const last = history.past[history.past.length - 1];
+      const lastHash = last
+        ? hashString(
+            `${last.headContent}::${last.artifacts.join('')}::${last.currentArtifactIndex}::${last.artifactMode}`
+          )
+        : null;
+      if (lastHash === hash) return;
+      history.past.push(snapshot);
+      if (history.past.length > 60) {
+        history.past.shift();
+      }
+      history.future = [];
+    }, 400);
+
+    return () => {
+      if (historyTimerRef.current) {
+        window.clearTimeout(historyTimerRef.current);
+      }
+    };
+  }, [headContent, artifacts, currentArtifactIndex, artifactMode]);
 
   useEffect(() => {
     if (!currentHistoryId || artifacts.length === 0) return;
@@ -1291,6 +1368,7 @@ export const ArtifactGenerator: React.FC = () => {
           normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
           return section.outerHTML;
         });
+        historyRef.current = { past: [], future: [] };
         setHeadContent(nextHead);
         setArtifacts(artifactHtmls);
         setCurrentArtifactIndex(nextIndex);
@@ -1300,6 +1378,7 @@ export const ArtifactGenerator: React.FC = () => {
         const nextHead = doc.head.innerHTML;
         const fallbackHtml = doc.body.innerHTML.trim();
         const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
+        historyRef.current = { past: [], future: [] };
         setHeadContent(nextHead);
         setArtifacts([wrapped]);
         setCurrentArtifactIndex(0);
@@ -1343,6 +1422,10 @@ export const ArtifactGenerator: React.FC = () => {
     try {
       const items = await listArtifactHistory(50);
       setHistoryItems(items);
+      if (suppressAutoSelectRef.current) {
+        suppressAutoSelectRef.current = false;
+        return;
+      }
       if (!currentHistoryId && items.length > 0) {
         const savedId =
           typeof window !== 'undefined' ? window.localStorage.getItem(LAST_ARTIFACT_KEY) : null;
@@ -1403,6 +1486,7 @@ export const ArtifactGenerator: React.FC = () => {
       if (!detail?.response) return;
       historySkipCountRef.current = 3;
       setCurrentHistoryId(id);
+      historyRef.current = { past: [], future: [] };
       if (typeof window !== 'undefined') {
         window.localStorage.setItem(LAST_ARTIFACT_KEY, id);
       }
@@ -1423,17 +1507,33 @@ export const ArtifactGenerator: React.FC = () => {
     try {
       await deleteArtifactHistory(id);
       setHistoryItems(prev => prev.filter(item => item.id !== id));
-        if (currentHistoryId === id) {
-          setCurrentHistoryId(null);
-          lastSavedHashRef.current = null;
-          if (typeof window !== 'undefined') {
-            window.localStorage.removeItem(LAST_ARTIFACT_KEY);
-          }
-        }
-      } catch (error: any) {
-        console.error(error);
-        setHistoryError('Failed to delete artifact.');
+      if (currentHistoryId === id) {
+        handleNewChat();
+      }
+    } catch (error: any) {
+      console.error(error);
+      setHistoryError('Failed to delete artifact.');
     }
+  };
+
+  const handleNewChat = () => {
+    suppressAutoSelectRef.current = true;
+    setCurrentHistoryId(null);
+    lastSavedHashRef.current = null;
+    historyRef.current = { past: [], future: [] };
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(LAST_ARTIFACT_KEY);
+    }
+    setArtifacts([]);
+    setHeadContent('');
+    setCurrentArtifactIndex(0);
+    setProjectTitle('');
+    setProjectTags('');
+    setProjectDescription('');
+    setTitleDraft('');
+    setTagsDraft('');
+    setDescriptionDraft('');
+    setTopic('');
   };
 
   const handleGenerate = async (e?: React.FormEvent) => {
@@ -1442,18 +1542,32 @@ export const ArtifactGenerator: React.FC = () => {
 
     const requestedMode = inferArtifactModeFromTopic(topic);
     setArtifactMode(requestedMode);
+    setTopic('');
     setLoading(true);
-    setArtifacts([]);
-    setHeadContent('');
+    if (!currentHistoryId) {
+      setArtifacts([]);
+      setHeadContent('');
+    }
     setErrorMsg(null);
     try {
-      const generatedHtml = await generateArtifacts(provider, topic, requestedMode, imageProvider);
+      const contextHtml =
+        currentHistoryId && artifacts.length > 0
+          ? buildPersistedHtml(headContent, artifacts)
+          : undefined;
+      const generatedHtml = await generateArtifacts(
+        provider,
+        topic,
+        requestedMode,
+        imageProvider,
+        contextHtml
+      );
       const parsed = parseAndSetHtml(generatedHtml);
-      if (parsed) {
+      if (parsed && getAuthToken()) {
         const { title } = parseHeadMetadata(parsed.headHtml);
         const name = (title || projectTitle || topic).trim() || 'Untitled Project';
         const responseHtml = buildPersistedHtml(parsed.headHtml, parsed.artifacts);
-        if (getAuthToken()) {
+
+        if (!currentHistoryId) {
           const created = await createArtifactHistory({
             name,
             provider,
@@ -1470,6 +1584,27 @@ export const ArtifactGenerator: React.FC = () => {
             const next = [created, ...prev.filter(item => item.id !== created.id)];
             return next;
           });
+        } else {
+          const updated = await updateArtifactHistory(currentHistoryId, {
+            name,
+            provider,
+            prompt: topic,
+            response: responseHtml
+          });
+          lastSavedHashRef.current = hashString(responseHtml);
+          setHistoryItems(prev =>
+            prev.map(item =>
+              item.id === updated.id
+                ? {
+                    ...item,
+                    name: updated.name,
+                    prompt: updated.prompt,
+                    updatedAt: updated.updatedAt,
+                    provider: updated.provider
+                  }
+                : item
+            )
+          );
         }
       }
     } catch (error: any) {
@@ -1993,8 +2128,9 @@ export const ArtifactGenerator: React.FC = () => {
           onSelect={handleHistorySelect}
           onDelete={handleHistoryDelete}
           onRefresh={loadHistory}
+          onNewChat={handleNewChat}
         />
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <div className={`flex min-w-0 flex-1 flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
           {artifacts.length > 0 ? (
             <div className="flex flex-col gap-4">
               <ProjectMetadataPanel
@@ -2077,24 +2213,26 @@ export const ArtifactGenerator: React.FC = () => {
           ) : (
             <EmptyState />
           )}
-          <div className="flex justify-center px-4 pb-2">
-            <div style={{ width: isEmpty ? '100%' : previewSize.width, maxWidth: '100%' }}>
-              <GeneratorInput
-                errorMsg={errorMsg}
-                provider={provider}
-                onProviderChange={setProvider}
-                imageProvider={imageProvider}
-                imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
-                onImageProviderChange={setImageProvider}
-                topic={topic}
-                onTopicChange={setTopic}
-                onKeyDown={handleKeyDown}
-                onGenerate={handleGenerate}
-                loading={loading}
-                isEmpty={isEmpty}
-              />
+          {isEmpty ? (
+            <div className={`flex justify-center px-4 pb-2${isEmpty ? ' mt-auto' : ''}`}>
+              <div style={{ width: isEmpty ? '100%' : previewSize.width, maxWidth: '100%' }}>
+                <GeneratorInput
+                  errorMsg={errorMsg}
+                  provider={provider}
+                  onProviderChange={setProvider}
+                  imageProvider={imageProvider}
+                  imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
+                  onImageProviderChange={setImageProvider}
+                  topic={topic}
+                  onTopicChange={setTopic}
+                  onKeyDown={handleKeyDown}
+                  onGenerate={handleGenerate}
+                  loading={loading}
+                  isEmpty={isEmpty}
+                />
+              </div>
             </div>
-          </div>
+          ) : null}
         </div>
       </div>
 

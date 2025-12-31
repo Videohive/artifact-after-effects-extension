@@ -5,6 +5,8 @@ type AuthUser = {
   name?: string;
 };
 
+const DEFAULT_API_BASE_URL = 'https://api.ae2authors.net';
+
 const getApiBaseUrl = (): string | undefined => {
   if (typeof process !== 'undefined' && process.env) {
     const fromProcess = process.env.REACT_APP_API_BASE_URL || process.env.API_BASE_URL;
@@ -23,7 +25,7 @@ const getApiBaseUrl = (): string | undefined => {
       win.__ENV__?.API_BASE_URL;
     if (fromWindow && fromWindow.trim()) return fromWindow.replace(/\/$/, '');
   }
-  return undefined;
+  return DEFAULT_API_BASE_URL;
 };
 
 const getApiError = () =>

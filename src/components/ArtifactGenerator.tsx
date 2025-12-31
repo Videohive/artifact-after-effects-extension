@@ -1548,8 +1548,7 @@ export const ArtifactGenerator: React.FC = () => {
         window.localStorage.setItem(LAST_ARTIFACT_KEY, id);
       }
       lastSavedHashRef.current = hashString(detail.response);
-      parseAndSetHtml(detail.response);
-      setTopic(detail.prompt || '');
+        parseAndSetHtml(detail.response);
       setProvider(detail.provider);
     } catch (error: any) {
       console.error(error);

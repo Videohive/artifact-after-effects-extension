@@ -16,6 +16,8 @@ export type ArtifactMode =
   | 'dividers'
   | 'mixed';
 
+const DEFAULT_API_BASE_URL = 'https://api.ae2authors.net';
+
 // Helper: Exponential backoff for 429 errors
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -50,7 +52,7 @@ const getApiBaseUrl = (): string | undefined => {
       win.__ENV__?.API_BASE_URL;
     if (fromWindow && fromWindow.trim()) return fromWindow.replace(/\/$/, '');
   }
-  return undefined;
+  return DEFAULT_API_BASE_URL;
 };
 
 const getApiError = () =>

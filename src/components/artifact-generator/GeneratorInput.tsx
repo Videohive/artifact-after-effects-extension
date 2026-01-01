@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, Loader2, Send, X } from 'lucide-react';
+import { AlertCircle, Image, Loader2, Send, X } from 'lucide-react';
 import { AiProviderName, ImageProviderName } from '../../services/aiService';
 import { ImageProviderOption } from './types';
 
@@ -38,6 +38,8 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   onImageAttach,
   onImageClear
 }) => {
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = event.clipboardData?.items || [];
     for (const item of items) {
@@ -72,6 +74,23 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+  };
+
+  const handlePickImage = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        onImageAttach(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
   };
 
   return (
@@ -144,6 +163,13 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
         onDrop={handleDrop}
         onDragOver={handleDragOver}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
         {attachedImage ? (
           <div className="flex items-center gap-3 px-2 pt-2">
             <div className="relative h-12 w-12">
@@ -169,9 +195,17 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
           onKeyDown={onKeyDown}
           onPaste={handlePaste}
           placeholder="Describe your artifacts... (e.g. 'A futuristic identity kit for a quantum computing startup with dark aesthetic')"
-          className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none px-4 py-3 pr-14 resize-none min-h-[60px] max-h-[200px] text-lg"
+          className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none pl-14 pr-14 py-3 resize-none min-h-[60px] max-h-[200px] text-lg"
           rows={2}
         />
+        <button
+          type="button"
+          onClick={handlePickImage}
+          className="absolute left-2 top-1/2 -translate-y-1/2 p-3 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-xl transition-all"
+          aria-label="Attach image"
+        >
+          <Image className="w-5 h-5" />
+        </button>
         <button
           onClick={onGenerate}
           disabled={loading || (!topic.trim() && !attachedImage)}

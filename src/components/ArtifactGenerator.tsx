@@ -1075,7 +1075,15 @@ type HistorySnapshot = {
   artifactMode: ArtifactMode;
 };
 
-export const ArtifactGenerator: React.FC = () => {
+type ArtifactGeneratorProps = {
+  historyOverlayOpen?: boolean;
+  onHistoryOverlayClose?: () => void;
+};
+
+export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
+  historyOverlayOpen = false,
+  onHistoryOverlayClose
+}) => {
   const [topic, setTopic] = useState('');
   const [chatImage, setChatImage] = useState<string | null>(null);
   const [headContent, setHeadContent] = useState<string>('');
@@ -2108,6 +2116,15 @@ export const ArtifactGenerator: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, [currentArtifactIndex, includeSlideClass, artifacts.length]);
 
+  useEffect(() => {
+    if (!historyOverlayOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [historyOverlayOpen]);
+
   const handleCopyHtml = async () => {
     const html = getAllArtifactsHtml();
     await navigator.clipboard.writeText(html);
@@ -2230,17 +2247,49 @@ export const ArtifactGenerator: React.FC = () => {
 
   return (
     <div className={`flex flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <ArtifactHistoryPanel
-          items={historyItems}
-          loading={historyLoading}
-          selectedId={currentHistoryId}
-          error={historyError}
-          onSelect={handleHistorySelect}
-          onDelete={handleHistoryDelete}
-          onRefresh={loadHistory}
-          onNewChat={handleNewChat}
-        />
+      {historyOverlayOpen ? (
+        <div className="fixed inset-0 z-[60] xl:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-transparent"
+            onClick={onHistoryOverlayClose}
+            aria-label="Close artifacts overlay"
+          />
+          <div className="absolute left-0 top-0 h-full w-[85vw] max-w-xs sm:max-w-sm p-4">
+            <ArtifactHistoryPanel
+              items={historyItems}
+              loading={historyLoading}
+              selectedId={currentHistoryId}
+              error={historyError}
+              onSelect={(id) => {
+                handleHistorySelect(id);
+                onHistoryOverlayClose?.();
+              }}
+              onDelete={handleHistoryDelete}
+              onRefresh={loadHistory}
+              onNewChat={() => {
+                handleNewChat();
+                onHistoryOverlayClose?.();
+              }}
+              onClose={onHistoryOverlayClose}
+              variant="overlay"
+            />
+          </div>
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch">
+        <div className="hidden xl:block">
+          <ArtifactHistoryPanel
+            items={historyItems}
+            loading={historyLoading}
+            selectedId={currentHistoryId}
+            error={historyError}
+            onSelect={handleHistorySelect}
+            onDelete={handleHistoryDelete}
+            onRefresh={loadHistory}
+            onNewChat={handleNewChat}
+          />
+        </div>
         <div className={`flex min-w-0 flex-1 flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
           {artifacts.length > 0 ? (
             <div className="flex flex-col gap-4">

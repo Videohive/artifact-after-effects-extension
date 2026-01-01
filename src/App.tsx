@@ -7,12 +7,14 @@ import {
   getAuthToken,
   clearAuthToken
 } from './services/authService';
-import { Presentation } from 'lucide-react';
+import { Menu, Presentation } from 'lucide-react';
 
 export default function App() {
   const [authUser, setAuthUser] = useState<{ login?: string; email?: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false);
+  const [overlayAllowed, setOverlayAllowed] = useState(false);
 
   useEffect(() => {
     const token = getAuthToken();
@@ -29,6 +31,20 @@ export default function App() {
         setAuthUser(null);
       })
       .finally(() => setAuthLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const media = window.matchMedia('(max-width: 1024px)');
+    const handleChange = () => {
+      setOverlayAllowed(media.matches);
+      if (!media.matches) {
+        setHistoryOverlayOpen(false);
+      }
+    };
+    handleChange();
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
   }, []);
 
   const handleLogin = async (email: string, password: string) => {
@@ -62,6 +78,14 @@ export default function App() {
       <header className="shrink-0 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur-md z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="xl:hidden p-2 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors"
+              onClick={() => setHistoryOverlayOpen(true)}
+              aria-label="Open artifacts"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
             <div className="p-2 bg-indigo-600 rounded-lg">
               <Presentation className="w-5 h-5 text-white" />
             </div>
@@ -75,7 +99,10 @@ export default function App() {
 
       <main className="flex-1 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <ArtifactGenerator />
+          <ArtifactGenerator
+            historyOverlayOpen={overlayAllowed && historyOverlayOpen}
+            onHistoryOverlayClose={() => setHistoryOverlayOpen(false)}
+          />
         </div>
       </main>
     </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, X } from 'lucide-react';
 import { ArtifactHistoryItem } from '../../services/artifactHistoryService';
 
 type ArtifactHistoryPanelProps = {
@@ -11,6 +11,8 @@ type ArtifactHistoryPanelProps = {
   onDelete: (id: string) => void;
   onRefresh: () => void;
   onNewChat: () => void;
+  onClose?: () => void;
+  variant?: 'default' | 'overlay';
 };
 
 const formatTimestamp = (value: string) => {
@@ -29,10 +31,16 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
   onDelete,
   onRefresh,
   onNewChat,
+  onClose,
+  variant = 'default'
 }) => {
+  const wrapperClassName =
+    variant === 'overlay'
+      ? 'w-full max-w-xs sm:max-w-sm h-full'
+      : 'w-full lg:w-80 shrink-0 -ml-4 sm:-ml-6 lg:-ml-8 h-full';
   return (
-    <div className="w-full lg:w-80 shrink-0 -ml-4 sm:-ml-6 lg:-ml-8">
-      <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+    <div className={wrapperClassName}>
+      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 h-full flex flex-col">
         <div className="flex items-center justify-between">
           <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Artifacts</div>
           <div className="flex items-center gap-3">
@@ -50,6 +58,16 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
             >
               Refresh
             </button>
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-neutral-400 hover:text-white"
+                aria-label="Close artifacts"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
         </div>
         {error ? (
@@ -60,7 +78,7 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
         ) : items.length === 0 ? (
           <div className="mt-3 text-xs text-neutral-500">No saved artifacts yet.</div>
         ) : (
-          <div className="mt-3 flex max-h-[60vh] flex-col gap-2 overflow-auto pr-1">
+          <div className="mt-3 flex flex-1 flex-col gap-2 overflow-auto pr-1">
             {items.map(item => {
               const active = item.id === selectedId;
               const displayName = (item.name || 'Untitled Project').replace(/\s+/g, ' ').trim();

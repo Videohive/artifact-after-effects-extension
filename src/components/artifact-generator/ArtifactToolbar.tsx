@@ -115,45 +115,47 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   };
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full">
-      <div className="flex items-center gap-3 justify-self-start">
+    <div className="grid grid-cols-1 gap-4 bg-neutral-900 border border-neutral-800 rounded-xl p-3 shrink-0 w-full lg:grid-cols-[1fr_auto_1fr] lg:items-center">
+      <div className="flex flex-wrap items-center gap-3 justify-self-start">
         <div className="flex items-center gap-2 bg-neutral-950 rounded-lg p-1 border border-neutral-800">
           <button
             onClick={() => onViewModeChange('preview')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === 'preview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
+            title="Preview"
           >
-            <Play className="w-4 h-4" /> Preview
+            <Play className="w-4 h-4" />
           </button>
           <button
             onClick={() => onViewModeChange('code')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === 'code' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
             }`}
+            title="Code"
           >
-            <Code className="w-4 h-4" /> Code
+            <Code className="w-4 h-4" />
           </button>
         </div>
         <button
           onClick={onCopyHtml}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border border-neutral-800 bg-neutral-950 ${
+          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border border-neutral-800 bg-neutral-950 ${
             copiedHtml
               ? 'text-emerald-400'
               : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
           }`}
-          title="Copy HTML"
+          title={copiedHtml ? 'Copied' : 'Copy HTML'}
         >
           {copiedHtml ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-          {copiedHtml ? 'Copied' : 'Copy HTML'}
         </button>
       </div>
 
-      <div className="flex items-center gap-4 px-4 py-2 bg-neutral-950 rounded-lg border border-neutral-800 justify-self-center w-full sm:w-auto justify-center">
+      <div className="flex items-center gap-3 px-3 py-2 bg-neutral-950 rounded-lg border border-neutral-800 justify-self-center w-full lg:w-auto justify-center">
         <button
           onClick={onPrev}
           disabled={totalCount <= 1}
           className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
+          title="Previous"
         >
           <ChevronLeft className="w-5 h-5" />
         </button>
@@ -164,12 +166,13 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
           onClick={onNext}
           disabled={totalCount <= 1}
           className="p-1.5 rounded-full hover:bg-neutral-800 disabled:opacity-30 text-white transition-colors"
+          title="Next"
         >
           <ChevronRight className="w-5 h-5" />
         </button>
       </div>
 
-      <div className="flex items-center gap-2 justify-self-end w-full sm:w-auto justify-end">
+      <div className="flex flex-nowrap items-center gap-2 justify-self-end w-full lg:w-auto justify-start lg:justify-end whitespace-nowrap">
         <div className="relative" ref={paletteRef}>
           <button
             onClick={() => setPaletteOpen(prev => !prev)}
@@ -229,7 +232,7 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
             type="button"
             title="Regenerate current slide"
           >
-            Slide
+            S
           </button>
           <button
             onClick={() => onRegenerateModeChange('project')}
@@ -241,7 +244,7 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
             type="button"
             title="Regenerate all slides"
           >
-            Project
+            P
           </button>
         </div>
         <button

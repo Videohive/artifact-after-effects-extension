@@ -40,6 +40,7 @@ const RESOLUTION_OPTIONS: ResolutionOption[] = [
 ];
 
 const IMAGE_PROVIDER_OPTIONS: ImageProviderOption[] = [
+  { id: 'placeholder', label: 'Placeholder' },
   { id: 'random', label: 'Random (All)' },
   { id: 'pexels', label: 'Pexels' },
   { id: 'unsplash', label: 'Unsplash' },
@@ -1945,11 +1946,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       const excluded = getUsedImageUrls();
       const styleMatch = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/);
       const cssContext = styleMatch ? styleMatch[1] : '';
+      const contextHtml = buildPersistedHtml(headContent, artifacts);
 
       const newArtifactHtml = await generateNewArtifact(
         provider,
         topic,
         cssContext,
+        contextHtml,
         excluded,
         artifactMode,
         imageProvider
@@ -1960,13 +1963,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       tempDiv.innerHTML = newArtifactHtml;
       sanitizeLayout(tempDiv);
       
-      const newArtifacts = reindexArtifactClasses(
-        [...artifacts, tempDiv.innerHTML],
-        includeSlideClass
-      );
+      const insertIndex = Math.min(currentArtifactIndex + 1, artifacts.length);
+      const nextArtifacts = [...artifacts];
+      nextArtifacts.splice(insertIndex, 0, tempDiv.innerHTML);
+      const newArtifacts = reindexArtifactClasses(nextArtifacts, includeSlideClass);
       historyImmediateNextRef.current = true;
       setArtifacts(newArtifacts);
-      setCurrentArtifactIndex(newArtifacts.length - 1);
+      setCurrentArtifactIndex(insertIndex);
       await saveHistorySnapshot(newArtifacts);
       
     } catch (error) {

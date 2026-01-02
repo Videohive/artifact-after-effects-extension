@@ -297,6 +297,7 @@ CONTEXT:
 Topic: {topic}
 ARTIFACT MODE: {artifact_mode}
 Existing CSS (Strictly Follow This): {cssContext}
+CONTEXT_HTML (full project): {contextHtml}
 Artifact to Update (HTML/SVG): {currentArtifact}
 
 INSTRUCTIONS:

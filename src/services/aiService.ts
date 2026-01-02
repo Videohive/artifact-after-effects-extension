@@ -2,7 +2,7 @@ import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT, UPDATE_FROM_CONTEX
 import { getAuthToken } from "./authService";
 
 export type AiProviderName = 'gemini' | 'openai' | 'claude';
-export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay';
+export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay' | 'placeholder';
 export type ArtifactMode =
   | 'auto'
   | 'slides'
@@ -159,7 +159,7 @@ const extractArtifactSection = (html: string, artifactMode: ArtifactMode): strin
 };
 
 // Smart keyword extraction
-const extractKeywords = (sentence: string): string => {
+const extractKeywords = (sentence: string, maxWords = 3): string => {
   const stopWords = new Set([
     'a', 'an', 'the', 'in', 'on', 'at', 'with', 'by', 'of', 'for', 'to', 'from',
     'view', 'shot', 'detail', 'macro', 'close-up', 'closeup', 'portrait', 'landscape',
@@ -168,8 +168,102 @@ const extractKeywords = (sentence: string): string => {
     'beautiful', 'amazing', 'style', 'illustration', 'vector', 'graphic'
   ]);
   const words = sentence.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => !stopWords.has(w) && w.length > 2);
-  if (words.length === 0) return sentence.split(/\s+/).slice(0, 2).join(' ');
-  return words.slice(0, 3).join(' ');
+  if (words.length === 0) return sentence.split(/\s+/).slice(0, maxWords).join(' ');
+  return words.slice(0, maxWords).join(' ');
+};
+
+const buildSearchQueries = (term: string, contextHint?: string): string[] => {
+  const cleanTerm = term.trim();
+  const keywordList = cleanTerm
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const queries: string[] = [];
+  const pushUnique = (value: string) => {
+    const next = value.trim();
+    if (!next) return;
+    if (!queries.includes(next)) queries.push(next);
+  };
+  const compactContext = contextHint ? extractKeywords(contextHint, 4) : '';
+
+  if (keywordList.length > 0) {
+    pushUnique(keywordList.slice(0, 3).join(' '));
+    keywordList.forEach(pushUnique);
+  } else {
+    pushUnique(cleanTerm);
+  }
+
+  if (compactContext) {
+    if (keywordList.length > 0) {
+      const primary = keywordList[0];
+      const combo = keywordList.slice(0, 2).join(' ');
+      pushUnique(`${primary} ${compactContext}`);
+      if (combo && combo !== primary) pushUnique(`${combo} ${compactContext}`);
+    } else {
+      pushUnique(`${cleanTerm} ${compactContext}`);
+    }
+    pushUnique(compactContext);
+  }
+
+  return queries;
+};
+
+const extractDocumentContext = (source?: string): string => {
+  if (!source) return '';
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(source, 'text/html');
+    const parts: string[] = [];
+    if (doc.title) parts.push(doc.title);
+    const metaNames = ['tags', 'keywords', 'description', 'project-title'];
+    metaNames.forEach(name => {
+      const content = doc.querySelector(`meta[name="${name}"]`)?.getAttribute('content');
+      if (content) parts.push(content);
+    });
+    const heading = doc.querySelector('h1,h2');
+    if (heading?.textContent) parts.push(heading.textContent);
+    if (parts.length === 0) parts.push(source);
+    return extractKeywords(parts.join(' '), 4);
+  } catch {
+    return extractKeywords(source, 4);
+  }
+};
+
+const extractElementContext = (element: Element): string => {
+  const parts: string[] = [];
+  const push = (value?: string | null) => {
+    if (value && value.trim()) parts.push(value.trim());
+  };
+  push(element.getAttribute('id'));
+  push(element.getAttribute('aria-label'));
+  push(element.getAttribute('alt'));
+  push(element.getAttribute('title'));
+  const container = element.closest('section, article, figure, header, main') || element.parentElement;
+  if (container) {
+    push(container.getAttribute('id'));
+    const heading = container.querySelector('h1,h2,h3,figcaption');
+    if (heading?.textContent) push(heading.textContent);
+  }
+  return parts.length > 0 ? extractKeywords(parts.join(' '), 4) : '';
+};
+
+const extractImageUrlsFromHtml = (html: string): string[] => {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const imgs = Array.from(doc.querySelectorAll('img')).map(img => img.src).filter(Boolean);
+    const elementsWithStyle = doc.querySelectorAll('[style*="background-image"]');
+    const bgImages = Array.from(elementsWithStyle)
+      .map(el => {
+        const style = el.getAttribute('style');
+        const match = style?.match(/url\(['"]?(.*?)['"]?\)/);
+        return match ? match[1] : null;
+      })
+      .filter(Boolean) as string[];
+    return [...new Set([...imgs, ...bgImages])];
+  } catch {
+    return [];
+  }
 };
 
 // Extract a usable palette color (hex) from generated HTML/CSS
@@ -196,14 +290,10 @@ const extractPaletteColor = (html: string): string | undefined => {
 
 const searchWithVariants = async (
   term: string,
-  searchFn: (query: string) => Promise<string | null>
+  searchFn: (query: string) => Promise<string | null>,
+  contextHint?: string
 ): Promise<string | null> => {
-  const cleanTerm = term.trim();
-  const keywordList = cleanTerm
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-  const queries = keywordList.length > 0 ? keywordList : [cleanTerm];
+  const queries = buildSearchQueries(term, contextHint);
 
   for (const q of queries) {
     if (q.split(' ').length <= 3) {
@@ -258,30 +348,43 @@ const searchImageProvider = async (
 };
 
 // Pexels API Integration
-async function fetchPexelsImage(term: string, usedUrls: Set<string>, color?: string): Promise<string> {
+async function fetchPexelsImage(
+  term: string,
+  usedUrls: Set<string>,
+  color?: string,
+  contextHint?: string
+): Promise<string> {
   const searchPexels = async (query: string): Promise<string | null> => {
     return await searchImageProvider('pexels', query, usedUrls, color);
   };
 
-  const result = await searchWithVariants(term, searchPexels);
+  const result = await searchWithVariants(term, searchPexels, contextHint);
   return result || FALLBACK_IMAGE_URL;
 }
 
-async function fetchUnsplashImage(term: string, usedUrls: Set<string>): Promise<string> {
+async function fetchUnsplashImage(
+  term: string,
+  usedUrls: Set<string>,
+  contextHint?: string
+): Promise<string> {
   const searchUnsplash = async (query: string): Promise<string | null> => {
     return await searchImageProvider('unsplash', query, usedUrls);
   };
 
-  const result = await searchWithVariants(term, searchUnsplash);
+  const result = await searchWithVariants(term, searchUnsplash, contextHint);
   return result || FALLBACK_IMAGE_URL;
 }
 
-async function fetchPixabayImage(term: string, usedUrls: Set<string>): Promise<string> {
+async function fetchPixabayImage(
+  term: string,
+  usedUrls: Set<string>,
+  contextHint?: string
+): Promise<string> {
   const searchPixabay = async (query: string): Promise<string | null> => {
     return await searchImageProvider('pixabay', query, usedUrls);
   };
 
-  const result = await searchWithVariants(term, searchPixabay);
+  const result = await searchWithVariants(term, searchPixabay, contextHint);
   return result || FALLBACK_IMAGE_URL;
 }
 
@@ -301,34 +404,70 @@ async function fetchImageByProvider(
   provider: ImageProviderName,
   term: string,
   usedUrls: Set<string>,
-  color?: string
+  color?: string,
+  contextHint?: string
 ): Promise<string> {
+  if (provider === 'placeholder') return FALLBACK_IMAGE_URL;
   const resolved = pickImageProvider(provider);
-  if (resolved === 'unsplash') return await fetchUnsplashImage(term, usedUrls);
-  if (resolved === 'pixabay') return await fetchPixabayImage(term, usedUrls);
-  return await fetchPexelsImage(term, usedUrls, color);
+  if (resolved === 'unsplash') return await fetchUnsplashImage(term, usedUrls, contextHint);
+  if (resolved === 'pixabay') return await fetchPixabayImage(term, usedUrls, contextHint);
+  return await fetchPexelsImage(term, usedUrls, color, contextHint);
 }
 
 const replaceImagePlaceholders = async (
   html: string,
   excludedUrls: string[] = [],
   paletteSource?: string,
-  imageProvider: ImageProviderName = 'pexels'
+  imageProvider: ImageProviderName = 'pexels',
+  contextHint?: string
 ): Promise<string> => {
   const usedUrls = new Set<string>(excludedUrls);
   const regex = /{{IMAGE:(.*?)}}/g;
   const matches = [...html.matchAll(regex)];
   if (matches.length === 0) return html;
+  if (imageProvider === 'placeholder') {
+    return html.replace(regex, FALLBACK_IMAGE_URL);
+  }
 
   let newHtml = html;
   const paletteColor = extractPaletteColor(paletteSource || html);
+  const globalContext = extractDocumentContext(contextHint || html);
+  const tokens = matches.map((_, index) => `__AE2_IMAGE_TOKEN_${index}__`);
+  let tokenizedHtml = html;
+  matches.forEach((match, index) => {
+    tokenizedHtml = tokenizedHtml.replace(match[0], tokens[index]);
+  });
+  const tokenContextMap = new Map<string, string>();
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(tokenizedHtml, 'text/html');
+    const elements = Array.from(doc.querySelectorAll('*'));
+    elements.forEach(element => {
+      const elementContext = extractElementContext(element);
+      if (!elementContext) return;
+      Array.from(element.attributes).forEach(attr => {
+        const value = attr.value;
+        tokens.forEach(token => {
+          if (value.includes(token) && !tokenContextMap.has(token)) {
+            tokenContextMap.set(token, elementContext);
+          }
+        });
+      });
+    });
+  } catch {
+    // No-op: fallback to global context only.
+  }
 
   // Process sequentially to ensure we track used URLs effectively within this batch
-  for (const match of matches) {
+  for (let i = 0; i < matches.length; i += 1) {
+    const match = matches[i];
     const term = match[1];
+    const token = tokens[i];
+    const localContext = tokenContextMap.get(token);
+    const combinedContext = [localContext, globalContext].filter(Boolean).join(' ');
     // We pass the Set by reference, so it gets updated inside (or we update it here)
     // fetchPexelsImage updates the set inside.
-    const url = await fetchImageByProvider(imageProvider, term, usedUrls, paletteColor);
+    const url = await fetchImageByProvider(imageProvider, term, usedUrls, paletteColor, combinedContext);
 
     // Replace ONLY the first occurrence of this specific match string in the current html state
     // This handles cases where {{IMAGE:cat}} appears twice; the first loop replaces the first one,
@@ -355,7 +494,7 @@ export const generateArtifacts = async (
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
       : finalPrompt;
     const text = await createResponseText(provider, promptWithContext, 1.5, imageData);
-    return await replaceImagePlaceholders(text, [], undefined, imageProvider);
+    return await replaceImagePlaceholders(text, [], undefined, imageProvider, topic);
   } catch (error) {
     console.error("Error generating artifacts:", error);
     throw error;
@@ -388,7 +527,7 @@ export const generateArtifactsPersisted = async (
       options?.imageData,
       { historyId: options?.historyId, name: options?.name }
     );
-    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider);
+    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider, topic);
     return { text, artifact: response.artifact };
   } catch (error) {
     console.error('Error generating artifacts:', error);
@@ -409,7 +548,8 @@ export const updateArtifactsFromContext = async (
       .replace(/{artifact_mode}/g, artifactMode)
       .replace(/{contextHtml}/g, contextHtml);
     const text = await createResponseText(provider, finalPrompt, 0.7, imageData);
-    return await replaceImagePlaceholders(text, [], undefined, imageProvider);
+    const excluded = extractImageUrlsFromHtml(contextHtml);
+    return await replaceImagePlaceholders(text, excluded, undefined, imageProvider, `${topic}\n${contextHtml}`);
   } catch (error) {
     console.error("Error updating artifacts:", error);
     throw error;
@@ -440,7 +580,8 @@ export const updateArtifactsFromContextPersisted = async (
       options?.imageData,
       { historyId: options?.historyId, name: options?.name }
     );
-    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider);
+    const excluded = extractImageUrlsFromHtml(contextHtml);
+    const text = await replaceImagePlaceholders(response.text, excluded, undefined, imageProvider, `${topic}\n${contextHtml}`);
     return { text, artifact: response.artifact };
   } catch (error) {
     console.error('Error updating artifacts:', error);
@@ -468,7 +609,7 @@ export const regenerateArtifact = async (
 
     const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
-    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
+    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider, topic);
   } catch (error) {
     console.error("Error regenerating artifact:", error);
     throw error;
@@ -479,6 +620,7 @@ export const generateNewArtifact = async (
   provider: AiProviderName,
   topic: string,
   cssContext: string,
+  contextHtml: string,
   excludedImages: string[] = [],
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
@@ -490,11 +632,12 @@ export const generateNewArtifact = async (
     const filledPrompt = ADD_ARTIFACT_PROMPT
       .replace('{topic}', topic)
       .replace('{artifact_mode}', artifactMode)
-      .replace('{cssContext}', truncatedCss);
+      .replace('{cssContext}', truncatedCss)
+      .replace('{contextHtml}', contextHtml);
 
     const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
-    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider);
+    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider, topic);
   } catch (error) {
     console.error("Error adding artifact:", error);
     throw error;

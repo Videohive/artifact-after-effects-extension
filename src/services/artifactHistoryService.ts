@@ -8,6 +8,8 @@ export type ArtifactHistoryItem = {
   prompt: string;
   createdAt: string;
   updatedAt: string;
+  status?: 'pending' | 'done' | 'error';
+  errorMessage?: string;
 };
 
 export type ArtifactHistoryDetail = ArtifactHistoryItem & {
@@ -55,6 +57,8 @@ const mapHistoryItem = (item: any): ArtifactHistoryItem => ({
   prompt: item?.prompt || '',
   createdAt: item?.createdAt || '',
   updatedAt: item?.updatedAt || '',
+  status: item?.status || undefined,
+  errorMessage: item?.errorMessage || undefined,
 });
 
 export const listArtifactHistory = async (limit = 50): Promise<ArtifactHistoryItem[]> => {
@@ -156,3 +160,4 @@ export const deleteArtifactHistory = async (id: string): Promise<void> => {
     throw new Error(`History API error (${response.status}): ${errorText}`);
   }
 };
+

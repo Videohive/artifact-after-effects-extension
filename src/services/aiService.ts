@@ -1,4 +1,5 @@
-﻿import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT, UPDATE_FROM_CONTEXT_PROMPT } from "./aiPrompts";
+import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT, UPDATE_FROM_CONTEXT_PROMPT } from "./aiPrompts";
+import { getAuthToken } from "./authService";
 
 export type AiProviderName = 'gemini' | 'openai' | 'claude';
 export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay';
@@ -89,6 +90,42 @@ const createResponseText = async (
   });
 };
 
+const createPersistedResponseText = async (
+  provider: AiProviderName,
+  prompt: string,
+  temperature: number,
+  imageData?: string | null,
+  options?: { historyId?: string | null; name?: string | null }
+): Promise<{ text: string; artifact: any | null }> => {
+  return callWithRetry(async () => {
+    const apiBaseUrl = getApiBaseUrl();
+    if (!apiBaseUrl) throw new Error(getApiError());
+    const token = getAuthToken();
+    if (!token) {
+      throw new Error('Please sign in to save artifacts.');
+    }
+    const response = await fetch(`${apiBaseUrl}/artifact/ai/history`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        provider,
+        prompt,
+        temperature,
+        imageData,
+        historyId: options?.historyId || null,
+        name: options?.name
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`AI API error (${response.status}): ${errorText}`);
+    }
+    const data = await response.json();
+    const artifact = data?.artifact || null;
+    const rawText = artifact?.response || data?.text || data?.response || '';
+    return { text: cleanResponseText(rawText), artifact };
+  });
+};
 const FALLBACK_IMAGE_URL = 'https://placehold.co/1920x1080/1a1a1a/666666?text=Image';
 
 const shouldIncludeSlides = (artifactMode: ArtifactMode) =>
@@ -325,6 +362,39 @@ export const generateArtifacts = async (
   }
 };
 
+export const generateArtifactsPersisted = async (
+  provider: AiProviderName,
+  topic: string,
+  artifactMode: ArtifactMode,
+  imageProvider: ImageProviderName,
+  options?: {
+    contextHtml?: string;
+    imageData?: string | null;
+    historyId?: string | null;
+    name?: string | null;
+  }
+): Promise<{ text: string; artifact: any | null }> => {
+  try {
+    const finalPrompt = BASE_PROMPT
+      .replace(/{topic}/g, topic)
+      .replace(/{artifact_mode}/g, artifactMode);
+    const promptWithContext = options?.contextHtml
+      ? `${finalPrompt}\n\nCONTEXT_HTML:\n${options.contextHtml}`
+      : finalPrompt;
+    const response = await createPersistedResponseText(
+      provider,
+      promptWithContext,
+      1.5,
+      options?.imageData,
+      { historyId: options?.historyId, name: options?.name }
+    );
+    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider);
+    return { text, artifact: response.artifact };
+  } catch (error) {
+    console.error('Error generating artifacts:', error);
+    throw error;
+  }
+};
 export const updateArtifactsFromContext = async (
   provider: AiProviderName,
   topic: string,
@@ -346,6 +416,37 @@ export const updateArtifactsFromContext = async (
   }
 };
 
+export const updateArtifactsFromContextPersisted = async (
+  provider: AiProviderName,
+  topic: string,
+  artifactMode: ArtifactMode,
+  contextHtml: string,
+  imageProvider: ImageProviderName,
+  options?: {
+    imageData?: string | null;
+    historyId?: string | null;
+    name?: string | null;
+  }
+): Promise<{ text: string; artifact: any | null }> => {
+  try {
+    const finalPrompt = UPDATE_FROM_CONTEXT_PROMPT
+      .replace(/{topic}/g, topic)
+      .replace(/{artifact_mode}/g, artifactMode)
+      .replace(/{contextHtml}/g, contextHtml);
+    const response = await createPersistedResponseText(
+      provider,
+      finalPrompt,
+      0.7,
+      options?.imageData,
+      { historyId: options?.historyId, name: options?.name }
+    );
+    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider);
+    return { text, artifact: response.artifact };
+  } catch (error) {
+    console.error('Error updating artifacts:', error);
+    throw error;
+  }
+};
 export const regenerateArtifact = async (
   provider: AiProviderName,
   topic: string,
@@ -399,6 +500,10 @@ export const generateNewArtifact = async (
     throw error;
   }
 };
+
+
+
+
 
 
 

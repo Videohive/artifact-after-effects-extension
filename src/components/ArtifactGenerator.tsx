@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   generateArtifacts,
+  generateArtifactsPersisted,
   regenerateArtifact,
   generateNewArtifact,
   updateArtifactsFromContext,
+  updateArtifactsFromContextPersisted,
   AiProviderName,
   ImageProviderName,
   ArtifactMode
@@ -28,6 +30,8 @@ import {
 import { getAuthToken } from '../services/authService';
 
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
+
+const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
 
 const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: '1080p', label: 'Full HD (1920x1080)', width: 1920, height: 1080 },
@@ -762,8 +766,8 @@ const normalizeArtifactClassOrder = (
     cls =>
       cls !== 'slide' &&
       cls !== 'artifact' &&
-      !/^slide-\d+$/.test(cls) &&
-      !/^artifact-\d+$/.test(cls)
+      !/^slide-d+$/.test(cls) &&
+      !/^artifact-d+$/.test(cls)
   );
   const hasSlideClass = includeSlideClass || root.classList.contains('slide');
   const classes = [
@@ -908,7 +912,7 @@ const stripRuntimeHead = (headHtml: string) => {
     const isRuntimeScript =
       node.tagName.toLowerCase() === 'script' &&
       (marker === 'true' ||
-        text.includes('window.addEventListener(\'error\'') ||
+        text.includes("window.addEventListener('error'") ||
         text.includes('data:image/svg+xml'));
     if (isRuntimeStyle || isRuntimeScript) {
       node.parentElement?.removeChild(node);
@@ -1010,7 +1014,10 @@ const buildRootBlock = (rootContent: string | null, updates: Record<string, stri
     if (used.has(name)) return;
     entries.push(`  --${name}: ${value};`);
   });
-  return `:root {\n${entries.join('\n')}\n}\n`;
+  return `:root {
+${entries.join('\n')}
+}
+`;
 };
 
 const updateRootVariablesInHead = (headHtml: string, updates: Record<string, string>) => {
@@ -1030,7 +1037,8 @@ const updateRootVariablesInHead = (headHtml: string, updates: Record<string, str
   const styleText = targetStyle.textContent || '';
   const rootMatch = styleText.match(/:root\s*{([\s\S]*?)}/i);
   if (!rootMatch) {
-    targetStyle.textContent = `${styleText}\n${buildRootBlock(null, updates)}`;
+    targetStyle.textContent = `${styleText}
+${buildRootBlock(null, updates)}`;
     return doc.head.innerHTML;
   }
   const updatedRoot = buildRootBlock(rootMatch[1], updates).trim();
@@ -1056,7 +1064,7 @@ const normalizeColorToHex = (value?: string | null) => {
   const hex = normalizeHex(value);
   if (hex) return hex;
   const rgbMatch = value.match(
-    /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*[\d.]+)?\s*\)/i
+    /rgba?(s*(d{1,3})s*,s*(d{1,3})s*,s*(d{1,3})(?:s*,s*[d.]+)?s*)/i
   );
   if (!rgbMatch) return null;
   const clamp = (n: number) => Math.min(255, Math.max(0, n));
@@ -1125,6 +1133,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [previewScale, setPreviewScale] = useState(1);
   const [previewHtml, setPreviewHtml] = useState('');
   const [historyItems, setHistoryItems] = useState<ArtifactHistoryItem[]>([]);
+  const [historyPolling, setHistoryPolling] = useState(false);
+  const historyPollTimerRef = useRef<number | null>(null);
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -1201,6 +1211,74 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     hashString(
       `${snapshot.headContent}::${snapshot.artifacts.join('')}::${snapshot.currentArtifactIndex}::${snapshot.artifactMode}`
     );
+
+  const stopHistoryPolling = () => {
+    if (historyPollTimerRef.current) {
+      window.clearTimeout(historyPollTimerRef.current);
+      historyPollTimerRef.current = null;
+    }
+    setHistoryPolling(false);
+  };
+
+  const scheduleHistoryPolling = (historyId: string) => {
+    if (!historyId || !getAuthToken()) return;
+    if (historyPollTimerRef.current) {
+      window.clearTimeout(historyPollTimerRef.current);
+    }
+    setHistoryPolling(true);
+    const poll = async () => {
+      try {
+        const detail = await getArtifactHistory(historyId);
+        if (detail?.status === 'done' && detail?.response) {
+          stopHistoryPolling();
+          historySkipCountRef.current = 1;
+          lastSavedHashRef.current = hashString(detail.response);
+          parseAndSetHtml(detail.response, true);
+          setHistoryItems(prev =>
+            prev.map(item =>
+              item.id === detail.id
+                ? {
+                    ...item,
+                    status: detail.status,
+                    errorMessage: detail.errorMessage,
+                    updatedAt: detail.updatedAt,
+                    name: detail.name || item.name,
+                    provider: detail.provider
+                  }
+                : item
+            )
+          );
+          return;
+        }
+        if (detail?.status === 'error') {
+          stopHistoryPolling();
+          setHistoryItems(prev =>
+            prev.map(item =>
+              item.id === detail.id
+                ? {
+                    ...item,
+                    status: detail.status,
+                    errorMessage: detail.errorMessage,
+                    updatedAt: detail.updatedAt
+                  }
+                : item
+            )
+          );
+          return;
+        }
+      } catch (error) {
+        stopHistoryPolling();
+        return;
+      }
+      historyPollTimerRef.current = window.setTimeout(poll, 1200);
+    };
+    historyPollTimerRef.current = window.setTimeout(poll, 1200);
+  };
+  useEffect(() => {
+    return () => {
+      stopHistoryPolling();
+    };
+  }, []);
 
   const applyHistorySnapshot = (snapshot: HistorySnapshot) => {
     applyingHistoryRef.current = true;
@@ -1475,7 +1553,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const elementsWithStyle = doc.querySelectorAll('[style*="background-image"]');
     const bgImages = Array.from(elementsWithStyle).map(el => {
        const style = el.getAttribute('style');
-       const match = style?.match(/url\(['"]?(.*?)['"]?\)/);
+       const match = style?.match(/url(['"]?(.*?)['"]?)/);
        return match ? match[1] : null;
     }).filter(Boolean) as string[];
     return [...new Set([...imgs, ...bgImages])];
@@ -1560,17 +1638,39 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   const handleHistorySelect = async (id: string) => {
     if (!id || id === currentHistoryId) return;
+    stopHistoryPolling();
     setHistoryError(null);
     try {
       const detail = await getArtifactHistory(id);
-      if (!detail?.response) return;
+      if (!detail?.response) {
+        setCurrentHistoryId(id);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(LAST_ARTIFACT_KEY, id);
+        }
+        if (detail?.status === 'pending') {
+          scheduleHistoryPolling(id);
+        }
+        setHistoryItems(prev =>
+          prev.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  status: detail.status,
+                  errorMessage: detail.errorMessage,
+                  updatedAt: detail.updatedAt
+                }
+              : item
+          )
+        );
+        return;
+      }
       historySkipCountRef.current = 3;
       setCurrentHistoryId(id);
       historyRef.current = { past: [], future: [] };
       historyLastHashRef.current = null;
       setArtifactIdInUrl(id);
       lastSavedHashRef.current = hashString(detail.response);
-        parseAndSetHtml(detail.response);
+      parseAndSetHtml(detail.response);
       setProvider(detail.provider);
     } catch (error: any) {
       console.error(error);
@@ -1595,6 +1695,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   };
 
   const handleNewChat = () => {
+    stopHistoryPolling();
     suppressAutoSelectRef.current = true;
     setCurrentHistoryId(null);
     lastSavedHashRef.current = null;
@@ -1636,27 +1737,65 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
     setErrorMsg(null);
     try {
+      const authToken = getAuthToken();
       const contextHtml =
         currentHistoryId && artifacts.length > 0
           ? buildPersistedHtml(headContent, artifacts)
           : undefined;
-      const generatedHtml = contextHtml
-        ? await updateArtifactsFromContext(
+      let generatedHtml = '';
+      let persistedArtifact: any | null = null;
+      const persistedName = (projectTitle || promptText).trim() || undefined;
+
+      if (authToken) {
+        if (contextHtml) {
+          const result = await updateArtifactsFromContextPersisted(
             provider,
             promptText,
             artifactMode,
             contextHtml,
             imageProvider,
-            imageData
-          )
-        : await generateArtifacts(
+            {
+              imageData,
+              historyId: currentHistoryId,
+              name: persistedName
+            }
+          );
+          generatedHtml = result.text;
+          persistedArtifact = result.artifact;
+        } else {
+          const result = await generateArtifactsPersisted(
             provider,
             promptText,
             requestedMode,
             imageProvider,
-            undefined,
-            imageData
+            {
+              imageData,
+              historyId: currentHistoryId,
+              name: persistedName
+            }
           );
+          generatedHtml = result.text;
+          persistedArtifact = result.artifact;
+        }
+      } else {
+        generatedHtml = contextHtml
+          ? await updateArtifactsFromContext(
+              provider,
+              promptText,
+              artifactMode,
+              contextHtml,
+              imageProvider,
+              imageData
+            )
+          : await generateArtifacts(
+              provider,
+              promptText,
+              requestedMode,
+              imageProvider,
+              undefined,
+              imageData
+            );
+      }
       if (requestId !== generateRequestIdRef.current) return;
       historyImmediateNextRef.current = true;
       const parsed = parseAndSetHtml(generatedHtml, Boolean(contextHtml));
@@ -1664,8 +1803,17 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         const { title } = parseHeadMetadata(parsed.headHtml);
         const name = (title || projectTitle || promptText).trim() || 'Untitled Project';
         const responseHtml = buildPersistedHtml(parsed.headHtml, parsed.artifacts);
+        const persistedId = persistedArtifact?._id || persistedArtifact?.id;
+        const resolvedId = persistedId || currentHistoryId;
 
-        if (!currentHistoryId) {
+        if (persistedArtifact?.status === 'pending') {
+          const pollTarget = resolvedId || persistedArtifact?._id || persistedArtifact?.id;
+          if (pollTarget) {
+            scheduleHistoryPolling(pollTarget);
+          }
+        }
+
+        if (!resolvedId) {
           const created = await createArtifactHistory({
             name,
             provider,
@@ -1674,33 +1822,36 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           });
           historySkipCountRef.current = 1;
           setCurrentHistoryId(created.id);
-          setArtifactIdInUrl(created.id);
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(LAST_ARTIFACT_KEY, created.id);
+          }
           lastSavedHashRef.current = hashString(responseHtml);
           setHistoryItems(prev => {
             const next = [created, ...prev.filter(item => item.id !== created.id)];
             return next;
           });
         } else {
-          const updated = await updateArtifactHistory(currentHistoryId, {
+          if (!currentHistoryId) {
+            setCurrentHistoryId(resolvedId);
+            if (typeof window !== 'undefined') {
+              window.localStorage.setItem(LAST_ARTIFACT_KEY, resolvedId);
+            }
+          }
+          const updated = await updateArtifactHistory(resolvedId, {
             name,
             provider,
             prompt: promptText,
             response: responseHtml
           });
           lastSavedHashRef.current = hashString(responseHtml);
-          setHistoryItems(prev =>
-            prev.map(item =>
-              item.id === updated.id
-                ? {
-                    ...item,
-                    name: updated.name,
-                    prompt: updated.prompt,
-                    updatedAt: updated.updatedAt,
-                    provider: updated.provider
-                  }
-                : item
-            )
-          );
+          setHistoryItems(prev => {
+            const nextItem = {
+              ...updated,
+              id: updated.id
+            };
+            const filtered = prev.filter(item => item.id !== updated.id);
+            return [nextItem, ...filtered];
+          });
         }
       }
     } catch (error: any) {
@@ -1763,7 +1914,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         historyImmediateNextRef.current = true;
         setArtifacts(reindexArtifactClasses(nextArtifacts, includeSlideClass));
         await saveHistorySnapshot(reindexArtifactClasses(nextArtifacts, includeSlideClass));
-        return;
+        return ;
       }
 
       const excluded = getUsedImageUrls();
@@ -1895,7 +2046,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   };
 
   const getArtifactHtmlByIndex = (index: number) => {
-    if (artifacts.length === 0) return '';
+    if (artifacts.length === 0) return'';
     return buildArtifactHtml(getHeadHtml(), artifacts[index]);
   };
 
@@ -1904,14 +2055,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       const iframe = exportIframeRef.current;
       if (!iframe) {
         reject(new Error('Missing export iframe.'));
-        return;
+        return ;
       }
 
       const handleLoad = () => {
         iframe.removeEventListener('load', handleLoad);
         if (!iframe.contentWindow) {
           reject(new Error('Missing iframe contentWindow.'));
-          return;
+          return ;
         }
 
         requestAnimationFrame(() => {
@@ -2049,7 +2200,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (prevViewModeRef.current !== 'code') {
       setCodeDraft(getAllArtifactsHtml());
       setIsCodeDirty(false);
-      return;
+      return ;
     }
     if (!isCodeDirty) {
       setCodeDraft(getAllArtifactsHtml());
@@ -2060,11 +2211,11 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (viewMode !== 'preview') return;
     if (artifacts.length === 0) {
       setPreviewHtml('');
-      return;
+      return ;
     }
     if (suppressPreviewReloadRef.current) {
       suppressPreviewReloadRef.current = false;
-      return;
+      return ;
     }
     const html = buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex);
     setPreviewHtml(html);
@@ -2090,11 +2241,11 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       if (!payload || payload.source !== 'ae2-preview-editor') return;
       if (payload.type === 'undo') {
         performUndo();
-        return;
+        return ;
       }
       if (payload.type === 'redo') {
         performRedo();
-        return;
+        return ;
       }
       if (payload.type !== 'update') return;
       if (!payload.html || artifacts.length === 0) return;
@@ -2407,3 +2558,26 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     </div>
   );
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

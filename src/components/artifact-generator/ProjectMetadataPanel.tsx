@@ -112,9 +112,13 @@ export const ProjectMetadataPanel: React.FC<ProjectMetadataPanelProps> = ({
           )}
         </div>
         <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Placeholders</div>
-        <div className="mt-1 text-sm text-neutral-300">
-          {mediaPlaceholderCount} Media placeholder, {textPlaceholderCount} Text placeholder
-        </div>
+        {mediaPlaceholderCount > 0 || textPlaceholderCount > 0 ? (
+          <div className="mt-1 text-sm text-neutral-300">
+            {mediaPlaceholderCount > 0 ? `${mediaPlaceholderCount} Media placeholder` : null}
+            {mediaPlaceholderCount > 0 && textPlaceholderCount > 0 ? ', ' : null}
+            {textPlaceholderCount > 0 ? `${textPlaceholderCount} Text placeholder` : null}
+          </div>
+        ) : null}
         <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Tags</div>
         <div className="mt-1">
           {editingTags ? (

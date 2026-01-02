@@ -121,6 +121,10 @@ const PREVIEW_EDITOR_SCRIPT = `
     var historyIndex = -1;
     var restoring = false;
     var HISTORY_LIMIT = 50;
+    var isTextEditing = false;
+    var editingEl = null;
+    var editingOriginalHtml = '';
+    var editingBlurHandler = null;
 
     function isUi(el) {
       return !!(el && el.getAttribute && el.getAttribute('data-ae2-ui') === 'true');
@@ -151,6 +155,80 @@ const PREVIEW_EDITOR_SCRIPT = `
         return el instanceof HTMLElement;
       }
       return !!el.style;
+    }
+
+    function isEditableTextElement(el) {
+      if (!el || !isHtmlElement(el)) return false;
+      if (isUi(el) || isSvgElement(el)) return false;
+      var tag = el.tagName ? el.tagName.toLowerCase() : '';
+      var allowed = [
+        'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'li', 'figcaption', 'label', 'button', 'a',
+        'strong', 'em', 'small', 'blockquote', 'pre', 'code',
+        'td', 'th'
+      ];
+      if (allowed.indexOf(tag) !== -1) return true;
+      return el.children.length === 0 && !!(el.textContent || '').trim();
+    }
+
+    function findEditableTextElement(target) {
+      var node = target;
+      while (node && node !== body && node !== doc.documentElement) {
+        if (isEditableTextElement(node)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    }
+
+    function endTextEdit(commit) {
+      if (!isTextEditing || !editingEl) return;
+      var el = editingEl;
+      var original = editingOriginalHtml;
+      if (editingBlurHandler) {
+        el.removeEventListener('blur', editingBlurHandler, true);
+      }
+      el.removeAttribute('contenteditable');
+      el.removeAttribute('data-ae2-editing');
+      el.style.outline = '';
+      var nextHtml = el.innerHTML;
+      var changed = nextHtml !== original;
+      editingEl = null;
+      editingOriginalHtml = '';
+      editingBlurHandler = null;
+      isTextEditing = false;
+      if (changed && commit) {
+        postUpdate();
+      }
+    }
+
+    function startTextEdit(target) {
+      if (!target) return;
+      if (isTextEditing) {
+        if (editingEl === target) return;
+        endTextEdit(true);
+      }
+      isTextEditing = true;
+      editingEl = target;
+      editingOriginalHtml = target.innerHTML;
+      clearSelection();
+      setOverlayVisible(false);
+      target.setAttribute('contenteditable', 'true');
+      target.setAttribute('data-ae2-editing', 'true');
+      target.style.outline = '1px solid rgba(76, 201, 255, 0.6)';
+      editingBlurHandler = function () {
+        endTextEdit(true);
+      };
+      target.addEventListener('blur', editingBlurHandler, true);
+      try {
+        var range = doc.createRange();
+        range.selectNodeContents(target);
+        var selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      } catch (err) {}
+      target.focus();
     }
 
     function svgHasSelectableChild(svgEl) {
@@ -470,6 +548,10 @@ const PREVIEW_EDITOR_SCRIPT = `
 
     function onMouseDown(e) {
       var target = e.target;
+      if (isTextEditing) {
+        if (editingEl && editingEl.contains(target)) return;
+        endTextEdit(true);
+      }
       if (isUi(target)) return;
       var selectable = getSelectable(target);
       var svgRoot = getSvgRoot(target);
@@ -507,6 +589,20 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function onKeyDown(e) {
+      if (isTextEditing) {
+        if (e.key === 'Escape') {
+          if (editingEl) {
+            editingEl.innerHTML = editingOriginalHtml;
+          }
+          endTextEdit(false);
+          e.preventDefault();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          endTextEdit(true);
+          e.preventDefault();
+        }
+        return;
+      }
       var isUndo =
         (e.ctrlKey || e.metaKey) &&
         !e.shiftKey &&
@@ -661,12 +757,21 @@ const PREVIEW_EDITOR_SCRIPT = `
       };
     }
 
+    function onDoubleClick(e) {
+      if (isUi(e.target)) return;
+      var editable = findEditableTextElement(e.target);
+      if (!editable) return;
+      startTextEdit(editable);
+      e.preventDefault();
+    }
+
     markTargets();
     ensureUi();
     setOverlayVisible(false);
     pushHistory(getRootHtml(getRoot()));
 
     doc.addEventListener('mousedown', onMouseDown, true);
+    doc.addEventListener('dblclick', onDoubleClick, true);
     doc.addEventListener('mousemove', onMouseMove, true);
     doc.addEventListener('mouseup', finishDrag, true);
     window.addEventListener('resize', updateOverlay);

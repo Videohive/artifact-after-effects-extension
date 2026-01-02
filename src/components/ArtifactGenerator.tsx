@@ -15,7 +15,6 @@ import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtracto
 import { ArtifactPreview } from './artifact-generator/ArtifactPreview';
 import { ArtifactToolbar } from './artifact-generator/ArtifactToolbar';
 import { ArtifactHistoryPanel } from './artifact-generator/ArtifactHistoryPanel';
-import { EmptyState } from './artifact-generator/EmptyState';
 import { ExportControls } from './artifact-generator/ExportControls';
 import { GeneratorInput } from './artifact-generator/GeneratorInput';
 import { ProjectMetadataPanel } from './artifact-generator/ProjectMetadataPanel';
@@ -2795,32 +2794,57 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               </div>
             </div>
           ) : (
-            <EmptyState />
-          )}
-          <div className={`flex justify-center px-4 pb-2${isEmpty ? ' mt-auto' : ''}`}>
-            <div style={{ width: isEmpty ? '100%' : previewSize.width, maxWidth: '100%' }}>
-              <GeneratorInput
-                errorMsg={errorMsg}
-                provider={provider}
-                onProviderChange={setProvider}
-                imageProvider={imageProvider}
-                imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
-                onImageProviderChange={setImageProvider}
-                mediaKind={mediaKind}
-                mediaKindOptions={MEDIA_KIND_OPTIONS}
-                onMediaKindChange={setMediaKind}
-                topic={topic}
-                onTopicChange={setTopic}
-                onKeyDown={handleKeyDown}
-                onGenerate={handleGenerate}
-                loading={loading}
-                isEmpty={isEmpty}
-                attachedImage={chatImage}
-                onImageAttach={setChatImage}
-                onImageClear={() => setChatImage(null)}
-              />
+            <div className="flex flex-1 items-center justify-center px-4 pb-2">
+              <div style={{ width: '100%', maxWidth: 720 }}>
+                <GeneratorInput
+                  errorMsg={errorMsg}
+                  provider={provider}
+                  onProviderChange={setProvider}
+                  imageProvider={imageProvider}
+                  imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
+                  onImageProviderChange={setImageProvider}
+                  mediaKind={mediaKind}
+                  mediaKindOptions={MEDIA_KIND_OPTIONS}
+                  onMediaKindChange={setMediaKind}
+                  topic={topic}
+                  onTopicChange={setTopic}
+                  onKeyDown={handleKeyDown}
+                  onGenerate={handleGenerate}
+                  loading={loading}
+                  isEmpty={isEmpty}
+                  attachedImage={chatImage}
+                  onImageAttach={setChatImage}
+                  onImageClear={() => setChatImage(null)}
+                />
+              </div>
             </div>
-          </div>
+          )}
+          {artifacts.length > 0 ? (
+            <div className="flex justify-center px-4 pb-2">
+              <div style={{ width: previewSize.width, maxWidth: '100%' }}>
+                <GeneratorInput
+                  errorMsg={errorMsg}
+                  provider={provider}
+                  onProviderChange={setProvider}
+                  imageProvider={imageProvider}
+                  imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
+                  onImageProviderChange={setImageProvider}
+                  mediaKind={mediaKind}
+                  mediaKindOptions={MEDIA_KIND_OPTIONS}
+                  onMediaKindChange={setMediaKind}
+                  topic={topic}
+                  onTopicChange={setTopic}
+                  onKeyDown={handleKeyDown}
+                  onGenerate={handleGenerate}
+                  loading={loading}
+                  isEmpty={isEmpty}
+                  attachedImage={chatImage}
+                  onImageAttach={setChatImage}
+                  onImageClear={() => setChatImage(null)}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 

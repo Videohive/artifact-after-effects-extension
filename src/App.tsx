@@ -74,7 +74,7 @@ export default function App() {
         >
           <Menu className="w-5 h-5" />
         </button>
-        <div className="w-full px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="w-full pl-10 pr-3 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight">Artifact</h1>
           </div>

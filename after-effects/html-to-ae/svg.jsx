@@ -448,7 +448,8 @@
   function addSvgCircle(parentContents, attrs, svgData, scaleData) {
     var cx = parseSvgLength(attrs.cx, svgData.width, 0);
     var cy = parseSvgLength(attrs.cy, svgData.height, 0);
-    var r = parseSvgLength(attrs.r, Math.min(svgData.width, svgData.height), 0);
+    var refLen = getSvgNormalizedLength(svgData.width, svgData.height);
+    var r = parseSvgLength(attrs.r, refLen, 0);
     if (r <= 0) return;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
@@ -1090,6 +1091,13 @@
     }
     var n = parseFloat(s);
     return isNaN(n) ? fallback : n;
+  }
+
+  function getSvgNormalizedLength(width, height) {
+    var w = parseNumber(width, 0);
+    var h = parseNumber(height, 0);
+    if (w <= 0 || h <= 0) return 0;
+    return Math.sqrt((w * w + h * h) / 2);
   }
 
   function applySvgPaint(grpContents, attrs, defaultFillOn) {

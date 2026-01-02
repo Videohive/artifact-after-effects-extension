@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   generateArtifacts,
   generateArtifactsPersisted,
@@ -8,6 +8,7 @@ import {
   updateArtifactsFromContextPersisted,
   AiProviderName,
   ImageProviderName,
+  MediaKind,
   ArtifactMode
 } from '../services/aiService';
 import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtractor/index';
@@ -18,7 +19,7 @@ import { EmptyState } from './artifact-generator/EmptyState';
 import { ExportControls } from './artifact-generator/ExportControls';
 import { GeneratorInput } from './artifact-generator/GeneratorInput';
 import { ProjectMetadataPanel } from './artifact-generator/ProjectMetadataPanel';
-import { ImageProviderOption, ResolutionOption, ViewMode } from './artifact-generator/types';
+import { ImageProviderOption, MediaKindOption, ResolutionOption, ViewMode } from './artifact-generator/types';
 import {
   listArtifactHistory,
   getArtifactHistory,
@@ -46,8 +47,23 @@ const IMAGE_PROVIDER_OPTIONS: ImageProviderOption[] = [
   { id: 'unsplash', label: 'Unsplash' },
   { id: 'pixabay', label: 'Pixabay' }
 ];
+const MEDIA_KIND_OPTIONS: MediaKindOption[] = [
+  { id: 'random', label: 'Random' },
+  { id: 'image', label: 'Image' },
+  { id: 'video', label: 'Video' }
+];
 const PREVIEW_BASE_WIDTH = 1280;
 const PREVIEW_BASE_HEIGHT = 720;
+const GRID_DIMENSION = 3;
+const GRID_CELL_COUNT = GRID_DIMENSION * GRID_DIMENSION;
+const GRID_SCALE = 1 / GRID_DIMENSION;
+const TEXT_PLACEHOLDER_TAGS = [
+  'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'li', 'figcaption', 'label', 'button', 'a',
+  'strong', 'em', 'small', 'blockquote', 'pre', 'code',
+  'td', 'th'
+];
+const VIDEO_EXT_RE = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i;
 const PREVIEW_EDITOR_STYLE = `
   :root {
     --ae2-edit-outline: #4cc9ff;
@@ -1181,6 +1197,62 @@ const normalizeColorToHex = (value?: string | null) => {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 };
 
+const countPlaceholders = (artifactHtmls: string[]) => {
+  if (typeof DOMParser === 'undefined') {
+    return { media: 0, text: 0 };
+  }
+  const parser = new DOMParser();
+  const textSelector = TEXT_PLACEHOLDER_TAGS.join(',');
+  let mediaCount = 0;
+  let textCount = 0;
+  artifactHtmls.forEach(html => {
+    const doc = parser.parseFromString(`<body>${html}</body>`, 'text/html');
+    const root = doc.body;
+    if (!root) return;
+    mediaCount += root.querySelectorAll('img, video').length;
+    Array.from(root.querySelectorAll(textSelector)).forEach(node => {
+      if ((node.textContent || '').trim()) {
+        textCount += 1;
+      }
+    });
+    Array.from(root.querySelectorAll('[style]')).forEach(node => {
+      if (!(node instanceof HTMLElement)) return;
+      const bg = node.style.backgroundImage || '';
+      if (bg && bg !== 'none' && /url\(/i.test(bg)) {
+        mediaCount += 1;
+      }
+    });
+  });
+  return { media: mediaCount, text: textCount };
+};
+
+const convertVideoImages = (doc: Document) => {
+  const images = Array.from(doc.querySelectorAll('img'));
+  images.forEach(img => {
+    const src = img.getAttribute('src');
+    if (!src || !VIDEO_EXT_RE.test(src)) return;
+    const video = doc.createElement('video');
+    Array.from(img.attributes).forEach(attr => {
+      const name = attr.name.toLowerCase();
+      if (name === 'src' || name === 'srcset') return;
+      video.setAttribute(attr.name, attr.value);
+    });
+    if (img.getAttribute('alt') && !video.getAttribute('aria-label')) {
+      video.setAttribute('aria-label', img.getAttribute('alt') || '');
+    }
+    video.setAttribute('src', src);
+    video.setAttribute('autoplay', 'true');
+    video.setAttribute('loop', 'true');
+    video.setAttribute('muted', 'true');
+    video.setAttribute('playsinline', 'true');
+    video.style.width = img.style.width || '100%';
+    video.style.height = img.style.height || '100%';
+    video.style.objectFit = img.style.objectFit || 'cover';
+    video.style.display = img.style.display || 'block';
+    img.replaceWith(video);
+  });
+};
+
 
 type HistorySnapshot = {
   headContent: string;
@@ -1216,6 +1288,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [imageProvider, setImageProvider] = useState<ImageProviderName>('random');
+  const [mediaKind, setMediaKind] = useState<MediaKind>('random');
   const [artifactMode, setArtifactMode] = useState<ArtifactMode>('slides');
   const includeSlideClass = artifactMode === 'slides' || artifactMode === 'mixed';
   const [codeDraft, setCodeDraft] = useState('');
@@ -1563,6 +1636,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const doc = parser.parseFromString(html, 'text/html');
     
     sanitizeLayout(doc);
+    convertVideoImages(doc);
 
     const sections = collectArtifactElements(doc);
     const { artifactMode: headMode } = parseHeadMetadata(doc.head.innerHTML);
@@ -1860,6 +1934,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
             artifactMode,
             contextHtml,
             imageProvider,
+            mediaKind,
             {
               imageData,
               historyId: currentHistoryId,
@@ -1874,6 +1949,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
             promptText,
             requestedMode,
             imageProvider,
+            mediaKind,
             {
               imageData,
               historyId: currentHistoryId,
@@ -1891,6 +1967,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               artifactMode,
               contextHtml,
               imageProvider,
+              mediaKind,
               imageData
             )
           : await generateArtifacts(
@@ -1898,6 +1975,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               promptText,
               requestedMode,
               imageProvider,
+              mediaKind,
               undefined,
               imageData
             );
@@ -1990,7 +2068,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       cssContext,
       excludedImages,
       artifactMode,
-      imageProvider
+      imageProvider,
+      mediaKind
     );
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = newArtifactHtml;
@@ -2060,7 +2139,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         contextHtml,
         excluded,
         artifactMode,
-        imageProvider
+        imageProvider,
+        mediaKind
       );
       if (requestId !== addArtifactRequestIdRef.current) return;
       
@@ -2148,6 +2228,85 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         <body data-ae2-artifact-index="${index}">
           ${artifactHtml}
           <script>${PREVIEW_EDITOR_SCRIPT}</script>
+        </body>
+      </html>
+    `;
+  };
+
+  const buildGridHtml = (headHtml: string, artifactHtmls: string[]) => {
+    const cells = Array.from({ length: GRID_CELL_COUNT }, (_, index) => {
+      const artifactHtml = artifactHtmls[index];
+      if (!artifactHtml) {
+        return '<div class="ae2-grid-cell ae2-grid-empty"></div>';
+      }
+      const artifactDoc = buildArtifactHtml(headHtml, artifactHtml);
+      const artifactSrc = `data:text/html;charset=utf-8,${encodeURIComponent(artifactDoc)}`;
+      return `
+        <div class="ae2-grid-cell">
+          <div class="ae2-grid-scale">
+            <iframe
+              class="ae2-grid-frame"
+              src="${artifactSrc}"
+              title="Artifact Grid Item"
+              sandbox="allow-same-origin"
+            ></iframe>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          ${headHtml}
+          <style>
+            html, body {
+              width: 100%;
+              height: 100%;
+              margin: 0;
+              padding: 0;
+              background: #0b0f14;
+            }
+            .ae2-grid {
+              width: 100%;
+              height: 100%;
+              display: grid;
+              gap: 3px;
+              grid-template-columns: repeat(${GRID_DIMENSION}, 1fr);
+              grid-template-rows: repeat(${GRID_DIMENSION}, 1fr);
+            }
+            .ae2-grid-cell {
+              position: relative;
+              overflow: hidden;
+              box-sizing: border-box;
+              border: 1px solid rgba(255, 255, 255, 0.04);
+            }
+            .ae2-grid-empty {
+              background: #0b0f14;
+            }
+            .ae2-grid-scale {
+              position: absolute;
+              left: 50%;
+              top: 50%;
+              width: ${PREVIEW_BASE_WIDTH}px;
+              height: ${PREVIEW_BASE_HEIGHT}px;
+              transform: translate(-50%, -50%) scale(${GRID_SCALE});
+              transform-origin: center;
+            }
+            .ae2-grid-frame {
+              width: 100%;
+              height: 100%;
+              border: 0;
+              display: block;
+              pointer-events: none;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="ae2-grid">
+            ${cells}
+          </div>
         </body>
       </html>
     `;
@@ -2284,6 +2443,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (viewMode === 'preview' && artifacts.length > 0) {
       return previewHtml || buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex);
     }
+    if (viewMode === 'grid') {
+      return buildGridHtml(getHeadHtml(), artifacts);
+    }
     return previewHtml || getArtifactHtmlByIndex(currentArtifactIndex);
   };
 
@@ -2330,7 +2492,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   }, [viewMode, headContent, artifacts, currentArtifactIndex, animationsEnabled]);
 
   useEffect(() => {
-    if (prevViewModeRef.current === 'code' && viewMode === 'preview') {
+    if (prevViewModeRef.current === 'code' && viewMode !== 'code') {
       if (codeDraft.trim()) {
         parseAndSetHtml(codeDraft, true);
       }
@@ -2377,6 +2539,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   useEffect(() => {
     if (!historyOverlayOpen) return;
+    if (!shouldAutoCloseOverlay()) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
@@ -2503,18 +2666,26 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   };
 
   const isEmpty = artifacts.length === 0;
+  const placeholderCounts = useMemo(() => countPlaceholders(artifacts), [artifacts]);
+  const shouldAutoCloseOverlay = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(max-width: 1023px)').matches;
+  const isOverlayModal = shouldAutoCloseOverlay();
 
   return (
     <div className={`flex flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
       {historyOverlayOpen ? (
-        <div className="fixed inset-0 z-[60] xl:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-transparent"
-            onClick={onHistoryOverlayClose}
-            aria-label="Close artifacts overlay"
-          />
-          <div className="absolute left-0 top-0 h-full w-[85vw] max-w-xs sm:max-w-sm p-4">
+        <div className={`fixed inset-0 z-[60]${isOverlayModal ? '' : ' pointer-events-none'}`}>
+          {isOverlayModal ? (
+            <button
+              type="button"
+              className="absolute inset-0 bg-transparent"
+              onClick={onHistoryOverlayClose}
+              aria-label="Close artifacts overlay"
+            />
+          ) : null}
+          <div className="absolute left-0 top-0 h-full w-[85vw] max-w-xs sm:max-w-sm p-0 pointer-events-auto">
             <ArtifactHistoryPanel
               items={historyItems}
               loading={historyLoading}
@@ -2522,13 +2693,17 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               error={historyError}
               onSelect={(id) => {
                 handleHistorySelect(id);
-                onHistoryOverlayClose?.();
+                if (shouldAutoCloseOverlay()) {
+                  onHistoryOverlayClose?.();
+                }
               }}
               onDelete={handleHistoryDelete}
               onRefresh={loadHistory}
               onNewChat={() => {
                 handleNewChat();
-                onHistoryOverlayClose?.();
+                if (shouldAutoCloseOverlay()) {
+                  onHistoryOverlayClose?.();
+                }
               }}
               onClose={onHistoryOverlayClose}
               variant="overlay"
@@ -2536,19 +2711,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           </div>
         </div>
       ) : null}
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch">
-        <div className="hidden xl:block">
-          <ArtifactHistoryPanel
-            items={historyItems}
-            loading={historyLoading}
-            selectedId={currentHistoryId}
-            error={historyError}
-            onSelect={handleHistorySelect}
-            onDelete={handleHistoryDelete}
-            onRefresh={loadHistory}
-            onNewChat={handleNewChat}
-          />
-        </div>
+      <div className="flex flex-col gap-4">
         <div className={`flex min-w-0 flex-1 flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
           {artifacts.length > 0 ? (
             <div className="flex flex-col gap-4">
@@ -2557,6 +2720,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                 projectTitle={projectTitle}
                 projectTags={projectTags}
                 projectDescription={projectDescription}
+                mediaPlaceholderCount={placeholderCounts.media}
+                textPlaceholderCount={placeholderCounts.text}
                 editingTitle={editingTitle}
                 editingTags={editingTags}
                 editingDescription={editingDescription}
@@ -2641,6 +2806,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                 imageProvider={imageProvider}
                 imageProviderOptions={IMAGE_PROVIDER_OPTIONS}
                 onImageProviderChange={setImageProvider}
+                mediaKind={mediaKind}
+                mediaKindOptions={MEDIA_KIND_OPTIONS}
+                onMediaKindChange={setMediaKind}
                 topic={topic}
                 onTopicChange={setTopic}
                 onKeyDown={handleKeyDown}

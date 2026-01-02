@@ -37,10 +37,14 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
   const wrapperClassName =
     variant === 'overlay'
       ? 'w-full max-w-xs sm:max-w-sm h-full'
-      : 'w-full lg:w-80 shrink-0 -ml-4 sm:-ml-6 lg:-ml-8 h-full';
+      : 'w-full lg:w-80 shrink-0 -ml-4 sm:-ml-6 lg:-ml-8 h-full lg:fixed lg:left-0 lg:top-[calc(4rem+1.5rem)] lg:bottom-6 lg:ml-0 lg:pl-4 lg:z-40';
+  const panelClassName =
+    variant === 'overlay'
+      ? 'border-r border-neutral-800 bg-neutral-950 p-4 h-full flex flex-col rounded-none'
+      : 'rounded-xl border border-neutral-800 bg-neutral-950 p-4 h-full flex flex-col';
   return (
     <div className={wrapperClassName}>
-      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-4 h-full flex flex-col">
+      <div className={panelClassName}>
         <div className="flex items-center justify-between">
           <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Artifacts</div>
           <div className="flex items-center gap-3">

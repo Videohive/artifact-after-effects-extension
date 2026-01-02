@@ -4,6 +4,7 @@ import {
   Code,
   Copy,
   Loader2,
+  LayoutGrid,
   Play,
   Plus,
   RefreshCw,
@@ -126,6 +127,15 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
             title="Preview"
           >
             <Play className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onViewModeChange('grid')}
+            className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              viewMode === 'grid' ? 'bg-indigo-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'
+            }`}
+            title="Grid"
+          >
+            <LayoutGrid className="w-4 h-4" />
           </button>
           <button
             onClick={() => onViewModeChange('code')}

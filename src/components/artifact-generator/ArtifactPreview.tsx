@@ -36,7 +36,16 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
             height: previewSize.height || '100%'
           }}
         >
-          {viewMode === 'preview' ? (
+          {viewMode === 'code' ? (
+            <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
+              <textarea
+                value={codeDraft}
+                onChange={(e) => onCodeChange(e.target.value)}
+                className="w-full h-full bg-transparent text-neutral-300 resize-none focus:outline-none custom-scrollbar"
+                spellCheck={false}
+              />
+            </div>
+          ) : (
             <div
               className="absolute left-1/2 top-1/2 origin-center"
               style={{
@@ -48,19 +57,10 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
               <iframe
                 ref={iframeRef}
                 srcDoc={getCurrentFullHtml()}
-                title="Artifact Preview"
+                title={viewMode === 'grid' ? 'Artifact Grid' : 'Artifact Preview'}
                 className="border-0"
                 style={{ width: baseWidth, height: baseHeight }}
                 sandbox="allow-scripts allow-same-origin"
-              />
-            </div>
-          ) : (
-            <div className="w-full h-full bg-[#0d0d0d] p-4 text-sm font-mono text-neutral-300">
-              <textarea
-                value={codeDraft}
-                onChange={(e) => onCodeChange(e.target.value)}
-                className="w-full h-full bg-transparent text-neutral-300 resize-none focus:outline-none custom-scrollbar"
-                spellCheck={false}
               />
             </div>
           )}

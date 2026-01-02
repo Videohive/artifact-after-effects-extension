@@ -5,6 +5,8 @@ type ProjectMetadataPanelProps = {
   projectTitle: string;
   projectTags: string;
   projectDescription: string;
+  mediaPlaceholderCount: number;
+  textPlaceholderCount: number;
   editingTitle: boolean;
   editingTags: boolean;
   editingDescription: boolean;
@@ -30,6 +32,8 @@ export const ProjectMetadataPanel: React.FC<ProjectMetadataPanelProps> = ({
   projectTitle,
   projectTags,
   projectDescription,
+  mediaPlaceholderCount,
+  textPlaceholderCount,
   editingTitle,
   editingTags,
   editingDescription,
@@ -106,6 +110,10 @@ export const ProjectMetadataPanel: React.FC<ProjectMetadataPanelProps> = ({
               {projectDescription || 'Add description'}
             </button>
           )}
+        </div>
+        <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Placeholders</div>
+        <div className="mt-1 text-sm text-neutral-300">
+          {mediaPlaceholderCount} Media placeholder, {textPlaceholderCount} Text placeholder
         </div>
         <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Tags</div>
         <div className="mt-1">

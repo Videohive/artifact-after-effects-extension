@@ -3,6 +3,7 @@ import { getAuthToken } from "./authService";
 
 export type AiProviderName = 'gemini' | 'openai' | 'claude';
 export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay' | 'placeholder';
+export type MediaKind = 'image' | 'video' | 'random';
 export type ArtifactMode =
   | 'auto'
   | 'slides'
@@ -61,6 +62,9 @@ const getApiError = () =>
 
 const cleanResponseText = (text: string) =>
   text.replace(/```html/g, "").replace(/```/g, "");
+
+const VIDEO_EXT_RE = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i;
+const isVideoUrl = (value?: string | null) => !!value && VIDEO_EXT_RE.test(value);
 
 const createResponseText = async (
   provider: AiProviderName,
@@ -318,11 +322,12 @@ const searchWithVariants = async (
   return await searchFn(randomGeneric);
 };
 
-const searchImageProvider = async (
+const searchMediaProvider = async (
   provider: 'pexels' | 'unsplash' | 'pixabay',
   query: string,
   usedUrls: Set<string>,
-  color?: string
+  color?: string,
+  type: 'image' | 'video' = 'image'
 ): Promise<string | null> => {
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) return null;
@@ -334,7 +339,8 @@ const searchImageProvider = async (
         provider,
         query,
         color,
-        excludeUrls: Array.from(usedUrls)
+        excludeUrls: Array.from(usedUrls),
+        type
       })
     });
     if (!response.ok) return null;
@@ -355,7 +361,7 @@ async function fetchPexelsImage(
   contextHint?: string
 ): Promise<string> {
   const searchPexels = async (query: string): Promise<string | null> => {
-    return await searchImageProvider('pexels', query, usedUrls, color);
+    return await searchMediaProvider('pexels', query, usedUrls, color);
   };
 
   const result = await searchWithVariants(term, searchPexels, contextHint);
@@ -368,7 +374,7 @@ async function fetchUnsplashImage(
   contextHint?: string
 ): Promise<string> {
   const searchUnsplash = async (query: string): Promise<string | null> => {
-    return await searchImageProvider('unsplash', query, usedUrls);
+    return await searchMediaProvider('unsplash', query, usedUrls);
   };
 
   const result = await searchWithVariants(term, searchUnsplash, contextHint);
@@ -381,33 +387,75 @@ async function fetchPixabayImage(
   contextHint?: string
 ): Promise<string> {
   const searchPixabay = async (query: string): Promise<string | null> => {
-    return await searchImageProvider('pixabay', query, usedUrls);
+    return await searchMediaProvider('pixabay', query, usedUrls);
   };
 
   const result = await searchWithVariants(term, searchPixabay, contextHint);
   return result || FALLBACK_IMAGE_URL;
 }
 
-const getAvailableImageProviders = (): ImageProviderName[] => {
+const getAvailableImageProviders = (): Array<'pexels' | 'unsplash' | 'pixabay'> => {
   return ['pexels', 'unsplash', 'pixabay'];
 };
 
-const pickImageProvider = (provider: ImageProviderName): ImageProviderName => {
-  if (provider !== 'random') return provider;
+const getAvailableVideoProviders = (): Array<'pexels' | 'pixabay'> => {
+  return ['pexels', 'pixabay'];
+};
+
+const pickImageProvider = (
+  provider: ImageProviderName
+): 'pexels' | 'unsplash' | 'pixabay' => {
+  if (provider === 'pexels' || provider === 'unsplash' || provider === 'pixabay') {
+    return provider;
+  }
   const available = getAvailableImageProviders();
   if (available.length === 0) return 'pexels';
   const idx = Math.floor(Math.random() * available.length);
   return available[idx];
 };
 
+const pickVideoProvider = (provider: ImageProviderName): 'pexels' | 'pixabay' => {
+  if (provider === 'pexels' || provider === 'pixabay') {
+    return provider;
+  }
+  const available = getAvailableVideoProviders();
+  const idx = Math.floor(Math.random() * available.length);
+  return available[idx];
+};
+
+const pickMediaKind = (kind: MediaKind): 'image' | 'video' => {
+  if (kind === 'video') return 'video';
+  if (kind === 'image') return 'image';
+  return Math.random() < 0.5 ? 'image' : 'video';
+};
+
+async function fetchVideoAsset(
+  provider: 'pexels' | 'pixabay',
+  term: string,
+  usedUrls: Set<string>,
+  contextHint?: string
+): Promise<string> {
+  const searchVideo = async (query: string): Promise<string | null> => {
+    return await searchMediaProvider(provider, query, usedUrls, undefined, 'video');
+  };
+  const result = await searchWithVariants(term, searchVideo, contextHint);
+  return result || FALLBACK_IMAGE_URL;
+}
+
 async function fetchImageByProvider(
   provider: ImageProviderName,
   term: string,
   usedUrls: Set<string>,
   color?: string,
-  contextHint?: string
+  contextHint?: string,
+  mediaKind: MediaKind = 'image'
 ): Promise<string> {
   if (provider === 'placeholder') return FALLBACK_IMAGE_URL;
+  const media = pickMediaKind(mediaKind);
+  if (media === 'video') {
+    const resolvedProvider = pickVideoProvider(provider);
+    return await fetchVideoAsset(resolvedProvider, term, usedUrls, contextHint);
+  }
   const resolved = pickImageProvider(provider);
   if (resolved === 'unsplash') return await fetchUnsplashImage(term, usedUrls, contextHint);
   if (resolved === 'pixabay') return await fetchPixabayImage(term, usedUrls, contextHint);
@@ -419,7 +467,8 @@ const replaceImagePlaceholders = async (
   excludedUrls: string[] = [],
   paletteSource?: string,
   imageProvider: ImageProviderName = 'pexels',
-  contextHint?: string
+  contextHint?: string,
+  mediaKind: MediaKind = 'image'
 ): Promise<string> => {
   const usedUrls = new Set<string>(excludedUrls);
   const regex = /{{IMAGE:(.*?)}}/g;
@@ -467,7 +516,22 @@ const replaceImagePlaceholders = async (
     const combinedContext = [localContext, globalContext].filter(Boolean).join(' ');
     // We pass the Set by reference, so it gets updated inside (or we update it here)
     // fetchPexelsImage updates the set inside.
-    const url = await fetchImageByProvider(imageProvider, term, usedUrls, paletteColor, combinedContext);
+    const url = await fetchImageByProvider(
+      imageProvider,
+      term,
+      usedUrls,
+      paletteColor,
+      combinedContext,
+      mediaKind
+    );
+    if (mediaKind !== 'image') {
+      console.log('[media] placeholder resolved', {
+        mediaKind,
+        provider: imageProvider,
+        term,
+        url
+      });
+    }
 
     // Replace ONLY the first occurrence of this specific match string in the current html state
     // This handles cases where {{IMAGE:cat}} appears twice; the first loop replaces the first one,
@@ -475,7 +539,73 @@ const replaceImagePlaceholders = async (
     newHtml = newHtml.replace(match[0], url);
   }
 
-  return newHtml;
+  if (!VIDEO_EXT_RE.test(newHtml)) {
+    return newHtml;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<body>${newHtml}</body>`, 'text/html');
+    const body = doc.body;
+
+    const setVideoDefaults = (video: HTMLVideoElement) => {
+      video.autoplay = true;
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      if (!video.style.width) video.style.width = '100%';
+      if (!video.style.height) video.style.height = '100%';
+      if (!video.style.objectFit) video.style.objectFit = 'cover';
+      if (!video.style.display) video.style.display = 'block';
+    };
+
+    const copyAttributes = (from: Element, to: Element, skip: Record<string, boolean>) => {
+      Array.from(from.attributes).forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if (skip[name]) return;
+        to.setAttribute(attr.name, attr.value);
+      });
+    };
+
+    Array.from(body.querySelectorAll('img')).forEach(img => {
+      const src = img.getAttribute('src');
+      if (!isVideoUrl(src)) return;
+      const video = doc.createElement('video');
+      copyAttributes(img, video, { src: true, srcset: true });
+      if (img.getAttribute('alt') && !video.getAttribute('aria-label')) {
+        video.setAttribute('aria-label', img.getAttribute('alt') || '');
+      }
+      video.setAttribute('src', src || '');
+      setVideoDefaults(video);
+      img.replaceWith(video);
+    });
+
+    Array.from(body.querySelectorAll('video')).forEach(video => {
+      const src = video.getAttribute('src') || video.querySelector('source')?.getAttribute('src');
+      if (!isVideoUrl(src)) return;
+      setVideoDefaults(video);
+    });
+
+    Array.from(body.querySelectorAll('[style]')).forEach(el => {
+      if (!(el instanceof HTMLElement)) return;
+      const styleValue = el.getAttribute('style') || '';
+      if (!/background-image/i.test(styleValue)) return;
+      const match = styleValue.match(/background-image\s*:\s*url\(['"]?(.*?)['"]?\)/i);
+      const bgUrl = match ? match[1] : null;
+      if (!isVideoUrl(bgUrl)) return;
+      if (el.children.length > 0) return;
+      const video = doc.createElement('video');
+      copyAttributes(el, video, {});
+      video.setAttribute('src', bgUrl || '');
+      if (video.style.backgroundImage) video.style.backgroundImage = 'none';
+      setVideoDefaults(video);
+      el.replaceWith(video);
+    });
+
+    return body.innerHTML;
+  } catch {
+    return newHtml;
+  }
 };
 
 export const generateArtifacts = async (
@@ -483,6 +613,7 @@ export const generateArtifacts = async (
   topic: string,
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
   contextHtml?: string,
   imageData?: string | null
 ): Promise<string> => {
@@ -494,7 +625,7 @@ export const generateArtifacts = async (
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
       : finalPrompt;
     const text = await createResponseText(provider, promptWithContext, 1.5, imageData);
-    return await replaceImagePlaceholders(text, [], undefined, imageProvider, topic);
+    return await replaceImagePlaceholders(text, [], undefined, imageProvider, topic, mediaKind);
   } catch (error) {
     console.error("Error generating artifacts:", error);
     throw error;
@@ -506,6 +637,7 @@ export const generateArtifactsPersisted = async (
   topic: string,
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
   options?: {
     contextHtml?: string;
     imageData?: string | null;
@@ -527,7 +659,7 @@ export const generateArtifactsPersisted = async (
       options?.imageData,
       { historyId: options?.historyId, name: options?.name }
     );
-    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider, topic);
+    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider, topic, mediaKind);
     return { text, artifact: response.artifact };
   } catch (error) {
     console.error('Error generating artifacts:', error);
@@ -540,6 +672,7 @@ export const updateArtifactsFromContext = async (
   artifactMode: ArtifactMode,
   contextHtml: string,
   imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
   imageData?: string | null
 ): Promise<string> => {
   try {
@@ -549,7 +682,14 @@ export const updateArtifactsFromContext = async (
       .replace(/{contextHtml}/g, contextHtml);
     const text = await createResponseText(provider, finalPrompt, 0.7, imageData);
     const excluded = extractImageUrlsFromHtml(contextHtml);
-    return await replaceImagePlaceholders(text, excluded, undefined, imageProvider, `${topic}\n${contextHtml}`);
+    return await replaceImagePlaceholders(
+      text,
+      excluded,
+      undefined,
+      imageProvider,
+      `${topic}\n${contextHtml}`,
+      mediaKind
+    );
   } catch (error) {
     console.error("Error updating artifacts:", error);
     throw error;
@@ -562,6 +702,7 @@ export const updateArtifactsFromContextPersisted = async (
   artifactMode: ArtifactMode,
   contextHtml: string,
   imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
   options?: {
     imageData?: string | null;
     historyId?: string | null;
@@ -581,7 +722,14 @@ export const updateArtifactsFromContextPersisted = async (
       { historyId: options?.historyId, name: options?.name }
     );
     const excluded = extractImageUrlsFromHtml(contextHtml);
-    const text = await replaceImagePlaceholders(response.text, excluded, undefined, imageProvider, `${topic}\n${contextHtml}`);
+    const text = await replaceImagePlaceholders(
+      response.text,
+      excluded,
+      undefined,
+      imageProvider,
+      `${topic}\n${contextHtml}`,
+      mediaKind
+    );
     return { text, artifact: response.artifact };
   } catch (error) {
     console.error('Error updating artifacts:', error);
@@ -596,6 +744,7 @@ export const regenerateArtifact = async (
   excludedImages: string[] = [],
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
   imageData?: string | null
 ): Promise<string> => {
   try {
@@ -609,7 +758,14 @@ export const regenerateArtifact = async (
 
     const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
-    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider, topic);
+    return await replaceImagePlaceholders(
+      sectionHtml,
+      excludedImages,
+      cssContext,
+      imageProvider,
+      topic,
+      mediaKind
+    );
   } catch (error) {
     console.error("Error regenerating artifact:", error);
     throw error;
@@ -624,6 +780,7 @@ export const generateNewArtifact = async (
   excludedImages: string[] = [],
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
   imageData?: string | null
 ): Promise<string> => {
   try {
@@ -637,7 +794,14 @@ export const generateNewArtifact = async (
 
     const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
-    return await replaceImagePlaceholders(sectionHtml, excludedImages, cssContext, imageProvider, topic);
+    return await replaceImagePlaceholders(
+      sectionHtml,
+      excludedImages,
+      cssContext,
+      imageProvider,
+      topic,
+      mediaKind
+    );
   } catch (error) {
     console.error("Error adding artifact:", error);
     throw error;

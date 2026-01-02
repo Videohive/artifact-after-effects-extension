@@ -1,6 +1,6 @@
-import { ImageProviderName } from '../../services/aiService';
+import { ImageProviderName, MediaKind } from '../../services/aiService';
 
-export type ViewMode = 'preview' | 'code';
+export type ViewMode = 'preview' | 'grid' | 'code';
 
 export type ResolutionOption = {
   id: string;
@@ -11,5 +11,10 @@ export type ResolutionOption = {
 
 export type ImageProviderOption = {
   id: ImageProviderName;
+  label: string;
+};
+
+export type MediaKindOption = {
+  id: MediaKind;
   label: string;
 };

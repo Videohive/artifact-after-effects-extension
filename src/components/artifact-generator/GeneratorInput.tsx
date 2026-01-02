@@ -1,7 +1,7 @@
 import React from 'react';
 import { AlertCircle, Image, Loader2, Send, X } from 'lucide-react';
-import { AiProviderName, ImageProviderName } from '../../services/aiService';
-import { ImageProviderOption } from './types';
+import { AiProviderName, ImageProviderName, MediaKind } from '../../services/aiService';
+import { ImageProviderOption, MediaKindOption } from './types';
 
 type GeneratorInputProps = {
   errorMsg: string | null;
@@ -10,6 +10,9 @@ type GeneratorInputProps = {
   imageProvider: ImageProviderName;
   imageProviderOptions: ImageProviderOption[];
   onImageProviderChange: (value: ImageProviderName) => void;
+  mediaKind: MediaKind;
+  mediaKindOptions: MediaKindOption[];
+  onMediaKindChange: (value: MediaKind) => void;
   topic: string;
   onTopicChange: (value: string) => void;
   onKeyDown: (event: React.KeyboardEvent) => void;
@@ -28,6 +31,9 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   imageProvider,
   imageProviderOptions,
   onImageProviderChange,
+  mediaKind,
+  mediaKindOptions,
+  onMediaKindChange,
   topic,
   onTopicChange,
   onKeyDown,
@@ -104,13 +110,27 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
 
       <div className="mb-2 flex flex-wrap items-center justify-end gap-2 px-1 text-xs text-neutral-400">
         <label className="flex items-center gap-2">
-          <span className="font-medium">Image source</span>
+          <span className="font-medium">Provider</span>
           <select
             value={imageProvider}
             onChange={(e) => onImageProviderChange(e.target.value as ImageProviderName)}
             className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
           >
             {imageProviderOptions.map(option => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="font-medium">Media</span>
+          <select
+            value={mediaKind}
+            onChange={(e) => onMediaKindChange(e.target.value as MediaKind)}
+            className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 focus:border-indigo-500 focus:outline-none"
+          >
+            {mediaKindOptions.map(option => (
               <option key={option.id} value={option.id}>
                 {option.label}
               </option>

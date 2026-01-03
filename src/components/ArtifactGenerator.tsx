@@ -96,6 +96,31 @@ const PREVIEW_EDITOR_STYLE = `
     pointer-events: none;
     z-index: 2147483646;
   }
+  #ae2-toolbar {
+    position: absolute;
+    display: flex;
+    gap: 6px;
+    padding: 4px;
+    background: rgba(11, 15, 20, 0.9);
+    border: 1px solid rgba(76, 201, 255, 0.4);
+    border-radius: 8px;
+    z-index: 2147483647;
+  }
+  .ae2-tool {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.35);
+    color: #9ad8ff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .ae2-tool:hover {
+    background: rgba(76, 201, 255, 0.15);
+  }
   .ae2-handle {
     position: absolute;
     width: 10px;
@@ -106,12 +131,6 @@ const PREVIEW_EDITOR_STYLE = `
     border-radius: 2px;
     z-index: 2147483647;
   }
-  .ae2-handle-rotate {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #0b0f14;
-  }
   svg.ae2-edit-target,
   svg.ae2-edit-target * {
     pointer-events: auto !important;
@@ -121,6 +140,14 @@ const PREVIEW_EDITOR_STYLE = `
   }
   .svg-overlay * {
     pointer-events: auto !important;
+  }
+  .ae2-hidden {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+  .ae2-locked {
+    pointer-events: none !important;
   }
 `;
 
@@ -137,6 +164,7 @@ const PREVIEW_EDITOR_SCRIPT = `
     var selected = null;
     var overlay = null;
     var handles = {};
+    var toolbar = null;
     var dragging = null;
     var dirty = false;
     var history = [];
@@ -147,9 +175,44 @@ const PREVIEW_EDITOR_SCRIPT = `
     var editingEl = null;
     var editingOriginalHtml = '';
     var editingBlurHandler = null;
+    var hiddenIds = {};
+    var lockedIds = {};
+    var VOID_TAGS = {
+      area: true,
+      base: true,
+      br: true,
+      col: true,
+      embed: true,
+      hr: true,
+      img: true,
+      input: true,
+      link: true,
+      meta: true,
+      param: true,
+      source: true,
+      track: true,
+      wbr: true
+    };
+    var SVG_CONTAINER_TAGS = {
+      svg: true,
+      g: true,
+      defs: true,
+      symbol: true,
+      mask: true,
+      clippath: true,
+      pattern: true,
+      marker: true,
+      lineargradient: true,
+      radialgradient: true
+    };
 
     function isUi(el) {
-      return !!(el && el.getAttribute && el.getAttribute('data-ae2-ui') === 'true');
+      var node = el;
+      while (node && node !== body && node !== doc.documentElement) {
+        if (node.getAttribute && node.getAttribute('data-ae2-ui') === 'true') return true;
+        node = node.parentElement;
+      }
+      return false;
     }
 
     function isSvgElement(el) {
@@ -268,6 +331,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       var node = el;
       while (node && node !== body && node !== doc.documentElement) {
         if (isUi(node)) return null;
+        if (isBlocked(node)) return null;
         if (isSvgElement(node)) {
           if (node.id) return node;
           return null;
@@ -307,8 +371,22 @@ const PREVIEW_EDITOR_SCRIPT = `
         var node = nodes[i];
         if (!node || node === body || node === doc.documentElement) continue;
         if (isUi(node)) continue;
+        if (isBlocked(node)) continue;
         node.classList.add('ae2-edit-target');
       }
+    }
+
+    function isBlocked(el) {
+      var node = el;
+      while (node && node !== body && node !== doc.documentElement) {
+        if (node.id && (hiddenIds[node.id] || lockedIds[node.id])) return true;
+        if (node.classList && (node.classList.contains('ae2-hidden') || node.classList.contains('ae2-locked'))) {
+          return true;
+        }
+        if (node.getAttribute && node.getAttribute('data-ae2-blocked') === 'true') return true;
+        node = node.parentElement;
+      }
+      return false;
     }
 
     function buildLayerTree(root) {
@@ -339,6 +417,40 @@ const PREVIEW_EDITOR_SCRIPT = `
       return collect(root);
     }
 
+    function canContainChildren(el) {
+      if (!el || !el.tagName) return false;
+      var tag = el.tagName.toLowerCase();
+      if (VOID_TAGS[tag]) return false;
+      if (isSvgElement(el) || isSvgGraphics(el)) {
+        return !!SVG_CONTAINER_TAGS[tag];
+      }
+      return true;
+    }
+
+    function moveLayer(sourceId, targetId, position) {
+      if (!sourceId || !targetId || sourceId === targetId) return false;
+      var source = doc.getElementById(sourceId);
+      var target = doc.getElementById(targetId);
+      if (!source || !target) return false;
+      if (source.contains(target)) return false;
+      if (position === 'inside') {
+        if (!canContainChildren(target)) return false;
+        target.appendChild(source);
+        return true;
+      }
+      var parent = target.parentElement;
+      if (!parent) return false;
+      if (position === 'before') {
+        parent.insertBefore(source, target);
+        return true;
+      }
+      if (position === 'after') {
+        parent.insertBefore(source, target.nextSibling);
+        return true;
+      }
+      return false;
+    }
+
     function postLayers() {
       var root = getRoot();
       var layers = buildLayerTree(root);
@@ -350,6 +462,56 @@ const PREVIEW_EDITOR_SCRIPT = `
         { source: 'ae2-preview-editor', type: 'selection', id: selected ? selected.id : null },
         '*'
       );
+    }
+
+    function applyLayerState() {
+      var active = doc.querySelectorAll('.ae2-hidden, .ae2-locked');
+      for (var i = 0; i < active.length; i += 1) {
+        active[i].classList.remove('ae2-hidden', 'ae2-locked');
+      }
+      var blocked = doc.querySelectorAll('[data-ae2-blocked="true"]');
+      for (var b = 0; b < blocked.length; b += 1) {
+        blocked[b].removeAttribute('data-ae2-blocked');
+      }
+      var targets = doc.querySelectorAll('.ae2-edit-target');
+      for (var t = 0; t < targets.length; t += 1) {
+        targets[t].classList.remove('ae2-edit-target');
+      }
+      for (var id in hiddenIds) {
+        if (!hiddenIds[id]) continue;
+        var el = doc.getElementById(id);
+        if (el && el.classList) {
+          el.classList.add('ae2-hidden');
+          el.setAttribute('data-ae2-blocked', 'true');
+          var hiddenNodes = el.querySelectorAll ? el.querySelectorAll('*') : [];
+          for (var h = 0; h < hiddenNodes.length; h += 1) {
+            if (hiddenNodes[h].classList) {
+              hiddenNodes[h].classList.add('ae2-hidden');
+              hiddenNodes[h].setAttribute('data-ae2-blocked', 'true');
+            }
+          }
+        }
+      }
+      for (var lockId in lockedIds) {
+        if (!lockedIds[lockId]) continue;
+        var lockEl = doc.getElementById(lockId);
+        if (lockEl && lockEl.classList) {
+          lockEl.classList.add('ae2-locked');
+          lockEl.setAttribute('data-ae2-blocked', 'true');
+          var lockedNodes = lockEl.querySelectorAll ? lockEl.querySelectorAll('*') : [];
+          for (var l = 0; l < lockedNodes.length; l += 1) {
+            if (lockedNodes[l].classList) {
+              lockedNodes[l].classList.add('ae2-locked');
+              lockedNodes[l].setAttribute('data-ae2-blocked', 'true');
+            }
+          }
+        }
+      }
+      if (selected && isBlocked(selected)) {
+        clearSelection();
+      }
+      markTargets();
+      updateOverlay();
     }
 
     function getNum(el, key, fallback) {
@@ -400,6 +562,32 @@ const PREVIEW_EDITOR_SCRIPT = `
       overlay.setAttribute('data-ae2-ui', 'true');
       body.appendChild(overlay);
 
+      toolbar = doc.createElement('div');
+      toolbar.id = 'ae2-toolbar';
+      toolbar.setAttribute('data-ae2-ui', 'true');
+      var toolDefs = [
+        { id: 'move', label: 'Move', icon: 'M6 12h12M12 6v12' },
+        { id: 'rotate', label: 'Rotate', icon: 'M12 4a8 8 0 1 1-7.5 5' },
+        { id: 'scale', label: 'Scale', icon: 'M7 7l10 10M7 17h4M17 7v4' },
+        { id: 'scale-x', label: 'Scale X', icon: 'M4 12h16M18 8v8' },
+        { id: 'scale-y', label: 'Scale Y', icon: 'M12 4v16M8 6h8' }
+      ];
+      for (var t = 0; t < toolDefs.length; t += 1) {
+        var tool = doc.createElement('button');
+        tool.className = 'ae2-tool';
+        tool.setAttribute('type', 'button');
+        tool.setAttribute('data-ae2-ui', 'true');
+        tool.setAttribute('data-ae2-handle', toolDefs[t].id);
+        tool.setAttribute('title', toolDefs[t].label);
+        tool.innerHTML =
+          '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="' +
+          toolDefs[t].icon +
+          '"/></svg>';
+        tool.addEventListener('mousedown', onHandleDown, true);
+        toolbar.appendChild(tool);
+      }
+      body.appendChild(toolbar);
+
       var names = ['nw', 'ne', 'sw', 'se'];
       for (var i = 0; i < names.length; i += 1) {
         var name = names[i];
@@ -411,17 +599,14 @@ const PREVIEW_EDITOR_SCRIPT = `
         handles[name] = handle;
       }
 
-      var rotate = doc.createElement('div');
-      rotate.className = 'ae2-handle ae2-handle-rotate';
-      rotate.setAttribute('data-ae2-ui', 'true');
-      rotate.setAttribute('data-ae2-handle', 'rotate');
-      body.appendChild(rotate);
-      handles.rotate = rotate;
     }
 
     function setOverlayVisible(visible) {
       if (!overlay) return;
       overlay.style.display = visible ? 'block' : 'none';
+      if (toolbar) {
+        toolbar.style.display = visible ? 'flex' : 'none';
+      }
       Object.keys(handles).forEach(function (key) {
         handles[key].style.display = visible ? 'block' : 'none';
       });
@@ -437,6 +622,14 @@ const PREVIEW_EDITOR_SCRIPT = `
       overlay.style.top = top + 'px';
       overlay.style.width = rect.width + 'px';
       overlay.style.height = rect.height + 'px';
+
+      if (toolbar) {
+        var toolbarLeft = left + rect.width / 2;
+        var toolbarTop = Math.max(8, top - 38);
+        toolbar.style.left = toolbarLeft + 'px';
+        toolbar.style.top = toolbarTop + 'px';
+        toolbar.style.transform = 'translateX(-50%)';
+      }
 
       var half = 5;
       if (handles.nw) {
@@ -454,10 +647,6 @@ const PREVIEW_EDITOR_SCRIPT = `
       if (handles.se) {
         handles.se.style.left = (left + rect.width - half) + 'px';
         handles.se.style.top = (top + rect.height - half) + 'px';
-      }
-      if (handles.rotate) {
-        handles.rotate.style.left = (left + rect.width / 2 - 6) + 'px';
-        handles.rotate.style.top = (top - 26) + 'px';
       }
     }
 
@@ -510,6 +699,36 @@ const PREVIEW_EDITOR_SCRIPT = `
       dragging = {
         type: 'resize',
         handle: handle,
+        startX: e.clientX,
+        startY: e.clientY,
+        width: rect.width,
+        height: rect.height,
+        sx: getNum(selected, 'sx', 1),
+        sy: getNum(selected, 'sy', 1)
+      };
+      dirty = false;
+    }
+
+    function startScaleUniform(e) {
+      if (!selected) return;
+      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      dragging = {
+        type: 'scale',
+        startX: e.clientX,
+        startY: e.clientY,
+        width: rect.width,
+        height: rect.height,
+        sx: getNum(selected, 'sx', 1),
+        sy: getNum(selected, 'sy', 1)
+      };
+      dirty = false;
+    }
+
+    function startScaleAxis(e, axis) {
+      if (!selected) return;
+      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      dragging = {
+        type: axis === 'x' ? 'scale-x' : 'scale-y',
         startX: e.clientX,
         startY: e.clientY,
         width: rect.width,
@@ -577,6 +796,39 @@ const PREVIEW_EDITOR_SCRIPT = `
         dirty = true;
         return;
       }
+      if (dragging.type === 'scale-x') {
+        var dxs = e.clientX - dragging.startX;
+        var scaleXOnly = (dragging.width + dxs) / dragging.width;
+        var nextSxOnly = Math.max(0.05, dragging.sx * scaleXOnly);
+        setNum(selected, 'sx', nextSxOnly);
+        applyTransform(selected);
+        updateOverlay();
+        dirty = true;
+        return;
+      }
+      if (dragging.type === 'scale') {
+        var dxu = e.clientX - dragging.startX;
+        var dyu = e.clientY - dragging.startY;
+        var delta = Math.abs(dxu) > Math.abs(dyu) ? dxu : dyu;
+        var scaleUniform = (dragging.width + delta) / dragging.width;
+        var nextSu = Math.max(0.05, dragging.sx * scaleUniform);
+        setNum(selected, 'sx', nextSu);
+        setNum(selected, 'sy', nextSu);
+        applyTransform(selected);
+        updateOverlay();
+        dirty = true;
+        return;
+      }
+      if (dragging.type === 'scale-y') {
+        var dys = e.clientY - dragging.startY;
+        var scaleYOnly = (dragging.height + dys) / dragging.height;
+        var nextSyOnly = Math.max(0.05, dragging.sy * scaleYOnly);
+        setNum(selected, 'sy', nextSyOnly);
+        applyTransform(selected);
+        updateOverlay();
+        dirty = true;
+        return;
+      }
       if (dragging.type === 'rotate') {
         var angle = Math.atan2(e.clientY - dragging.centerY, e.clientX - dragging.centerX) * 180 / Math.PI;
         var delta = angle - dragging.startAngle;
@@ -632,6 +884,10 @@ const PREVIEW_EDITOR_SCRIPT = `
         clearSelection();
         return;
       }
+      if (isBlocked(selectable)) {
+        clearSelection();
+        return;
+      }
       selectElement(selectable);
       if (body) body.focus();
       body.style.userSelect = 'none';
@@ -641,12 +897,32 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function onHandleDown(e) {
-      var handle = e.target.getAttribute('data-ae2-handle');
+      var handleEl = e.currentTarget && e.currentTarget.getAttribute ? e.currentTarget : null;
+      if (!handleEl || !handleEl.getAttribute('data-ae2-handle')) {
+        var target = e.target;
+        handleEl = target && target.getAttribute ? target : null;
+        if (handleEl && !handleEl.getAttribute('data-ae2-handle') && handleEl.closest) {
+          handleEl = handleEl.closest('[data-ae2-handle]');
+        }
+      }
+      var handle = handleEl && handleEl.getAttribute ? handleEl.getAttribute('data-ae2-handle') : null;
       if (!handle || !selected) return;
       body.style.userSelect = 'none';
       if (handle === 'rotate') {
         body.style.cursor = 'crosshair';
         startRotate(e);
+      } else if (handle === 'move') {
+        body.style.cursor = 'move';
+        startMove(e);
+      } else if (handle === 'scale') {
+        body.style.cursor = 'nwse-resize';
+        startScaleUniform(e);
+      } else if (handle === 'scale-x') {
+        body.style.cursor = 'ew-resize';
+        startScaleAxis(e, 'x');
+      } else if (handle === 'scale-y') {
+        body.style.cursor = 'ns-resize';
+        startScaleAxis(e, 'y');
       } else {
         body.style.cursor = handle + '-resize';
         startResize(e, handle);
@@ -767,7 +1043,7 @@ const PREVIEW_EDITOR_SCRIPT = `
 
     function stripEditClasses(el) {
       if (!el || !el.classList) return;
-      el.classList.remove('ae2-edit-target', 'ae2-selected');
+      el.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-hidden', 'ae2-locked');
       if (el.getAttribute('class') === '') {
         el.removeAttribute('class');
       }
@@ -781,7 +1057,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       var target = root === body ? container : container.firstElementChild;
       if (!target) return html;
       stripEditClasses(target);
-      var nodes = target.querySelectorAll('.ae2-edit-target, .ae2-selected');
+      var nodes = target.querySelectorAll('.ae2-edit-target, .ae2-selected, .ae2-hidden, .ae2-locked');
       for (var i = 0; i < nodes.length; i += 1) {
         stripEditClasses(nodes[i]);
       }
@@ -867,8 +1143,23 @@ const PREVIEW_EDITOR_SCRIPT = `
         updateOverlay();
         return;
       }
+      if (payload.type === 'layer-state') {
+        hiddenIds = payload.hidden || {};
+        lockedIds = payload.locked || {};
+        applyLayerState();
+        return;
+      }
       if (payload.type === 'request-layers') {
         postLayers();
+        return;
+      }
+      if (payload.type === 'move-layer') {
+        var moved = moveLayer(payload.id, payload.targetId, payload.position);
+        if (moved) {
+          selectElement(doc.getElementById(payload.id));
+          updateOverlay();
+          postUpdate();
+        }
       }
     }
 
@@ -1066,16 +1357,18 @@ const reindexArtifactClasses = (artifactHtmls: string[], includeSlideClass: bool
         node.parentElement.removeChild(node);
       }
     });
-    const editNodes = root.querySelectorAll('.ae2-edit-target, .ae2-selected, .ae2-has-selection');
+    const editNodes = root.querySelectorAll(
+      '.ae2-edit-target, .ae2-selected, .ae2-has-selection, .ae2-hidden, .ae2-locked'
+    );
     editNodes.forEach(node => {
       if (!(node instanceof HTMLElement)) return;
-      node.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-has-selection');
+      node.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-has-selection', 'ae2-hidden', 'ae2-locked');
       if (node.getAttribute('class') === '') {
         node.removeAttribute('class');
       }
     });
     if (root instanceof HTMLElement) {
-      root.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-has-selection');
+      root.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-has-selection', 'ae2-hidden', 'ae2-locked');
       if (root.getAttribute('class') === '') {
         root.removeAttribute('class');
       }
@@ -1442,6 +1735,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [previewLayers, setPreviewLayers] = useState<PreviewLayer[]>([]);
   const [previewSelectionId, setPreviewSelectionId] = useState<string | null>(null);
   const [previewLayerExpanded, setPreviewLayerExpanded] = useState<Record<string, boolean>>({});
+  const [previewHidden, setPreviewHidden] = useState<Record<string, boolean>>({});
+  const [previewLocked, setPreviewLocked] = useState<Record<string, boolean>>({});
+  const [previewDragId, setPreviewDragId] = useState<string | null>(null);
+  const [previewDropTarget, setPreviewDropTarget] = useState<{
+    id: string;
+    position: 'before' | 'after' | 'inside';
+  } | null>(null);
   const artifactsRef = useRef<string[]>([]);
   const [historyItems, setHistoryItems] = useState<ArtifactHistoryItem[]>([]);
   const [historyPolling, setHistoryPolling] = useState(false);
@@ -2695,6 +2995,21 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   }, [viewMode, previewHtml, currentArtifactIndex]);
 
   useEffect(() => {
+    if (viewMode !== 'preview') return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    const postState = () => {
+      win.postMessage(
+        { source: 'ae2-layer-panel', type: 'layer-state', hidden: previewHidden, locked: previewLocked },
+        '*'
+      );
+    };
+    postState();
+    const timer = window.setTimeout(postState, 60);
+    return () => window.clearTimeout(timer);
+  }, [viewMode, previewHidden, previewLocked, previewHtml, currentArtifactIndex]);
+
+  useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode !== 'code') {
       if (codeDraft.trim()) {
         parseAndSetHtml(codeDraft, true);
@@ -2738,6 +3053,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       if (!payload.html) return;
 
       suppressPreviewReloadRef.current = true;
+      historySkipCountRef.current = 0;
+      pendingSaveDelayRef.current = 400;
       const currentArtifacts = artifactsRef.current;
       if (currentArtifacts.length === 0) return;
       queueHistorySnapshot(
@@ -2906,7 +3223,22 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }));
   };
 
+  const handleLayerVisibilityToggle = (id: string) => {
+    setPreviewHidden(prev => ({
+      ...prev,
+      [id]: !(prev[id] ?? false)
+    }));
+  };
+
+  const handleLayerLockToggle = (id: string) => {
+    setPreviewLocked(prev => ({
+      ...prev,
+      [id]: !(prev[id] ?? false)
+    }));
+  };
+
   const handleLayerSelect = (id: string) => {
+    if (previewHidden[id] || previewLocked[id]) return;
     setPreviewSelectionId(id);
     const win = iframeRef.current?.contentWindow;
     if (win) {
@@ -2914,21 +3246,137 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
+  const getDropPosition = (event: React.DragEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const offset = event.clientY - rect.top;
+    const ratio = rect.height ? offset / rect.height : 0;
+    if (ratio < 0.25) return 'before';
+    if (ratio > 0.75) return 'after';
+    return 'inside';
+  };
+
+  const handleLayerDragStart = (id: string, event: React.DragEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (target && target.closest('button')) {
+      event.preventDefault();
+      return;
+    }
+    setPreviewDragId(id);
+    setPreviewDropTarget(null);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+  };
+
+  const handleLayerDragOver = (id: string, event: React.DragEvent<HTMLDivElement>) => {
+    if (!previewDragId) return;
+    event.preventDefault();
+    if (id === previewDragId) return;
+    const position = getDropPosition(event);
+    setPreviewDropTarget(prev => {
+      if (prev && prev.id === id && prev.position === position) return prev;
+      return { id, position };
+    });
+  };
+
+  const handleLayerDrop = (id: string, event: React.DragEvent<HTMLDivElement>) => {
+    if (!previewDragId) return;
+    event.preventDefault();
+    const dragId = previewDragId || event.dataTransfer.getData('text/plain');
+    const position = getDropPosition(event);
+    setPreviewDragId(null);
+    setPreviewDropTarget(null);
+    if (!dragId || dragId === id) return;
+    const win = iframeRef.current?.contentWindow;
+    if (win) {
+      win.postMessage(
+        { source: 'ae2-layer-panel', type: 'move-layer', id: dragId, targetId: id, position },
+        '*'
+      );
+    }
+  };
+
+  const handleLayerDragEnd = () => {
+    setPreviewDragId(null);
+    setPreviewDropTarget(null);
+  };
+
   const renderLayerTree = (nodes: PreviewLayer[], depth = 0): React.ReactNode[] => {
     if (!nodes.length) return [];
     return nodes.flatMap(node => {
       if (!node || !node.id) return [];
       const expanded = previewLayerExpanded[node.id] ?? false;
+      const isHidden = !!previewHidden[node.id];
+      const isLocked = !!previewLocked[node.id];
       const hasChildren = !!(node.children && node.children.length);
+      const dropPosition = previewDropTarget?.id === node.id ? previewDropTarget.position : null;
       const row = (
         <div
           key={`layer-${node.id}`}
           className={`flex items-center gap-2 px-3 py-1 text-xs cursor-pointer ${
             previewSelectionId === node.id ? 'bg-sky-500/20 text-white' : 'text-white/80'
-          }`}
+          }${dropPosition === 'inside' ? ' bg-sky-500/10' : ''}${
+            dropPosition === 'before' ? ' border-t border-sky-400/70' : ''
+          }${dropPosition === 'after' ? ' border-b border-sky-400/70' : ''}`}
           style={{ paddingLeft: 12 + depth * 16 }}
           onClick={() => handleLayerSelect(node.id)}
+          draggable
+          onDragStart={(event) => handleLayerDragStart(node.id, event)}
+          onDragOver={(event) => handleLayerDragOver(node.id, event)}
+          onDrop={(event) => handleLayerDrop(node.id, event)}
+          onDragEnd={handleLayerDragEnd}
         >
+          <span className="flex items-center gap-2">
+            <button
+              type="button"
+              className={`w-5 h-5 flex items-center justify-center rounded border ${
+                isHidden ? 'border-sky-400 text-sky-200' : 'border-white/15 text-white/40'
+              }`}
+              title={isHidden ? 'Show layer' : 'Hide layer'}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLayerVisibilityToggle(node.id);
+              }}
+            >
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                {isHidden ? (
+                  <>
+                    <path d="M4 12c2.5-4 5.8-6 8-6s5.5 2 8 6c-2.5 4-5.8 6-8 6s-5.5-2-8-6z" />
+                    <path d="M4 4l16 16" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M4 12c2.5-4 5.8-6 8-6s5.5 2 8 6c-2.5 4-5.8 6-8 6s-5.5-2-8-6z" />
+                    <circle cx="12" cy="12" r="2.5" />
+                  </>
+                )}
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`w-5 h-5 flex items-center justify-center rounded border ${
+                isLocked ? 'border-sky-400 text-sky-200' : 'border-white/15 text-white/40'
+              }`}
+              title={isLocked ? 'Unlock layer' : 'Lock layer'}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLayerLockToggle(node.id);
+              }}
+            >
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                {isLocked ? (
+                  <>
+                    <rect x="6" y="10" width="12" height="10" rx="2" />
+                    <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" />
+                  </>
+                ) : (
+                  <>
+                    <rect x="6" y="10" width="12" height="10" rx="2" />
+                    <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0" />
+                  </>
+                )}
+              </svg>
+            </button>
+          </span>
           {hasChildren ? (
             <button
               type="button"

@@ -30,9 +30,15 @@ import {
 } from '../services/artifactHistoryService';
 import { getAuthToken } from '../services/authService';
 
+type PreviewLayer = {
+  id: string;
+  children: PreviewLayer[];
+};
+
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
 
 const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
+const AUTO_REFINE_KEY = 'ae2:autoRefine';
 
 const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: '1080p', label: 'Full HD (1920x1080)', width: 1920, height: 1080 },
@@ -305,6 +311,47 @@ const PREVIEW_EDITOR_SCRIPT = `
       }
     }
 
+    function buildLayerTree(root) {
+      if (!root || !root.querySelectorAll) return [];
+      function collectChildren(el) {
+        var nodes = [];
+        var child = el.firstElementChild;
+        while (child) {
+          var childNodes = collect(child);
+          for (var i = 0; i < childNodes.length; i += 1) {
+            nodes.push(childNodes[i]);
+          }
+          child = child.nextElementSibling;
+        }
+        return nodes;
+      }
+      function collect(el) {
+        if (!el || isUi(el)) return [];
+        var nodes = collectChildren(el);
+        if (el.id) {
+          return [{ id: el.id, children: nodes }];
+        }
+        return nodes;
+      }
+      if (root.tagName && root.tagName.toLowerCase() === 'section') {
+        return collectChildren(root);
+      }
+      return collect(root);
+    }
+
+    function postLayers() {
+      var root = getRoot();
+      var layers = buildLayerTree(root);
+      window.parent.postMessage({ source: 'ae2-preview-editor', type: 'layers', layers: layers }, '*');
+    }
+
+    function postSelection() {
+      window.parent.postMessage(
+        { source: 'ae2-preview-editor', type: 'selection', id: selected ? selected.id : null },
+        '*'
+      );
+    }
+
     function getNum(el, key, fallback) {
       var raw = el.getAttribute('data-ae2-' + key);
       if (raw == null) return fallback;
@@ -427,9 +474,11 @@ const PREVIEW_EDITOR_SCRIPT = `
         setOverlayVisible(true);
         applyTransform(selected);
         updateOverlay();
+        postSelection();
         if (body) body.focus();
       } else {
         setOverlayVisible(false);
+        postSelection();
       }
     }
 
@@ -439,6 +488,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       selected = null;
       if (body) body.classList.remove('ae2-has-selection');
       setOverlayVisible(false);
+      postSelection();
     }
 
     function startMove(e) {
@@ -555,11 +605,12 @@ const PREVIEW_EDITOR_SCRIPT = `
 
     function postUpdate() {
       var root = getRoot();
-      var html = getRootHtml(root);
+      var html = getCleanHtml(root);
       if (!restoring) {
         pushHistory(html);
       }
       window.parent.postMessage({ source: 'ae2-preview-editor', type: 'update', html: html }, '*');
+      postLayers();
     }
 
     function onMouseDown(e) {
@@ -714,6 +765,29 @@ const PREVIEW_EDITOR_SCRIPT = `
       return root === body ? body.innerHTML : root.outerHTML;
     }
 
+    function stripEditClasses(el) {
+      if (!el || !el.classList) return;
+      el.classList.remove('ae2-edit-target', 'ae2-selected');
+      if (el.getAttribute('class') === '') {
+        el.removeAttribute('class');
+      }
+    }
+
+    function getCleanHtml(root) {
+      var html = getRootHtml(root);
+      if (!html) return html;
+      var container = doc.createElement('div');
+      container.innerHTML = html;
+      var target = root === body ? container : container.firstElementChild;
+      if (!target) return html;
+      stripEditClasses(target);
+      var nodes = target.querySelectorAll('.ae2-edit-target, .ae2-selected');
+      for (var i = 0; i < nodes.length; i += 1) {
+        stripEditClasses(nodes[i]);
+      }
+      return root === body ? container.innerHTML : target.outerHTML;
+    }
+
     function pushHistory(html) {
       if (historyIndex >= 0 && history[historyIndex] === html) return;
       history = history.slice(0, historyIndex + 1);
@@ -741,6 +815,8 @@ const PREVIEW_EDITOR_SCRIPT = `
       ensureUi();
       markTargets();
       setOverlayVisible(false);
+      postLayers();
+      postSelection();
     }
 
     function getSvgContentsRect(svgEl) {
@@ -781,10 +857,27 @@ const PREVIEW_EDITOR_SCRIPT = `
       e.preventDefault();
     }
 
+    function onParentMessage(event) {
+      var payload = event.data;
+      if (!payload || payload.source !== 'ae2-layer-panel') return;
+      if (payload.type === 'select') {
+        var el = doc.getElementById(payload.id);
+        if (!el) return;
+        selectElement(el);
+        updateOverlay();
+        return;
+      }
+      if (payload.type === 'request-layers') {
+        postLayers();
+      }
+    }
+
     markTargets();
     ensureUi();
+    postLayers();
+    postSelection();
     setOverlayVisible(false);
-    pushHistory(getRootHtml(getRoot()));
+    pushHistory(getCleanHtml(getRoot()));
 
     doc.addEventListener('mousedown', onMouseDown, true);
     doc.addEventListener('dblclick', onDoubleClick, true);
@@ -792,6 +885,7 @@ const PREVIEW_EDITOR_SCRIPT = `
     doc.addEventListener('mouseup', finishDrag, true);
     window.addEventListener('resize', updateOverlay);
     window.addEventListener('scroll', updateOverlay, true);
+    window.addEventListener('message', onParentMessage);
     doc.addEventListener('keydown', onKeyDown, true);
 
     Object.keys(handles).forEach(function (key) {
@@ -972,6 +1066,20 @@ const reindexArtifactClasses = (artifactHtmls: string[], includeSlideClass: bool
         node.parentElement.removeChild(node);
       }
     });
+    const editNodes = root.querySelectorAll('.ae2-edit-target, .ae2-selected, .ae2-has-selection');
+    editNodes.forEach(node => {
+      if (!(node instanceof HTMLElement)) return;
+      node.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-has-selection');
+      if (node.getAttribute('class') === '') {
+        node.removeAttribute('class');
+      }
+    });
+    if (root instanceof HTMLElement) {
+      root.classList.remove('ae2-edit-target', 'ae2-selected', 'ae2-has-selection');
+      if (root.getAttribute('class') === '') {
+        root.removeAttribute('class');
+      }
+    }
     const scripts = root.querySelectorAll('script');
     scripts.forEach(script => {
       const text = script.textContent || '';
@@ -1301,7 +1409,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [imageProvider, setImageProvider] = useState<ImageProviderName>('random');
   const [mediaKind, setMediaKind] = useState<MediaKind>('random');
-  const [autoRefine, setAutoRefine] = useState(true);
+  const [autoRefine, setAutoRefine] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const stored = window.localStorage.getItem(AUTO_REFINE_KEY);
+    if (stored === 'true') return true;
+    if (stored === 'false') return false;
+    return false;
+  });
   const [artifactMode, setArtifactMode] = useState<ArtifactMode>('slides');
   const includeSlideClass = artifactMode === 'slides' || artifactMode === 'mixed';
   const [codeDraft, setCodeDraft] = useState('');
@@ -1324,6 +1438,11 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   });
   const [previewScale, setPreviewScale] = useState(1);
   const [previewHtml, setPreviewHtml] = useState('');
+  const [previewRevision, setPreviewRevision] = useState(0);
+  const [previewLayers, setPreviewLayers] = useState<PreviewLayer[]>([]);
+  const [previewSelectionId, setPreviewSelectionId] = useState<string | null>(null);
+  const [previewLayerExpanded, setPreviewLayerExpanded] = useState<Record<string, boolean>>({});
+  const artifactsRef = useRef<string[]>([]);
   const [historyItems, setHistoryItems] = useState<ArtifactHistoryItem[]>([]);
   const [historyPolling, setHistoryPolling] = useState(false);
   const historyPollTimerRef = useRef<number | null>(null);
@@ -1401,7 +1520,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   const getHistoryHash = (snapshot: HistorySnapshot) =>
     hashString(
-      `${snapshot.headContent}::${snapshot.artifacts.join('')}::${snapshot.currentArtifactIndex}::${snapshot.artifactMode}`
+      `${snapshot.headContent}::${snapshot.artifacts.join('')}::${snapshot.artifactMode}`
     );
 
   const stopHistoryPolling = () => {
@@ -1472,13 +1591,17 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     };
   }, []);
 
-  const applyHistorySnapshot = (snapshot: HistorySnapshot) => {
+  const applyHistorySnapshot = (snapshot: HistorySnapshot, preserveIndex = false) => {
     applyingHistoryRef.current = true;
     historySuspendUntilRef.current = Date.now() + 80;
     historyLastHashRef.current = getHistoryHash(snapshot);
+    suppressPreviewReloadRef.current = false;
+    setPreviewRevision(prev => prev + 1);
     setHeadContent(snapshot.headContent);
     setArtifacts(snapshot.artifacts);
-    setCurrentArtifactIndex(snapshot.currentArtifactIndex);
+    if (!preserveIndex) {
+      setCurrentArtifactIndex(snapshot.currentArtifactIndex);
+    }
     setArtifactMode(snapshot.artifactMode);
     if (viewMode === 'code' && !isCodeDirty) {
       setCodeDraft(buildAllArtifactsHtml(snapshot.headContent, snapshot.artifacts));
@@ -1521,7 +1644,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const current = history.past.pop() as HistorySnapshot;
     history.future.push(current);
     const previous = history.past[history.past.length - 1];
-    applyHistorySnapshot(previous);
+    applyHistorySnapshot(previous, true);
   };
 
   const performRedo = () => {
@@ -1529,7 +1652,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (history.future.length === 0) return;
     const next = history.future.pop() as HistorySnapshot;
     history.past.push(next);
-    applyHistorySnapshot(next);
+    applyHistorySnapshot(next, true);
   };
 
   useEffect(() => {
@@ -1718,7 +1841,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
           return section.outerHTML;
         });
-        historyRef.current = { past: [], future: [] };
+        historyImmediateNextRef.current = true;
         historyLastHashRef.current = null;
         setHeadContent(nextHead);
         setArtifacts(artifactHtmls);
@@ -1729,7 +1852,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         const nextHead = doc.head.innerHTML;
         const fallbackHtml = doc.body.innerHTML.trim();
         const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
-        historyRef.current = { past: [], future: [] };
+        historyImmediateNextRef.current = true;
         historyLastHashRef.current = null;
         setHeadContent(nextHead);
         setArtifacts([wrapped]);
@@ -1917,14 +2040,15 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       topic.trim() ||
       'Use the attached image as the primary reference. If no confident change is possible, return the HTML unchanged.';
     const requestedMode = inferArtifactModeFromTopic(promptText);
-    if (!currentHistoryId) {
+    const hasContext = artifacts.length > 0;
+    if (!currentHistoryId && !hasContext) {
       setArtifactMode(requestedMode);
     }
     setTopic('');
     const imageData = chatImage;
     setChatImage(null);
     setLoading(true);
-    if (!currentHistoryId) {
+    if (!currentHistoryId && !hasContext) {
       setArtifacts([]);
       setHeadContent('');
     }
@@ -1932,10 +2056,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         setStreamProgress({ active: true, text: 'Starting generation', total: 0 });
     try {
       const authToken = getAuthToken();
-      const contextHtml =
-        currentHistoryId && artifacts.length > 0
-          ? buildPersistedHtml(headContent, artifacts)
-          : undefined;
+      const contextHtml = hasContext ? buildPersistedHtml(headContent, artifacts) : undefined;
       let generatedHtml = '';
       let persistedArtifact: any | null = null;
       const persistedName = (projectTitle || promptText).trim() || undefined;
@@ -2282,13 +2403,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     `;
   };
 
-  const buildPreviewHtml = (headHtml: string, artifactHtml: string, index: number) => {
+  const buildPreviewHtml = (headHtml: string, artifactHtml: string, index: number, revision: number) => {
     return `
       <!DOCTYPE html>
       <html>
         <head>
           ${headHtml}
           <style>${PREVIEW_EDITOR_STYLE}</style>
+          <meta name="ae2-preview-rev" content="${revision}">
         </head>
         <body data-ae2-artifact-index="${index}">
           ${artifactHtml}
@@ -2506,7 +2628,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   const getCurrentFullHtml = () => {
     if (viewMode === 'preview' && artifacts.length > 0) {
-      return previewHtml || buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex);
+      return previewHtml || buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex, previewRevision);
     }
     if (viewMode === 'grid') {
       return buildGridHtml(getHeadHtml(), artifacts);
@@ -2552,9 +2674,25 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       suppressPreviewReloadRef.current = false;
       return ;
     }
-    const html = buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex);
+    const html = buildPreviewHtml(getHeadHtml(), artifacts[currentArtifactIndex], currentArtifactIndex, previewRevision);
     setPreviewHtml(html);
-  }, [viewMode, headContent, artifacts, currentArtifactIndex, animationsEnabled]);
+  }, [viewMode, headContent, artifacts, currentArtifactIndex, animationsEnabled, previewRevision]);
+
+  useEffect(() => {
+    artifactsRef.current = artifacts;
+  }, [artifacts]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(AUTO_REFINE_KEY, autoRefine ? 'true' : 'false');
+  }, [autoRefine]);
+
+  useEffect(() => {
+    if (viewMode !== 'preview') return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage({ source: 'ae2-layer-panel', type: 'request-layers' }, '*');
+  }, [viewMode, previewHtml, currentArtifactIndex]);
 
   useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode !== 'code') {
@@ -2572,8 +2710,22 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      const payload = event.data as { source?: string; type?: string; html?: string };
+      const payload = event.data as {
+        source?: string;
+        type?: string;
+        html?: string;
+        layers?: PreviewLayer[];
+        id?: string | null;
+      };
       if (!payload || payload.source !== 'ae2-preview-editor') return;
+      if (payload.type === 'layers') {
+        setPreviewLayers(Array.isArray(payload.layers) ? payload.layers : []);
+        return;
+      }
+      if (payload.type === 'selection') {
+        setPreviewSelectionId(payload.id || null);
+        return;
+      }
       if (payload.type === 'undo') {
         performUndo();
         return ;
@@ -2583,24 +2735,41 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         return ;
       }
       if (payload.type !== 'update') return;
-      if (!payload.html || artifacts.length === 0) return;
+      if (!payload.html) return;
 
       suppressPreviewReloadRef.current = true;
-      historyImmediateNextRef.current = true;
-      setArtifacts(prev => {
-        if (prev.length === 0) return prev;
-        const next = [...prev];
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = payload.html as string;
-        sanitizeLayout(tempDiv);
-        next[currentArtifactIndex] = tempDiv.innerHTML;
-        return reindexArtifactClasses(next, includeSlideClass);
-      });
+      const currentArtifacts = artifactsRef.current;
+      if (currentArtifacts.length === 0) return;
+      queueHistorySnapshot(
+        {
+          headContent,
+          artifacts: currentArtifacts,
+          currentArtifactIndex,
+          artifactMode
+        },
+        true
+      );
+      const next = [...currentArtifacts];
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = payload.html as string;
+      sanitizeLayout(tempDiv);
+      next[currentArtifactIndex] = tempDiv.innerHTML;
+      const reindexed = reindexArtifactClasses(next, includeSlideClass);
+      queueHistorySnapshot(
+        {
+          headContent,
+          artifacts: reindexed,
+          currentArtifactIndex,
+          artifactMode
+        },
+        true
+      );
+      setArtifacts(reindexed);
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [currentArtifactIndex, includeSlideClass, artifacts.length]);
+  }, [currentArtifactIndex, includeSlideClass, headContent, artifactMode]);
 
   useEffect(() => {
     if (!historyOverlayOpen) return;
@@ -2730,6 +2899,58 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
+  const handleLayerToggle = (id: string) => {
+    setPreviewLayerExpanded(prev => ({
+      ...prev,
+      [id]: !(prev[id] ?? false)
+    }));
+  };
+
+  const handleLayerSelect = (id: string) => {
+    setPreviewSelectionId(id);
+    const win = iframeRef.current?.contentWindow;
+    if (win) {
+      win.postMessage({ source: 'ae2-layer-panel', type: 'select', id }, '*');
+    }
+  };
+
+  const renderLayerTree = (nodes: PreviewLayer[], depth = 0): React.ReactNode[] => {
+    if (!nodes.length) return [];
+    return nodes.flatMap(node => {
+      if (!node || !node.id) return [];
+      const expanded = previewLayerExpanded[node.id] ?? false;
+      const hasChildren = !!(node.children && node.children.length);
+      const row = (
+        <div
+          key={`layer-${node.id}`}
+          className={`flex items-center gap-2 px-3 py-1 text-xs cursor-pointer ${
+            previewSelectionId === node.id ? 'bg-sky-500/20 text-white' : 'text-white/80'
+          }`}
+          style={{ paddingLeft: 12 + depth * 16 }}
+          onClick={() => handleLayerSelect(node.id)}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              className="w-4 h-4 text-[10px] flex items-center justify-center border border-white/20 rounded bg-black/30 text-sky-200 shrink-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLayerToggle(node.id);
+              }}
+            >
+              {expanded ? 'v' : '>'}
+            </button>
+          ) : (
+            <span className="inline-block w-4 h-4 shrink-0" />
+          )}
+          <span className="truncate">{node.id}</span>
+        </div>
+      );
+      const children = hasChildren && expanded ? renderLayerTree(node.children, depth + 1) : [];
+      return [row, ...children];
+    });
+  };
+
   const isEmpty = artifacts.length === 0;
   const placeholderCounts = useMemo(() => countPlaceholders(artifacts), [artifacts]);
   const shouldAutoCloseOverlay = () =>
@@ -2844,6 +3065,25 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   getCurrentFullHtml={getCurrentFullHtml}
                   onCodeChange={handleCodeChange}
                 />
+
+                {viewMode === 'preview' ? (
+                  <div className="w-full max-w-6xl px-4">
+                    <div className="rounded-xl border border-white/10 bg-neutral-950/80">
+                      <div className="px-4 py-2 text-[11px] uppercase tracking-[0.12em] text-sky-200 border-b border-white/10">
+                        Layers
+                      </div>
+                      <div className="h-32 overflow-auto py-1">
+                        {previewLayers.length > 0 ? (
+                          renderLayerTree(previewLayers)
+                        ) : (
+                          <div className="px-4 py-2 text-xs text-white/50">
+                            No layers with id.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="shrink-0 w-full flex justify-center px-4 pb-4">

@@ -75,6 +75,7 @@ const PREVIEW_EDITOR_STYLE = `
     --ae2-edit-outline: #4cc9ff;
     --ae2-edit-selected: #9ad8ff;
     --ae2-edit-handle: #ffffff;
+    --ae2-edit-hover: #4cc9ff;
   }
   .ae2-edit-target {
     outline: 1px solid transparent;
@@ -95,6 +96,13 @@ const PREVIEW_EDITOR_STYLE = `
     box-sizing: border-box;
     pointer-events: none;
     z-index: 2147483646;
+  }
+  #ae2-hover {
+    position: absolute;
+    border: 1px solid var(--ae2-edit-hover);
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 2147483645;
   }
   #ae2-toolbar {
     position: absolute;
@@ -163,6 +171,9 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
     var selected = [];
     var overlay = null;
+    var hoverOverlay = null;
+    var hoverMouse = null;
+    var hoverPanel = null;
     var handles = {};
     var toolbar = null;
     var dragging = null;
@@ -522,6 +533,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       }
       markTargets();
       updateOverlay();
+      updateHoverOverlay();
     }
 
     function getNum(el, key, fallback) {
@@ -567,6 +579,12 @@ const PREVIEW_EDITOR_SCRIPT = `
 
     function ensureUi() {
       if (overlay) return;
+      hoverOverlay = doc.createElement('div');
+      hoverOverlay.id = 'ae2-hover';
+      hoverOverlay.setAttribute('data-ae2-ui', 'true');
+      hoverOverlay.style.display = 'none';
+      body.appendChild(hoverOverlay);
+
       overlay = doc.createElement('div');
       overlay.id = 'ae2-selection';
       overlay.setAttribute('data-ae2-ui', 'true');
@@ -622,6 +640,11 @@ const PREVIEW_EDITOR_SCRIPT = `
       });
     }
 
+    function setHoverOverlayVisible(visible) {
+      if (!hoverOverlay) return;
+      hoverOverlay.style.display = visible ? 'block' : 'none';
+    }
+
     function getSelectionRectForList(list) {
       if (!list || !list.length) return null;
       var minLeft = Infinity;
@@ -645,6 +668,27 @@ const PREVIEW_EDITOR_SCRIPT = `
         right: maxRight,
         bottom: maxBottom
       };
+    }
+
+    function updateHoverOverlay() {
+      if (!hoverOverlay) return;
+      var target = hoverPanel || hoverMouse;
+      if (!target || isBlocked(target) || isSelected(target)) {
+        setHoverOverlayVisible(false);
+        return;
+      }
+      var rect = getSelectionRect(target);
+      if (!rect) {
+        setHoverOverlayVisible(false);
+        return;
+      }
+      var left = rect.left + window.scrollX;
+      var top = rect.top + window.scrollY;
+      hoverOverlay.style.left = left + 'px';
+      hoverOverlay.style.top = top + 'px';
+      hoverOverlay.style.width = rect.width + 'px';
+      hoverOverlay.style.height = rect.height + 'px';
+      setHoverOverlayVisible(true);
     }
 
     function updateOverlay() {
@@ -683,6 +727,26 @@ const PREVIEW_EDITOR_SCRIPT = `
         handles.se.style.left = (left + rect.width - half) + 'px';
         handles.se.style.top = (top + rect.height - half) + 'px';
       }
+    }
+
+    function setMouseHover(el) {
+      if (hoverMouse === el) return;
+      hoverMouse = el;
+      updateHoverOverlay();
+    }
+
+    function updateHoverFromEvent(e) {
+      if (isTextEditing) return;
+      if (isUi(e.target)) {
+        setMouseHover(null);
+        return;
+      }
+      var target = getSelectable(e.target);
+      if (target && isSvgElement(target) && svgHasSelectableChild(target)) {
+        var under = getUnderlyingSelectable(e.clientX, e.clientY, target);
+        if (under) target = under;
+      }
+      setMouseHover(target);
     }
 
     function isSelected(el) {
@@ -725,6 +789,7 @@ const PREVIEW_EDITOR_SCRIPT = `
       } else {
         setOverlayVisible(false);
       }
+      updateHoverOverlay();
       postSelection();
     }
 
@@ -870,7 +935,11 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function onMouseMove(e) {
-      if (!dragging || !selected.length) return;
+      if (!dragging) {
+        updateHoverFromEvent(e);
+        return;
+      }
+      if (!selected.length) return;
       if (dragging.type === 'move') {
         var dx = e.clientX - dragging.startX;
         var dy = e.clientY - dragging.startY;
@@ -1256,9 +1325,12 @@ const PREVIEW_EDITOR_SCRIPT = `
         }
       }
       selected = [];
+      hoverMouse = null;
+      hoverPanel = null;
       ensureUi();
       markTargets();
       setOverlayVisible(false);
+      setHoverOverlayVisible(false);
       postLayers();
       postSelection();
     }
@@ -1325,6 +1397,17 @@ const PREVIEW_EDITOR_SCRIPT = `
         updateOverlay();
         return;
       }
+      if (payload.type === 'hover') {
+        if (!payload.id) {
+          hoverPanel = null;
+          updateHoverOverlay();
+          return;
+        }
+        var hoverEl = doc.getElementById(payload.id);
+        hoverPanel = hoverEl || null;
+        updateHoverOverlay();
+        return;
+      }
       if (payload.type === 'layer-state') {
         hiddenIds = payload.hidden || {};
         lockedIds = payload.locked || {};
@@ -1350,14 +1433,20 @@ const PREVIEW_EDITOR_SCRIPT = `
     postLayers();
     postSelection();
     setOverlayVisible(false);
+    setHoverOverlayVisible(false);
     pushHistory(getCleanHtml(getRoot()));
 
     doc.addEventListener('mousedown', onMouseDown, true);
     doc.addEventListener('dblclick', onDoubleClick, true);
     doc.addEventListener('mousemove', onMouseMove, true);
+    doc.addEventListener('mouseleave', function () {
+      setMouseHover(null);
+    }, true);
     doc.addEventListener('mouseup', finishDrag, true);
     window.addEventListener('resize', updateOverlay);
+    window.addEventListener('resize', updateHoverOverlay);
     window.addEventListener('scroll', updateOverlay, true);
+    window.addEventListener('scroll', updateHoverOverlay, true);
     window.addEventListener('message', onParentMessage);
     doc.addEventListener('keydown', onKeyDown, true);
 
@@ -3222,9 +3311,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       }
       if (payload.type === 'selection') {
         if (Array.isArray(payload.ids)) {
-          setPreviewSelectionIds(payload.ids.filter((id): id is string => !!id));
+          const nextIds = payload.ids.filter((id): id is string => !!id);
+          setPreviewSelectionIds(nextIds);
         } else if (payload.id) {
-          setPreviewSelectionIds([payload.id]);
+          const id = typeof payload.id === 'string' ? payload.id : '';
+          if (id) {
+            setPreviewSelectionIds([id]);
+          }
         } else {
           setPreviewSelectionIds([]);
         }
@@ -3426,6 +3519,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }));
   };
 
+  const handleLayerHover = (id: string | null) => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage({ source: 'ae2-layer-panel', type: 'hover', id }, '*');
+  };
+
   const handleLayerSelect = (id: string, event?: React.MouseEvent<HTMLDivElement>) => {
     if (previewHidden[id] || previewLocked[id]) return;
     const isMulti = !!(event && (event.ctrlKey || event.metaKey));
@@ -3518,6 +3617,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           }${dropPosition === 'after' ? ' border-b border-sky-400/70' : ''}`}
           style={{ paddingLeft: 12 + depth * 16 }}
           onClick={(event) => handleLayerSelect(node.id, event)}
+          onMouseEnter={() => {
+            if (!isHidden && !isLocked) handleLayerHover(node.id);
+          }}
+          onMouseLeave={() => handleLayerHover(null)}
           draggable
           onDragStart={(event) => handleLayerDragStart(node.id, event)}
           onDragOver={(event) => handleLayerDragOver(node.id, event)}

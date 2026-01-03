@@ -624,7 +624,7 @@ export const generateArtifacts = async (
     const promptWithContext = contextHtml
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
       : finalPrompt;
-    const text = await createResponseText(provider, promptWithContext, 1.5, imageData);
+    const text = await createResponseText(provider, promptWithContext, 0.7, imageData);
     return await replaceImagePlaceholders(text, [], undefined, imageProvider, topic, mediaKind);
   } catch (error) {
     console.error("Error generating artifacts:", error);

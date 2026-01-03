@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   generateArtifacts,
+  generateArtifactsStream,
   generateArtifactsPersisted,
   regenerateArtifact,
   generateNewArtifact,
@@ -799,6 +800,13 @@ const PREVIEW_EDITOR_SCRIPT = `
   })();
 `;
 
+const LOADER_STYLE = `
+  @keyframes ae2-indeterminate {
+    0% { left: -30%; }
+    100% { left: 100%; }
+  }
+`;
+
 const getArtifactIdFromUrl = () => {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
@@ -1137,7 +1145,7 @@ const buildRootBlock = (rootContent: string | null, updates: Record<string, stri
   });
   return `:root {
 ${entries.join('\n')}
-}
+  }
 `;
 };
 
@@ -1278,6 +1286,11 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [provider, setProvider] = useState<AiProviderName>('gemini');
   
   const [loading, setLoading] = useState(false);
+  const [streamProgress, setStreamProgress] = useState({
+    active: false,
+    text: '',
+    total: 0
+  });
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
   const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -1915,6 +1928,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setHeadContent('');
     }
     setErrorMsg(null);
+        setStreamProgress({ active: true, text: 'Starting generation', total: 0 });
     try {
       const authToken = getAuthToken();
       const contextHtml =
@@ -1925,8 +1939,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       let persistedArtifact: any | null = null;
       const persistedName = (projectTitle || promptText).trim() || undefined;
 
-      if (authToken) {
-        if (contextHtml) {
+      if (contextHtml) {
+        if (authToken) {
           const result = await updateArtifactsFromContextPersisted(
             provider,
             promptText,
@@ -1943,41 +1957,81 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           generatedHtml = result.text;
           persistedArtifact = result.artifact;
         } else {
-          const result = await generateArtifactsPersisted(
+          generatedHtml = await updateArtifactsFromContext(
             provider,
             promptText,
-            requestedMode,
+            artifactMode,
+            contextHtml,
             imageProvider,
             mediaKind,
-            {
-              imageData,
-              historyId: currentHistoryId,
-              name: persistedName
-            }
+            imageData
           );
-          generatedHtml = result.text;
-          persistedArtifact = result.artifact;
         }
       } else {
-        generatedHtml = contextHtml
-          ? await updateArtifactsFromContext(
-              provider,
-              promptText,
-              artifactMode,
-              contextHtml,
-              imageProvider,
-              mediaKind,
-              imageData
-            )
-          : await generateArtifacts(
-              provider,
-              promptText,
-              requestedMode,
-              imageProvider,
-              mediaKind,
-              undefined,
-              imageData
-            );
+        generatedHtml = await generateArtifactsStream(
+          provider,
+          promptText,
+          requestedMode,
+          imageProvider,
+          mediaKind,
+          (event) => {
+            if (requestId !== generateRequestIdRef.current) return;
+            if (event.type === 'base') {
+              const total = Number(event.total) || 0;
+              setStreamProgress(prev => ({
+                active: true,
+                text: 'Preparing layout',
+                total: total || prev.total
+              }));
+              return;
+            }
+            if (event.type === 'section' && typeof event.html === 'string') {
+              const index = Number(event.index);
+              if (!Number.isFinite(index)) return;
+              if (event.head && typeof event.head === 'string') {
+                setHeadContent(event.head);
+              }
+              setStreamProgress(prev => ({
+                active: true,
+                text: 'Refining artifacts',
+                total: Number(event.total) || prev.total
+              }));
+              setArtifacts(prev => {
+                const next = [...prev];
+                if (index < 0) return prev;
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = event.html as string;
+                sanitizeLayout(tempDiv);
+                if (index >= next.length) {
+                  while (next.length < index) {
+                    next.push('');
+                  }
+                  next.push(tempDiv.innerHTML);
+                } else {
+                  next[index] = tempDiv.innerHTML;
+                }
+                return reindexArtifactClasses(next, includeSlideClass);
+              });
+              return;
+            }
+            if (event.type === 'images') {
+              setStreamProgress(prev => ({
+                active: true,
+                text: 'Loading images',
+                total: prev.total
+              }));
+              return;
+            }
+            if (event.type === 'done') {
+              setStreamProgress(prev => ({
+                ...prev,
+                active: true,
+                text: 'Finalizing'
+              }));
+            }
+          },
+          imageData
+        );
       }
       if (requestId !== generateRequestIdRef.current) return;
       historyImmediateNextRef.current = true;
@@ -2039,6 +2093,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       }
     } catch (error: any) {
       console.error(error);
+      setStreamProgress({ active: false, text: '', total: 0 });
       if (error?.status === 429 || error?.message?.includes('429')) {
         setErrorMsg("We're experiencing high traffic. Please wait a moment and try again.");
       } else {
@@ -2047,6 +2102,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     } finally {
       if (requestId === generateRequestIdRef.current) {
         setLoading(false);
+        setStreamProgress(prev => (prev.active ? { active: false, text: prev.text, total: prev.total } : prev));
       }
     }
   };
@@ -2674,6 +2730,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   return (
     <div className={`flex flex-col gap-4${isEmpty ? ' min-h-[calc(100vh-7rem)]' : ''}`}>
+      <style>{LOADER_STYLE}</style>
       {historyOverlayOpen ? (
         <div className={`fixed inset-0 z-[60]${isOverlayModal ? '' : ' pointer-events-none'}`}>
           {isOverlayModal ? (
@@ -2741,18 +2798,43 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                 onDescriptionSave={saveProjectDescription}
               />
 
-              <ArtifactPreview
-                previewStageRef={previewStageRef}
-                previewSize={previewSize}
-                previewScale={previewScale}
-                viewMode={viewMode}
-                codeDraft={codeDraft}
-                baseWidth={PREVIEW_BASE_WIDTH}
-                baseHeight={PREVIEW_BASE_HEIGHT}
-                iframeRef={iframeRef}
-                getCurrentFullHtml={getCurrentFullHtml}
-                onCodeChange={handleCodeChange}
-              />
+              <div className="flex flex-col items-center gap-4">
+                {streamProgress.active ? (
+                  <div
+                    className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-xs text-white/80"
+                    style={{ width: previewSize.width, maxWidth: '100%' }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>{streamProgress.text || 'Generating artifacts'}</span>
+                    </div>
+                    <div className="h-1 w-full overflow-hidden rounded bg-white/10">
+                      <div
+                        className="h-full rounded"
+                        style={{
+                          width: '30%',
+                          backgroundColor: 'rgba(255,255,255,0.7)',
+                          animation: 'ae2-indeterminate 2.6s linear infinite',
+                          position: 'relative',
+                          willChange: 'left'
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <ArtifactPreview
+                  previewStageRef={previewStageRef}
+                  previewSize={previewSize}
+                  previewScale={previewScale}
+                  viewMode={viewMode}
+                  codeDraft={codeDraft}
+                  baseWidth={PREVIEW_BASE_WIDTH}
+                  baseHeight={PREVIEW_BASE_HEIGHT}
+                  iframeRef={iframeRef}
+                  getCurrentFullHtml={getCurrentFullHtml}
+                  onCodeChange={handleCodeChange}
+                />
+              </div>
 
               <div className="shrink-0 w-full flex justify-center px-4 pb-4">
                 <div className="flex flex-col gap-3" style={{ width: previewSize.width || '100%' }}>
@@ -2796,6 +2878,30 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           ) : (
             <div className="flex flex-1 items-center justify-center px-4 pb-2">
               <div style={{ width: '100%', maxWidth: 720 }}>
+                {streamProgress.active ? (
+                  <div className="mb-4 flex justify-center">
+                    <div
+                      className="mx-auto flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-xs text-white/80"
+                      style={{ width: previewSize.width, maxWidth: '100%' }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{streamProgress.text || 'Generating artifacts'}</span>
+                      </div>
+                    <div className="h-1 w-full overflow-hidden rounded bg-white/10">
+                      <div
+                        className="h-full rounded"
+                        style={{
+                          width: '30%',
+                          backgroundColor: 'rgba(255,255,255,0.7)',
+                          animation: 'ae2-indeterminate 2.6s linear infinite',
+                          position: 'relative',
+                          willChange: 'left'
+                        }}
+                      />
+                    </div>
+                    </div>
+                  </div>
+                ) : null}
                 <GeneratorInput
                   errorMsg={errorMsg}
                   provider={provider}

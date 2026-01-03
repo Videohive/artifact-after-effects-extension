@@ -1,4 +1,11 @@
-import { ADD_ARTIFACT_PROMPT, BASE_PROMPT, REGENERATE_PROMPT, UPDATE_FROM_CONTEXT_PROMPT } from "./aiPrompts";
+import {
+  ADD_ARTIFACT_PROMPT,
+  ART_DIRECTION_PROMPT,
+  BASE_PROMPT,
+  CACHE_PRIMER_CONTEXT,
+  REGENERATE_PROMPT,
+  UPDATE_FROM_CONTEXT_PROMPT
+} from "./aiPrompts";
 import { getAuthToken } from "./authService";
 
 export type AiProviderName = 'gemini' | 'openai' | 'claude';
@@ -63,6 +70,86 @@ const getApiError = () =>
 const cleanResponseText = (text: string) =>
   text.replace(/```html/g, "").replace(/```/g, "");
 
+type StreamEventHandler = (event: { type: string; [key: string]: any }) => void;
+
+const streamSseResponse = async (
+  response: Response,
+  onEvent?: StreamEventHandler
+): Promise<{ finalHtml: string }> => {
+  if (!response.body) {
+    throw new Error('Stream response is empty.');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalHtml = '';
+
+  const processChunk = (chunk: string) => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, index);
+      buffer = buffer.slice(index + 2);
+      const lines = rawEvent.split('\n');
+      let eventName = 'message';
+      const dataLines: string[] = [];
+      lines.forEach(line => {
+        if (line.startsWith('event:')) {
+          eventName = line.replace('event:', '').trim();
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.replace('data:', '').trim());
+        }
+      });
+      const dataRaw = dataLines.join('\n');
+      if (!dataRaw) return;
+      let parsed: any = dataRaw;
+      try {
+        parsed = JSON.parse(dataRaw);
+      } catch {
+        parsed = { message: dataRaw };
+      }
+      const event = { type: eventName, ...parsed };
+      if (eventName === 'done' && typeof event.html === 'string') {
+        finalHtml = event.html;
+      }
+      if (typeof onEvent === 'function') {
+        onEvent(event);
+      }
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    processChunk(decoder.decode(value, { stream: true }));
+  }
+
+  if (buffer.trim()) {
+    processChunk('\n\n');
+  }
+
+  return { finalHtml };
+};
+
+const extractJsonCandidate = (text: string): string => {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return text.trim();
+  return text.slice(start, end + 1).trim();
+};
+
+const normalizeArtDirectionJson = (text: string): string => {
+  const trimmed = text.trim();
+  if (!trimmed) return '{}';
+  const candidate = extractJsonCandidate(trimmed);
+  try {
+    const parsed = JSON.parse(candidate);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return candidate;
+  }
+};
+
 const VIDEO_EXT_RE = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i;
 const isVideoUrl = (value?: string | null) => !!value && VIDEO_EXT_RE.test(value);
 
@@ -70,7 +157,8 @@ const createResponseText = async (
   provider: AiProviderName,
   prompt: string,
   temperature: number,
-  imageData?: string | null
+  imageData?: string | null,
+  options?: { extraBody?: Record<string, unknown> }
 ) => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
@@ -78,7 +166,14 @@ const createResponseText = async (
     const response = await fetch(`${apiBaseUrl}/artifact/ai`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider, prompt, temperature, imageData })
+      body: JSON.stringify({
+        provider,
+        prompt,
+        temperature,
+        imageData,
+        autoRefine: true,
+        ...(options?.extraBody || {})
+      })
     });
     if (!response.ok) {
       const errorText = await response.text();
@@ -94,12 +189,54 @@ const createResponseText = async (
   });
 };
 
+const createStreamedResponseText = async (
+  provider: AiProviderName,
+  prompt: string,
+  temperature: number,
+  imageData?: string | null,
+  onEvent?: StreamEventHandler,
+  options?: { extraBody?: Record<string, unknown> }
+): Promise<{ text: string }> => {
+  return callWithRetry(async () => {
+    const apiBaseUrl = getApiBaseUrl();
+    if (!apiBaseUrl) throw new Error(getApiError());
+    const response = await fetch(`${apiBaseUrl}/artifact/ai/stream`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider,
+        prompt,
+        temperature,
+        imageData,
+        autoRefine: true,
+        ...(options?.extraBody || {})
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`AI API error (${response.status}): ${errorText}`);
+    }
+    const { finalHtml } = await streamSseResponse(response, onEvent);
+    return { text: cleanResponseText(finalHtml || '') };
+  });
+};
+
+const createArtDirectionJson = async (
+  provider: AiProviderName,
+  topic: string,
+  imageData?: string | null
+): Promise<string> => {
+  const artPrompt = ART_DIRECTION_PROMPT.replace(/{topic}/g, topic);
+  const text = await createResponseText(provider, artPrompt, 0.6, imageData);
+  return normalizeArtDirectionJson(text);
+};
+
 const createPersistedResponseText = async (
   provider: AiProviderName,
   prompt: string,
   temperature: number,
   imageData?: string | null,
-  options?: { historyId?: string | null; name?: string | null }
+  options?: { historyId?: string | null; name?: string | null; extraBody?: Record<string, unknown> }
 ): Promise<{ text: string; artifact: any | null }> => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
@@ -116,8 +253,10 @@ const createPersistedResponseText = async (
         prompt,
         temperature,
         imageData,
+        autoRefine: true,
         historyId: options?.historyId || null,
-        name: options?.name
+        name: options?.name,
+        ...(options?.extraBody || {})
       })
     });
     if (!response.ok) {
@@ -618,16 +757,61 @@ export const generateArtifacts = async (
   imageData?: string | null
 ): Promise<string> => {
   try {
+    const artDirectionJson = await createArtDirectionJson(provider, topic, imageData);
     const finalPrompt = BASE_PROMPT
       .replace(/{topic}/g, topic)
-      .replace(/{artifact_mode}/g, artifactMode);
+      .replace(/{artifact_mode}/g, artifactMode)
+      .replace(/{art_direction_json}/g, artDirectionJson);
     const promptWithContext = contextHtml
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
       : finalPrompt;
-    const text = await createResponseText(provider, promptWithContext, 0.7, imageData);
+    const text = await createResponseText(provider, promptWithContext, 1.5, imageData, {
+      extraBody: {
+        perSectionRefine: true,
+        refineAllSections: true,
+        regeneratePromptTemplate: REGENERATE_PROMPT,
+        artifactMode,
+        topic
+      }
+    });
     return await replaceImagePlaceholders(text, [], undefined, imageProvider, topic, mediaKind);
   } catch (error) {
     console.error("Error generating artifacts:", error);
+    throw error;
+  }
+};
+
+export const generateArtifactsStream = async (
+  provider: AiProviderName,
+  topic: string,
+  artifactMode: ArtifactMode,
+  imageProvider: ImageProviderName,
+  mediaKind: MediaKind,
+  onEvent?: StreamEventHandler,
+  imageData?: string | null
+): Promise<string> => {
+  try {
+    const artDirectionJson = await createArtDirectionJson(provider, topic, imageData);
+    const finalPrompt = BASE_PROMPT
+      .replace(/{topic}/g, topic)
+      .replace(/{artifact_mode}/g, artifactMode)
+      .replace(/{art_direction_json}/g, artDirectionJson);
+    const response = await createStreamedResponseText(provider, finalPrompt, 1.5, imageData, onEvent, {
+      extraBody: {
+        perSectionRefine: true,
+        refineAllSections: true,
+        regeneratePromptTemplate: REGENERATE_PROMPT,
+        artifactMode,
+        topic
+      }
+    });
+    if (typeof onEvent === 'function') {
+      onEvent({ type: 'images' });
+    }
+    const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider, topic, mediaKind);
+    return text;
+  } catch (error) {
+    console.error("Error generating artifacts (stream):", error);
     throw error;
   }
 };
@@ -646,9 +830,11 @@ export const generateArtifactsPersisted = async (
   }
 ): Promise<{ text: string; artifact: any | null }> => {
   try {
+    const artDirectionJson = await createArtDirectionJson(provider, topic, options?.imageData);
     const finalPrompt = BASE_PROMPT
       .replace(/{topic}/g, topic)
-      .replace(/{artifact_mode}/g, artifactMode);
+      .replace(/{artifact_mode}/g, artifactMode)
+      .replace(/{art_direction_json}/g, artDirectionJson);
     const promptWithContext = options?.contextHtml
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${options.contextHtml}`
       : finalPrompt;
@@ -657,7 +843,17 @@ export const generateArtifactsPersisted = async (
       promptWithContext,
       1.5,
       options?.imageData,
-      { historyId: options?.historyId, name: options?.name }
+      {
+        historyId: options?.historyId,
+        name: options?.name,
+        extraBody: {
+          perSectionRefine: true,
+          refineAllSections: true,
+          regeneratePromptTemplate: REGENERATE_PROMPT,
+          artifactMode,
+          topic
+        }
+      }
     );
     const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider, topic, mediaKind);
     return { text, artifact: response.artifact };
@@ -756,7 +952,7 @@ export const regenerateArtifact = async (
       .replace('{cssContext}', truncatedCss)
       .replace('{currentArtifact}', currentArtifact);
 
-    const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
+    const text = await createResponseText(provider, filledPrompt, 1.3, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
     return await replaceImagePlaceholders(
       sectionHtml,
@@ -808,16 +1004,4 @@ export const generateNewArtifact = async (
   }
 };
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+export const getContextCachePrimer = (): string => CACHE_PRIMER_CONTEXT;

@@ -1301,6 +1301,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [copiedHtml, setCopiedHtml] = useState(false);
   const [imageProvider, setImageProvider] = useState<ImageProviderName>('random');
   const [mediaKind, setMediaKind] = useState<MediaKind>('random');
+  const [autoRefine, setAutoRefine] = useState(true);
   const [artifactMode, setArtifactMode] = useState<ArtifactMode>('slides');
   const includeSlideClass = artifactMode === 'slides' || artifactMode === 'mixed';
   const [codeDraft, setCodeDraft] = useState('');
@@ -2030,7 +2031,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               }));
             }
           },
-          imageData
+          imageData,
+          { autoRefine }
         );
       }
       if (requestId !== generateRequestIdRef.current) return;
@@ -2114,7 +2116,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
-  const regenerateSingleArtifact = async (index: number, excludedImages: string[], cssContext: string) => {
+  const regenerateSingleArtifact = async (
+    index: number,
+    excludedImages: string[],
+    cssContext: string,
+    contextHtml?: string
+  ) => {
     const currentContent = artifacts[index];
     const newArtifactHtml = await regenerateArtifact(
       provider,
@@ -2124,7 +2131,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       excludedImages,
       artifactMode,
       imageProvider,
-      mediaKind
+      mediaKind,
+      undefined,
+      contextHtml
     );
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = newArtifactHtml;
@@ -2145,7 +2154,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
         for (let i = 0; i < artifacts.length; i += 1) {
           const excluded = Array.from(used);
-          const regenerated = await regenerateSingleArtifact(i, excluded, cssContext);
+          const contextHtml = i > 0 ? buildPersistedHtml(headContent, nextArtifacts.slice(0, i)) : '';
+          const regenerated = await regenerateSingleArtifact(i, excluded, cssContext, contextHtml);
           if (requestId !== regenerateRequestIdRef.current) return;
           nextArtifacts[i] = regenerated;
           extractImageUrlsFromHtml(regenerated).forEach(url => used.add(url));
@@ -2912,6 +2922,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   mediaKind={mediaKind}
                   mediaKindOptions={MEDIA_KIND_OPTIONS}
                   onMediaKindChange={setMediaKind}
+                  autoRefine={autoRefine}
+                  onAutoRefineChange={setAutoRefine}
                   topic={topic}
                   onTopicChange={setTopic}
                   onKeyDown={handleKeyDown}
@@ -2938,6 +2950,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   mediaKind={mediaKind}
                   mediaKindOptions={MEDIA_KIND_OPTIONS}
                   onMediaKindChange={setMediaKind}
+                  autoRefine={autoRefine}
+                  onAutoRefineChange={setAutoRefine}
                   topic={topic}
                   onTopicChange={setTopic}
                   onKeyDown={handleKeyDown}

@@ -13,6 +13,8 @@ type GeneratorInputProps = {
   mediaKind: MediaKind;
   mediaKindOptions: MediaKindOption[];
   onMediaKindChange: (value: MediaKind) => void;
+  autoRefine: boolean;
+  onAutoRefineChange: (value: boolean) => void;
   topic: string;
   onTopicChange: (value: string) => void;
   onKeyDown: (event: React.KeyboardEvent) => void;
@@ -34,6 +36,8 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   mediaKind,
   mediaKindOptions,
   onMediaKindChange,
+  autoRefine,
+  onAutoRefineChange,
   topic,
   onTopicChange,
   onKeyDown,
@@ -136,6 +140,15 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
               </option>
             ))}
           </select>
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="font-medium">Auto refine</span>
+          <input
+            type="checkbox"
+            checked={autoRefine}
+            onChange={(e) => onAutoRefineChange(e.target.checked)}
+            className="h-4 w-4 rounded border border-neutral-700 bg-neutral-900 text-indigo-500 focus:ring-2 focus:ring-indigo-500/40"
+          />
         </label>
 
         {/* <div className="flex items-center gap-2">

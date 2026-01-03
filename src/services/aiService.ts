@@ -158,7 +158,7 @@ const createResponseText = async (
   prompt: string,
   temperature: number,
   imageData?: string | null,
-  options?: { extraBody?: Record<string, unknown> }
+  options?: { autoRefine?: boolean; extraBody?: Record<string, unknown> }
 ) => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
@@ -171,7 +171,7 @@ const createResponseText = async (
         prompt,
         temperature,
         imageData,
-        autoRefine: true,
+        autoRefine: options?.autoRefine ?? false,
         ...(options?.extraBody || {})
       })
     });
@@ -195,7 +195,7 @@ const createStreamedResponseText = async (
   temperature: number,
   imageData?: string | null,
   onEvent?: StreamEventHandler,
-  options?: { extraBody?: Record<string, unknown> }
+  options?: { autoRefine?: boolean; extraBody?: Record<string, unknown> }
 ): Promise<{ text: string }> => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
@@ -208,7 +208,7 @@ const createStreamedResponseText = async (
         prompt,
         temperature,
         imageData,
-        autoRefine: true,
+        autoRefine: options?.autoRefine ?? false,
         ...(options?.extraBody || {})
       })
     });
@@ -236,7 +236,12 @@ const createPersistedResponseText = async (
   prompt: string,
   temperature: number,
   imageData?: string | null,
-  options?: { historyId?: string | null; name?: string | null; extraBody?: Record<string, unknown> }
+  options?: {
+    historyId?: string | null;
+    name?: string | null;
+    autoRefine?: boolean;
+    extraBody?: Record<string, unknown>;
+  }
 ): Promise<{ text: string; artifact: any | null }> => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
@@ -253,7 +258,7 @@ const createPersistedResponseText = async (
         prompt,
         temperature,
         imageData,
-        autoRefine: true,
+        autoRefine: options?.autoRefine ?? false,
         historyId: options?.historyId || null,
         name: options?.name,
         ...(options?.extraBody || {})
@@ -754,25 +759,31 @@ export const generateArtifacts = async (
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
   contextHtml?: string,
-  imageData?: string | null
+  imageData?: string | null,
+  options?: { autoRefine?: boolean }
 ): Promise<string> => {
   try {
+    const autoRefine = options?.autoRefine ?? false;
     const artDirectionJson = await createArtDirectionJson(provider, topic, imageData);
-    const finalPrompt = BASE_PROMPT
+    const basePrompt = BASE_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode)
       .replace(/{art_direction_json}/g, artDirectionJson);
+    const finalPrompt = `${CACHE_PRIMER_CONTEXT}\n\n${basePrompt}`;
     const promptWithContext = contextHtml
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
       : finalPrompt;
     const text = await createResponseText(provider, promptWithContext, 1.5, imageData, {
-      extraBody: {
-        perSectionRefine: true,
-        refineAllSections: true,
-        regeneratePromptTemplate: REGENERATE_PROMPT,
-        artifactMode,
-        topic
-      }
+      autoRefine,
+      extraBody: autoRefine
+        ? {
+            perSectionRefine: true,
+            refineAllSections: true,
+            regeneratePromptTemplate: REGENERATE_PROMPT,
+            artifactMode,
+            topic
+          }
+        : { artifactMode, topic }
     });
     return await replaceImagePlaceholders(text, [], undefined, imageProvider, topic, mediaKind);
   } catch (error) {
@@ -788,23 +799,36 @@ export const generateArtifactsStream = async (
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
   onEvent?: StreamEventHandler,
-  imageData?: string | null
+  imageData?: string | null,
+  options?: { autoRefine?: boolean }
 ): Promise<string> => {
   try {
+    const autoRefine = options?.autoRefine ?? false;
     const artDirectionJson = await createArtDirectionJson(provider, topic, imageData);
-    const finalPrompt = BASE_PROMPT
+    const basePrompt = BASE_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode)
       .replace(/{art_direction_json}/g, artDirectionJson);
-    const response = await createStreamedResponseText(provider, finalPrompt, 1.5, imageData, onEvent, {
-      extraBody: {
-        perSectionRefine: true,
-        refineAllSections: true,
-        regeneratePromptTemplate: REGENERATE_PROMPT,
-        artifactMode,
-        topic
+    const finalPrompt = `${CACHE_PRIMER_CONTEXT}\n\n${basePrompt}`;
+    const response = await createStreamedResponseText(
+      provider,
+      finalPrompt,
+      1.5,
+      imageData,
+      onEvent,
+      {
+        autoRefine,
+        extraBody: autoRefine
+          ? {
+              perSectionRefine: true,
+              refineAllSections: true,
+              regeneratePromptTemplate: REGENERATE_PROMPT,
+              artifactMode,
+              topic
+            }
+          : { artifactMode, topic }
       }
-    });
+    );
     if (typeof onEvent === 'function') {
       onEvent({ type: 'images' });
     }
@@ -827,14 +851,17 @@ export const generateArtifactsPersisted = async (
     imageData?: string | null;
     historyId?: string | null;
     name?: string | null;
+    autoRefine?: boolean;
   }
 ): Promise<{ text: string; artifact: any | null }> => {
   try {
+    const autoRefine = options?.autoRefine ?? false;
     const artDirectionJson = await createArtDirectionJson(provider, topic, options?.imageData);
-    const finalPrompt = BASE_PROMPT
+    const basePrompt = BASE_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode)
       .replace(/{art_direction_json}/g, artDirectionJson);
+    const finalPrompt = `${CACHE_PRIMER_CONTEXT}\n\n${basePrompt}`;
     const promptWithContext = options?.contextHtml
       ? `${finalPrompt}\n\nCONTEXT_HTML:\n${options.contextHtml}`
       : finalPrompt;
@@ -846,13 +873,16 @@ export const generateArtifactsPersisted = async (
       {
         historyId: options?.historyId,
         name: options?.name,
-        extraBody: {
-          perSectionRefine: true,
-          refineAllSections: true,
-          regeneratePromptTemplate: REGENERATE_PROMPT,
-          artifactMode,
-          topic
-        }
+        autoRefine,
+        extraBody: autoRefine
+          ? {
+              perSectionRefine: true,
+              refineAllSections: true,
+              regeneratePromptTemplate: REGENERATE_PROMPT,
+              artifactMode,
+              topic
+            }
+          : { artifactMode, topic }
       }
     );
     const text = await replaceImagePlaceholders(response.text, [], undefined, imageProvider, topic, mediaKind);
@@ -941,7 +971,8 @@ export const regenerateArtifact = async (
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
-  imageData?: string | null
+  imageData?: string | null,
+  contextHtml?: string
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;
@@ -950,9 +981,10 @@ export const regenerateArtifact = async (
       .replace('{topic}', topic)
       .replace('{artifact_mode}', artifactMode)
       .replace('{cssContext}', truncatedCss)
+      .replace('{contextHtml}', contextHtml || '')
       .replace('{currentArtifact}', currentArtifact);
 
-    const text = await createResponseText(provider, filledPrompt, 1.3, imageData);
+    const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
     return await replaceImagePlaceholders(
       sectionHtml,

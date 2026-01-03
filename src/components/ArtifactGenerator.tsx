@@ -161,7 +161,7 @@ const PREVIEW_EDITOR_SCRIPT = `
     if (body) {
       body.setAttribute('tabindex', '0');
     }
-    var selected = null;
+    var selected = [];
     var overlay = null;
     var handles = {};
     var toolbar = null;
@@ -458,8 +458,12 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function postSelection() {
+      var ids = [];
+      for (var i = 0; i < selected.length; i += 1) {
+        if (selected[i] && selected[i].id) ids.push(selected[i].id);
+      }
       window.parent.postMessage(
-        { source: 'ae2-preview-editor', type: 'selection', id: selected ? selected.id : null },
+        { source: 'ae2-preview-editor', type: 'selection', ids: ids, id: ids[0] || null },
         '*'
       );
     }
@@ -507,8 +511,14 @@ const PREVIEW_EDITOR_SCRIPT = `
           }
         }
       }
-      if (selected && isBlocked(selected)) {
-        clearSelection();
+      if (selected.length) {
+        var nextSelection = [];
+        for (var s = 0; s < selected.length; s += 1) {
+          if (selected[s] && !isBlocked(selected[s])) nextSelection.push(selected[s]);
+        }
+        if (nextSelection.length !== selected.length) {
+          setSelection(nextSelection);
+        }
       }
       markTargets();
       updateOverlay();
@@ -612,9 +622,34 @@ const PREVIEW_EDITOR_SCRIPT = `
       });
     }
 
+    function getSelectionRectForList(list) {
+      if (!list || !list.length) return null;
+      var minLeft = Infinity;
+      var minTop = Infinity;
+      var maxRight = -Infinity;
+      var maxBottom = -Infinity;
+      for (var i = 0; i < list.length; i += 1) {
+        var rect = getSelectionRect(list[i]);
+        if (!rect) continue;
+        minLeft = Math.min(minLeft, rect.left);
+        minTop = Math.min(minTop, rect.top);
+        maxRight = Math.max(maxRight, rect.right);
+        maxBottom = Math.max(maxBottom, rect.bottom);
+      }
+      if (minLeft === Infinity) return null;
+      return {
+        left: minLeft,
+        top: minTop,
+        width: Math.max(0, maxRight - minLeft),
+        height: Math.max(0, maxBottom - minTop),
+        right: maxRight,
+        bottom: maxBottom
+      };
+    }
+
     function updateOverlay() {
-      if (!selected || !overlay) return;
-      var rect = getSelectionRect(selected);
+      if (!selected.length || !overlay) return;
+      var rect = getSelectionRectForList(selected);
       if (!rect) return;
       var left = rect.left + window.scrollX;
       var top = rect.top + window.scrollY;
@@ -650,52 +685,120 @@ const PREVIEW_EDITOR_SCRIPT = `
       }
     }
 
-    function selectElement(el) {
-      if (selected === el) return;
-      if (selected) {
-        selected.classList.remove('ae2-selected');
+    function isSelected(el) {
+      if (!el) return false;
+      for (var i = 0; i < selected.length; i += 1) {
+        if (selected[i] === el) return true;
       }
-      selected = el;
-      if (selected) {
-        selected.classList.add('ae2-selected');
-        if (body) body.classList.add('ae2-has-selection');
+      return false;
+    }
+
+    function setSelection(list) {
+      var next = [];
+      var seen = {};
+      for (var i = 0; i < list.length; i += 1) {
+        var el = list[i];
+        if (!el || !el.id || isBlocked(el)) continue;
+        if (seen[el.id]) continue;
+        seen[el.id] = true;
+        next.push(el);
+      }
+      var hasSelection = next.length > 0;
+      for (var p = 0; p < selected.length; p += 1) {
+        if (selected[p] && selected[p].classList && !seen[selected[p].id]) {
+          selected[p].classList.remove('ae2-selected');
+        }
+      }
+      for (var n = 0; n < next.length; n += 1) {
+        if (next[n] && next[n].classList) {
+          next[n].classList.add('ae2-selected');
+          applyTransform(next[n]);
+        }
+      }
+      selected = next;
+      if (body) body.classList.toggle('ae2-has-selection', hasSelection);
+      if (hasSelection) {
         ensureUi();
         setOverlayVisible(true);
-        applyTransform(selected);
         updateOverlay();
-        postSelection();
         if (body) body.focus();
       } else {
         setOverlayVisible(false);
-        postSelection();
+      }
+      postSelection();
+    }
+
+    function selectElement(el) {
+      if (!el) return;
+      setSelection([el]);
+    }
+
+    function toggleSelection(el) {
+      if (!el) return;
+      if (isSelected(el)) {
+        var next = [];
+        for (var i = 0; i < selected.length; i += 1) {
+          if (selected[i] !== el) next.push(selected[i]);
+        }
+        setSelection(next);
+      } else {
+        var appended = selected.slice(0);
+        appended.push(el);
+        setSelection(appended);
       }
     }
 
     function clearSelection() {
-      if (!selected) return;
-      selected.classList.remove('ae2-selected');
-      selected = null;
-      if (body) body.classList.remove('ae2-has-selection');
-      setOverlayVisible(false);
-      postSelection();
+      if (!selected.length) return;
+      setSelection([]);
+    }
+
+    function buildDragItems(list) {
+      var items = [];
+      for (var i = 0; i < list.length; i += 1) {
+        var el = list[i];
+        if (!el) continue;
+        var rect = getSelectionRect(el) || el.getBoundingClientRect();
+        if (!rect) continue;
+        items.push({
+          el: el,
+          tx: getNum(el, 'tx', 0),
+          ty: getNum(el, 'ty', 0),
+          sx: getNum(el, 'sx', 1),
+          sy: getNum(el, 'sy', 1),
+          rot: getNum(el, 'rot', 0),
+          cx: rect.left + rect.width / 2,
+          cy: rect.top + rect.height / 2
+        });
+      }
+      return items;
     }
 
     function startMove(e) {
-      if (!selected) return;
+      if (!selected.length) return;
+      var items = buildDragItems(selected);
+      if (!items.length) return;
+      var rect = getSelectionRectForList(selected);
+      if (!rect) return;
       dragging = {
         type: 'move',
         startX: e.clientX,
         startY: e.clientY,
-        tx: getNum(selected, 'tx', 0),
-        ty: getNum(selected, 'ty', 0),
+        rect: rect,
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+        items: items,
         started: false
       };
       dirty = false;
     }
 
     function startResize(e, handle) {
-      if (!selected) return;
-      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      if (!selected.length) return;
+      var items = buildDragItems(selected);
+      if (!items.length) return;
+      var rect = getSelectionRectForList(selected);
+      if (!rect) return;
       dragging = {
         type: 'resize',
         handle: handle,
@@ -703,51 +806,63 @@ const PREVIEW_EDITOR_SCRIPT = `
         startY: e.clientY,
         width: rect.width,
         height: rect.height,
-        sx: getNum(selected, 'sx', 1),
-        sy: getNum(selected, 'sy', 1)
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+        items: items
       };
       dirty = false;
     }
 
     function startScaleUniform(e) {
-      if (!selected) return;
-      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      if (!selected.length) return;
+      var items = buildDragItems(selected);
+      if (!items.length) return;
+      var rect = getSelectionRectForList(selected);
+      if (!rect) return;
       dragging = {
         type: 'scale',
         startX: e.clientX,
         startY: e.clientY,
         width: rect.width,
         height: rect.height,
-        sx: getNum(selected, 'sx', 1),
-        sy: getNum(selected, 'sy', 1)
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+        items: items
       };
       dirty = false;
     }
 
     function startScaleAxis(e, axis) {
-      if (!selected) return;
-      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      if (!selected.length) return;
+      var items = buildDragItems(selected);
+      if (!items.length) return;
+      var rect = getSelectionRectForList(selected);
+      if (!rect) return;
       dragging = {
         type: axis === 'x' ? 'scale-x' : 'scale-y',
         startX: e.clientX,
         startY: e.clientY,
         width: rect.width,
         height: rect.height,
-        sx: getNum(selected, 'sx', 1),
-        sy: getNum(selected, 'sy', 1)
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+        items: items
       };
       dirty = false;
     }
 
     function startRotate(e) {
-      if (!selected) return;
-      var rect = getSelectionRect(selected) || selected.getBoundingClientRect();
+      if (!selected.length) return;
+      var items = buildDragItems(selected);
+      if (!items.length) return;
+      var rect = getSelectionRectForList(selected);
+      if (!rect) return;
       var cx = rect.left + rect.width / 2;
       var cy = rect.top + rect.height / 2;
       dragging = {
         type: 'rotate',
         startAngle: Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI,
-        rot: getNum(selected, 'rot', 0),
+        items: items,
         centerX: cx,
         centerY: cy
       };
@@ -755,7 +870,7 @@ const PREVIEW_EDITOR_SCRIPT = `
     }
 
     function onMouseMove(e) {
-      if (!dragging || !selected) return;
+      if (!dragging || !selected.length) return;
       if (dragging.type === 'move') {
         var dx = e.clientX - dragging.startX;
         var dy = e.clientY - dragging.startY;
@@ -763,9 +878,12 @@ const PREVIEW_EDITOR_SCRIPT = `
           if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
           dragging.started = true;
         }
-        setNum(selected, 'tx', dragging.tx + dx);
-        setNum(selected, 'ty', dragging.ty + dy);
-        applyTransform(selected);
+        for (var i = 0; i < dragging.items.length; i += 1) {
+          var item = dragging.items[i];
+          setNum(item.el, 'tx', item.tx + dx);
+          setNum(item.el, 'ty', item.ty + dy);
+          applyTransform(item.el);
+        }
         updateOverlay();
         dirty = true;
         return;
@@ -787,11 +905,18 @@ const PREVIEW_EDITOR_SCRIPT = `
         if (dragging.handle.indexOf('n') !== -1) {
           scaleY = (dragging.height - dyr) / dragging.height;
         }
-        var nextSx = Math.max(0.05, dragging.sx * scaleX);
-        var nextSy = Math.max(0.05, dragging.sy * scaleY);
-        setNum(selected, 'sx', nextSx);
-        setNum(selected, 'sy', nextSy);
-        applyTransform(selected);
+        for (var r = 0; r < dragging.items.length; r += 1) {
+          var resizeItem = dragging.items[r];
+          var nextSx = Math.max(0.05, resizeItem.sx * scaleX);
+          var nextSy = Math.max(0.05, resizeItem.sy * scaleY);
+          var nextCx = dragging.centerX + (resizeItem.cx - dragging.centerX) * scaleX;
+          var nextCy = dragging.centerY + (resizeItem.cy - dragging.centerY) * scaleY;
+          setNum(resizeItem.el, 'sx', nextSx);
+          setNum(resizeItem.el, 'sy', nextSy);
+          setNum(resizeItem.el, 'tx', resizeItem.tx + (nextCx - resizeItem.cx));
+          setNum(resizeItem.el, 'ty', resizeItem.ty + (nextCy - resizeItem.cy));
+          applyTransform(resizeItem.el);
+        }
         updateOverlay();
         dirty = true;
         return;
@@ -799,9 +924,14 @@ const PREVIEW_EDITOR_SCRIPT = `
       if (dragging.type === 'scale-x') {
         var dxs = e.clientX - dragging.startX;
         var scaleXOnly = (dragging.width + dxs) / dragging.width;
-        var nextSxOnly = Math.max(0.05, dragging.sx * scaleXOnly);
-        setNum(selected, 'sx', nextSxOnly);
-        applyTransform(selected);
+        for (var sxIndex = 0; sxIndex < dragging.items.length; sxIndex += 1) {
+          var scaleItemX = dragging.items[sxIndex];
+          var nextSxOnly = Math.max(0.05, scaleItemX.sx * scaleXOnly);
+          var nextCx = dragging.centerX + (scaleItemX.cx - dragging.centerX) * scaleXOnly;
+          setNum(scaleItemX.el, 'sx', nextSxOnly);
+          setNum(scaleItemX.el, 'tx', scaleItemX.tx + (nextCx - scaleItemX.cx));
+          applyTransform(scaleItemX.el);
+        }
         updateOverlay();
         dirty = true;
         return;
@@ -811,10 +941,17 @@ const PREVIEW_EDITOR_SCRIPT = `
         var dyu = e.clientY - dragging.startY;
         var delta = Math.abs(dxu) > Math.abs(dyu) ? dxu : dyu;
         var scaleUniform = (dragging.width + delta) / dragging.width;
-        var nextSu = Math.max(0.05, dragging.sx * scaleUniform);
-        setNum(selected, 'sx', nextSu);
-        setNum(selected, 'sy', nextSu);
-        applyTransform(selected);
+        for (var su = 0; su < dragging.items.length; su += 1) {
+          var scaleItemU = dragging.items[su];
+          var nextSu = Math.max(0.05, scaleItemU.sx * scaleUniform);
+          var nextCu = dragging.centerX + (scaleItemU.cx - dragging.centerX) * scaleUniform;
+          var nextCv = dragging.centerY + (scaleItemU.cy - dragging.centerY) * scaleUniform;
+          setNum(scaleItemU.el, 'sx', nextSu);
+          setNum(scaleItemU.el, 'sy', nextSu);
+          setNum(scaleItemU.el, 'tx', scaleItemU.tx + (nextCu - scaleItemU.cx));
+          setNum(scaleItemU.el, 'ty', scaleItemU.ty + (nextCv - scaleItemU.cy));
+          applyTransform(scaleItemU.el);
+        }
         updateOverlay();
         dirty = true;
         return;
@@ -822,9 +959,14 @@ const PREVIEW_EDITOR_SCRIPT = `
       if (dragging.type === 'scale-y') {
         var dys = e.clientY - dragging.startY;
         var scaleYOnly = (dragging.height + dys) / dragging.height;
-        var nextSyOnly = Math.max(0.05, dragging.sy * scaleYOnly);
-        setNum(selected, 'sy', nextSyOnly);
-        applyTransform(selected);
+        for (var syIndex = 0; syIndex < dragging.items.length; syIndex += 1) {
+          var scaleItemY = dragging.items[syIndex];
+          var nextSyOnly = Math.max(0.05, scaleItemY.sy * scaleYOnly);
+          var nextCy = dragging.centerY + (scaleItemY.cy - dragging.centerY) * scaleYOnly;
+          setNum(scaleItemY.el, 'sy', nextSyOnly);
+          setNum(scaleItemY.el, 'ty', scaleItemY.ty + (nextCy - scaleItemY.cy));
+          applyTransform(scaleItemY.el);
+        }
         updateOverlay();
         dirty = true;
         return;
@@ -832,8 +974,22 @@ const PREVIEW_EDITOR_SCRIPT = `
       if (dragging.type === 'rotate') {
         var angle = Math.atan2(e.clientY - dragging.centerY, e.clientX - dragging.centerX) * 180 / Math.PI;
         var delta = angle - dragging.startAngle;
-        setNum(selected, 'rot', dragging.rot + delta);
-        applyTransform(selected);
+        var rad = delta * Math.PI / 180;
+        var cos = Math.cos(rad);
+        var sin = Math.sin(rad);
+        for (var ri = 0; ri < dragging.items.length; ri += 1) {
+          var rotItem = dragging.items[ri];
+          var vx = rotItem.cx - dragging.centerX;
+          var vy = rotItem.cy - dragging.centerY;
+          var nextRx = vx * cos - vy * sin;
+          var nextRy = vx * sin + vy * cos;
+          var nextCx = dragging.centerX + nextRx;
+          var nextCy = dragging.centerY + nextRy;
+          setNum(rotItem.el, 'rot', rotItem.rot + delta);
+          setNum(rotItem.el, 'tx', rotItem.tx + (nextCx - rotItem.cx));
+          setNum(rotItem.el, 'ty', rotItem.ty + (nextCy - rotItem.cy));
+          applyTransform(rotItem.el);
+        }
         updateOverlay();
         dirty = true;
       }
@@ -880,15 +1036,23 @@ const PREVIEW_EDITOR_SCRIPT = `
           selectable = passthrough;
         }
       }
+      var isMulti = e.ctrlKey || e.metaKey;
       if (!selectable) {
-        clearSelection();
+        if (!isMulti) clearSelection();
         return;
       }
       if (isBlocked(selectable)) {
-        clearSelection();
+        if (!isMulti) clearSelection();
         return;
       }
-      selectElement(selectable);
+      if (isMulti) {
+        toggleSelection(selectable);
+        if (body) body.focus();
+        return;
+      }
+      if (!isSelected(selectable) || selected.length <= 1) {
+        selectElement(selectable);
+      }
       if (body) body.focus();
       body.style.userSelect = 'none';
       body.style.cursor = 'move';
@@ -906,7 +1070,7 @@ const PREVIEW_EDITOR_SCRIPT = `
         }
       }
       var handle = handleEl && handleEl.getAttribute ? handleEl.getAttribute('data-ae2-handle') : null;
-      if (!handle || !selected) return;
+      if (!handle || !selected.length) return;
       body.style.userSelect = 'none';
       if (handle === 'rotate') {
         body.style.cursor = 'crosshair';
@@ -964,9 +1128,13 @@ const PREVIEW_EDITOR_SCRIPT = `
         e.preventDefault();
         return;
       }
-      if (!selected) return;
+      if (!selected.length) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        selected.parentElement.removeChild(selected);
+        for (var d = 0; d < selected.length; d += 1) {
+          if (selected[d] && selected[d].parentElement) {
+            selected[d].parentElement.removeChild(selected[d]);
+          }
+        }
         clearSelection();
         markTargets();
         postUpdate();
@@ -1087,7 +1255,7 @@ const PREVIEW_EDITOR_SCRIPT = `
           root.parentElement.replaceChild(next, root);
         }
       }
-      selected = null;
+      selected = [];
       ensureUi();
       markTargets();
       setOverlayVisible(false);
@@ -1137,9 +1305,23 @@ const PREVIEW_EDITOR_SCRIPT = `
       var payload = event.data;
       if (!payload || payload.source !== 'ae2-layer-panel') return;
       if (payload.type === 'select') {
+        if (payload.ids && payload.ids.length) {
+          var next = [];
+          for (var i = 0; i < payload.ids.length; i += 1) {
+            var item = doc.getElementById(payload.ids[i]);
+            if (item) next.push(item);
+          }
+          setSelection(next);
+          updateOverlay();
+          return;
+        }
         var el = doc.getElementById(payload.id);
         if (!el) return;
-        selectElement(el);
+        if (payload.mode === 'toggle') {
+          toggleSelection(el);
+        } else {
+          selectElement(el);
+        }
         updateOverlay();
         return;
       }
@@ -1733,7 +1915,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewRevision, setPreviewRevision] = useState(0);
   const [previewLayers, setPreviewLayers] = useState<PreviewLayer[]>([]);
-  const [previewSelectionId, setPreviewSelectionId] = useState<string | null>(null);
+  const [previewSelectionIds, setPreviewSelectionIds] = useState<string[]>([]);
   const [previewLayerExpanded, setPreviewLayerExpanded] = useState<Record<string, boolean>>({});
   const [previewHidden, setPreviewHidden] = useState<Record<string, boolean>>({});
   const [previewLocked, setPreviewLocked] = useState<Record<string, boolean>>({});
@@ -3031,6 +3213,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         html?: string;
         layers?: PreviewLayer[];
         id?: string | null;
+        ids?: string[];
       };
       if (!payload || payload.source !== 'ae2-preview-editor') return;
       if (payload.type === 'layers') {
@@ -3038,7 +3221,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         return;
       }
       if (payload.type === 'selection') {
-        setPreviewSelectionId(payload.id || null);
+        if (Array.isArray(payload.ids)) {
+          setPreviewSelectionIds(payload.ids.filter((id): id is string => !!id));
+        } else if (payload.id) {
+          setPreviewSelectionIds([payload.id]);
+        } else {
+          setPreviewSelectionIds([]);
+        }
         return;
       }
       if (payload.type === 'undo') {
@@ -3237,12 +3426,22 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }));
   };
 
-  const handleLayerSelect = (id: string) => {
+  const handleLayerSelect = (id: string, event?: React.MouseEvent<HTMLDivElement>) => {
     if (previewHidden[id] || previewLocked[id]) return;
-    setPreviewSelectionId(id);
+    const isMulti = !!(event && (event.ctrlKey || event.metaKey));
+    setPreviewSelectionIds(prev => {
+      if (!isMulti) return [id];
+      if (prev.includes(id)) {
+        return prev.filter(item => item !== id);
+      }
+      return [...prev, id];
+    });
     const win = iframeRef.current?.contentWindow;
     if (win) {
-      win.postMessage({ source: 'ae2-layer-panel', type: 'select', id }, '*');
+      win.postMessage(
+        { source: 'ae2-layer-panel', type: 'select', id, mode: isMulti ? 'toggle' : 'replace' },
+        '*'
+      );
     }
   };
 
@@ -3313,12 +3512,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         <div
           key={`layer-${node.id}`}
           className={`flex items-center gap-2 px-3 py-1 text-xs cursor-pointer ${
-            previewSelectionId === node.id ? 'bg-sky-500/20 text-white' : 'text-white/80'
+            previewSelectionIds.includes(node.id) ? 'bg-sky-500/20 text-white' : 'text-white/80'
           }${dropPosition === 'inside' ? ' bg-sky-500/10' : ''}${
             dropPosition === 'before' ? ' border-t border-sky-400/70' : ''
           }${dropPosition === 'after' ? ' border-b border-sky-400/70' : ''}`}
           style={{ paddingLeft: 12 + depth * 16 }}
-          onClick={() => handleLayerSelect(node.id)}
+          onClick={(event) => handleLayerSelect(node.id, event)}
           draggable
           onDragStart={(event) => handleLayerDragStart(node.id, event)}
           onDragOver={(event) => handleLayerDragOver(node.id, event)}

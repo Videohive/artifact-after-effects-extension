@@ -105,10 +105,28 @@
     var s = String(n);
     // remove illegal chars
     s = s.replace(/[\r\n\t]/g, " ").replace(/[\\\/\:\*\?\"\<\>\|]/g, "_");
+    // normalize for AE: hyphens to spaces + title case
+    s = formatAeName(s);
     // trim
     s = trim(s);
     if (s.length === 0) s = "Layer";
     return s;
+  }
+
+  function formatAeName(value) {
+    if (value === null || value === undefined) return "";
+    var s = String(value).replace(/-/g, " ");
+    s = trim(s);
+    if (!s) return "";
+    var parts = s.split(/\s+/);
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (!p) continue;
+      var first = p.charAt(0).toUpperCase();
+      var rest = p.length > 1 ? p.slice(1).toLowerCase() : "";
+      parts[i] = first + rest;
+    }
+    return parts.join(" ");
   }
 
   function trim(s) {

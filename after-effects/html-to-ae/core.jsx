@@ -235,9 +235,9 @@
     }
 
     // ============================================================
-    // IMAGE
+    // IMAGE / VIDEO
     // ============================================================
-    if (node.type === "image") {
+    if (node.type === "image" || node.type === "video") {
       var imgBBox = getLocalBBox(node, origin);
       var imgResult = createImageLayer(comp, node, imgBBox);
       var placeholderAlpha =

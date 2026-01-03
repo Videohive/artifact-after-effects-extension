@@ -34,6 +34,14 @@ import { AEBounds, AENode, AERenderHints, AEExportOptions, AEArtifactExport } fr
 const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
   el instanceof (win as Window & typeof globalThis).HTMLElement;
 
+const getVideoSrc = (videoEl: HTMLVideoElement): string | null => {
+  const direct = videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src');
+  if (direct) return direct;
+  const source = videoEl.querySelector('source');
+  if (!source) return null;
+  return source.getAttribute('src') || (source as HTMLSourceElement).src || null;
+};
+
 const getSvgViewport = (svgEl: SVGElement): { width: number; height: number } | null => {
   const viewBox = (svgEl as SVGSVGElement).viewBox?.baseVal;
   if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
@@ -532,6 +540,10 @@ export const extractSlideLayout = async (
       type = 'image';
       renderHints.isAsset = true;
       extra = { src: (el as HTMLImageElement).src, assetType: 'url' };
+    } else if (el.tagName.toLowerCase() === 'video') {
+      type = 'video';
+      renderHints.isAsset = true;
+      extra = { src: getVideoSrc(el as HTMLVideoElement) || '', assetType: 'url' };
     }
 
     const { needsPrecomp, clip } = detectPrecomp(el, style, rawBBox, scale);
@@ -808,7 +820,8 @@ export const extractSlideLayout = async (
       }
     }
 
-    const canConsiderText = type !== 'svg' && type !== 'image' && !handledTextUrl && isHtmlEl;
+    const canConsiderText =
+      type !== 'svg' && type !== 'image' && type !== 'video' && !handledTextUrl && isHtmlEl;
     const hasPaintedChild =
       canConsiderText &&
       el.children.length > 0 &&

@@ -87,7 +87,7 @@ export interface AEExportOptions {
 }
 
 export interface AENode {
-  type: 'group' | 'text' | 'image' | 'svg';
+  type: 'group' | 'text' | 'image' | 'video' | 'svg';
   name: string;
   bbox: AEBounds;
   bboxSpace?: 'global';

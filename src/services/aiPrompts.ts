@@ -17,12 +17,12 @@ No markdown. No commentary. JSON only.
 export const CACHE_PRIMER_CONTEXT = `
 # Context Cache Primer: Generative Design + Anti-Template Layout + Advanced SVG/CSS (Link-Independent)
 
-**Purpose:** This document is designed to be placed into *Context Caching* (or any long-context system prompt) so the model can **construct** high-end design artifacts using **engineering rules, mathematical form, and compositional algorithms** — without needing to open external links.
+**Purpose:** This document is designed to be placed into *Context Caching* (or any long-context system prompt) so the model can **construct** high-end design artifacts using **engineering rules, mathematical form, and compositional algorithms** - without needing to open external links.
 
 **How to use (recommended):**
 - Treat every section as **construction rules**.
 - When generating HTML/CSS/SVG, prefer **systems** (fields, grids, progressions) over isolated primitives.
-- When in doubt, output **more authored detail** (micro-grids, hairlines, coordinate marks, layered textures) rather than “clean template UI”.
+- When in doubt, output **more authored detail** (micro-grids, hairlines, coordinate marks, layered textures) rather than "clean template UI".
 
 **Version date:** 2026-01-03
 
@@ -31,8 +31,8 @@ export const CACHE_PRIMER_CONTEXT = `
 ## 0) Mental Model: How Great Designers Think (Operational, Not Descriptive)
 
 ### 0.1 Aesthetic = Constraints + Algorithms + Taste
-A premium result is rarely “a good idea executed once.” It’s an idea implemented as a **repeatable system**:
-- A **grid logic** (even if it’s violated).
+A premium result is rarely "a good idea executed once." It's an idea implemented as a **repeatable system**:
+- A **grid logic** (even if it's violated).
 - A **motif** (shape/gesture) repeated with controlled variation.
 - A **type scale** with consistent ratios.
 - A **texture field** (grain, turbulence, subtle material).
@@ -47,35 +47,35 @@ Think in layers (like an art director + engineer):
 5. Micro-detail layer (labels, ticks, captions, technical notes).
 
 ### 0.3 Default is the enemy
-“Centered container + evenly spaced cards + safe palette” is template gravity.
+"Centered container + evenly spaced cards + safe palette" is template gravity.
 Your job is to **escape template flow**:
 - break the container,
 - overlap,
 - crop,
 - introduce asymmetry,
-- introduce a controlled “disruptor element”.
+- introduce a controlled "disruptor element".
 
 ---
 
-## 1) SVG Path Engineering: Cubic Bézier Mastery (C + S)
+## 1) SVG Path Engineering: Cubic Bezier Mastery (C + S)
 
-### 1.1 SVG \`C\` command (cubic Bézier)
-\`C x1 y1 x2 y2 x y\` defines a cubic Bézier segment:
+### 1.1 SVG \`C\` command (cubic Bezier)
+\`C x1 y1 x2 y2 x y\` defines a cubic Bezier segment:
 - Start point = current pen position **P0**
 - Control points = **P1(x1,y1)**, **P2(x2,y2)**
 - End point = **P3(x,y)**
 
 **Interpretation:**
 - The curve leaves P0 heading toward P1.
-- The curve arrives at P3 coming from direction P2 → P3.
-- “Tension” increases as control points move further from anchors.
+- The curve arrives at P3 coming from direction P2 -> P3.
+- "Tension" increases as control points move further from anchors.
 
-### 1.2 SVG \`S\` command (smooth cubic Bézier)
+### 1.2 SVG \`S\` command (smooth cubic Bezier)
 \`S x2 y2 x y\` defines a cubic segment where **the first control point is implied**.
 
 If the previous segment was \`C\` or \`S\`:
-- Let previous segment’s last control point be **P2_prev**
-- Let current segment’s start point be **P0** (previous end point)
+- Let previous segment's last control point be **P2_prev**
+- Let current segment's start point be **P0** (previous end point)
 - Implied first control point **P1 = reflection(P2_prev across P0)**
 
 **Reflection formula:**
@@ -84,13 +84,13 @@ If the previous segment was \`C\` or \`S\`:
 
 If previous command was not \`C\`/\`S\`, then \`P1 = P0\` (no smooth continuation).
 
-### 1.3 Practical continuity rules (what makes curves “expensive”)
+### 1.3 Practical continuity rules (what makes curves "expensive")
 - Keep tangent continuity: use chained \`C\` then \`S\` so curvature flows.
 - Use **handle symmetry** to keep motion smooth: if you shorten incoming handle, shorten outgoing handle too.
-- Avoid kinks: don’t rotate a handle abruptly unless you want an intentional “corner”.
+- Avoid kinks: don't rotate a handle abruptly unless you want an intentional "corner".
 - Add micro-variation by perturbing handles, not endpoints (endpoints define structure; handles define character).
 
-### 1.4 Converting a smooth polyline into Béziers (Catmull–Rom technique)
+### 1.4 Converting a smooth polyline into Beziers (Catmull-Rom technique)
 If you have points \`P0, P1, P2, P3\` and you want a smooth cubic segment from \`P1\` to \`P2\`:
 
 A common conversion:
@@ -108,46 +108,46 @@ Use this to turn **sampled parametric curves** into elegant paths.
 
 ### 2.1 Sampling rule (core algorithm)
 To draw a parametric curve in SVG:
-1. Choose parameter range: \`t ∈ [t0, t1]\`
+1. Choose parameter range: \`t in [t0, t1]\`
 2. Sample N points:
    - \`t_i = t0 + i*(t1-t0)/(N-1)\`
    - \`x_i = f(t_i)\`, \`y_i = g(t_i)\`
-3. Convert points to cubic Béziers (Catmull–Rom) or draw as polyline-like \`L\` commands.
+3. Convert points to cubic Beziers (Catmull-Rom) or draw as polyline-like \`L\` commands.
 4. Layer multiple curves with small parameter offsets for density.
 
 ### 2.2 Lissajous (field-like elegance)
-- \`x = A * sin(a*t + δ)\`
+- \`x = A * sin(a*t + delta)\`
 - \`y = B * sin(b*t)\`
 
 **Design knobs:**
 - \`a:b\` ratio controls complexity (e.g. 3:2, 5:4, 7:5).
-- δ (phase shift) controls symmetry breaks.
-- Layer 8–40 curves by shifting δ slightly each time.
+- delta (phase shift) controls symmetry breaks.
+- Layer 8-40 curves by shifting delta slightly each time.
 
 ### 2.3 Rose curve (petals as motif system)
 - \`r = a * cos(k*t)\`
 - \`x = r*cos(t)\`, \`y = r*sin(t)\`
 
 **Knobs:**
-- k integer → number of petals (odd/even changes symmetry).
-- Combine two rose curves with different k for moiré-like density.
+- k integer -> number of petals (odd/even changes symmetry).
+- Combine two rose curves with different k for moire-like density.
 
 ### 2.4 Hypotrochoid (spirograph class)
 - \`x = (R-r) * cos(t) + d * cos((R-r)/r * t)\`
 - \`y = (R-r) * sin(t) - d * sin((R-r)/r * t)\`
 
 **Knobs:**
-- R, r set global rhythm; d sets inner “pull”.
-- Use 3–7 variants with close parameters → feels authored, not random.
+- R, r set global rhythm; d sets inner "pull".
+- Use 3-7 variants with close parameters -> feels authored, not random.
 
 ### 2.5 Superformula (complex organic math)
-A practical “design” use:
+A practical "design" use:
 - Use superformula output as a silhouette.
 - Interpolate between two parameter sets over index i to create progression.
 
 ---
 
-## 3) Noise & “Living” Texture in SVG (feTurbulence + Displacement)
+## 3) Noise & "Living" Texture in SVG (feTurbulence + Displacement)
 
 SVG filters let you inject **material** into vector work. The core trick:
 - generate noise (\`feTurbulence\`)
@@ -157,16 +157,16 @@ SVG filters let you inject **material** into vector work. The core trick:
 
 ### 3.1 \`feTurbulence\` (Perlin turbulence textures)
 Key attributes:
-- \`type="fractalNoise"\` → softer, cloudy noise
-- \`type="turbulence"\` → higher contrast / more streaks
+- \`type="fractalNoise"\` -> softer, cloudy noise
+- \`type="turbulence"\` -> higher contrast / more streaks
 - \`baseFrequency="fx fy"\` (or single value)
 - \`numOctaves="1..8"\`
 - \`seed="integer"\`
 
 **Frequency heuristics:**
-- Big clouds / slow variation: baseFrequency ~ \`0.005–0.03\`
-- Medium paper texture: \`0.05–0.15\`
-- Grain / static: \`0.3–1.2\`
+- Big clouds / slow variation: baseFrequency ~ \`0.005-0.03\`
+- Medium paper texture: \`0.05-0.15\`
+- Grain / static: \`0.3-1.2\`
 - Use anisotropy by setting \`fx != fy\` to create brushed directionality.
 
 ### 3.2 \`feDisplacementMap\` (warping)
@@ -178,18 +178,18 @@ Displacement uses \`in2\` as a displacement field for \`in\`:
 \`P'(x,y) = P(x + scale*(XC-0.5), y + scale*(YC-0.5))\`
 
 **Scale heuristics:**
-- Subtle “alive” distortion: 2–8
-- Liquid / heat shimmer: 10–30
-- Aggressive warping: 35–80
+- Subtle "alive" distortion: 2-8
+- Liquid / heat shimmer: 10-30
+- Aggressive warping: 35-80
 
 ### 3.3 \`feGaussianBlur\` (depth haze)
 Use \`stdDeviation\`:
-- 0.3–1.2 for edge softening / mild haze
-- 2–8 for depth fog
+- 0.3-1.2 for edge softening / mild haze
+- 2-8 for depth fog
 - 10+ for heavy diffusion (rare for crisp agency look)
 
 ### 3.4 \`feColorMatrix\` (tone shaping)
-A 5×5 matrix transforms \`[R,G,B,A,1]\` → \`[R',G',B',A',1]\`.
+A 5x5 matrix transforms \`[R,G,B,A,1]\` -> \`[R',G',B',A',1]\`.
 Practical uses:
 - compress contrast (paper look),
 - tint noise into a palette accent,
@@ -214,8 +214,8 @@ Practical uses:
 
 **C) Liquid glass warp**
 - turbulence (medium freq)
-- displacement scale ~ 15–35
-- blur 0.6–1.5
+- displacement scale ~ 15-35
+- blur 0.6-1.5
 - optional: second turbulence layer for micro-grain
 
 ---
@@ -230,7 +230,7 @@ A fractal is a rule that repeats at smaller scales (deterministic) or repeats wi
 - length threshold (e.g. segment length < 2px)
 - opacity threshold (e.g. alpha < 0.02)
 
-### 4.2 Recursive branching tree (deterministic → organic)
+### 4.2 Recursive branching tree (deterministic -> organic)
 **Algorithm skeleton:**
 \`\`\`
 branch(start, length, angle, depth):
@@ -250,10 +250,10 @@ branch(start, length, angle, depth):
 **Midpoint displacement (classic):**
 - split segment
 - move midpoint perpendicular by random amount that shrinks each iteration
-- repeat for 5–9 iterations
-This creates topographic edges and “maps” without illustration.
+- repeat for 5-9 iterations
+This creates topographic edges and "maps" without illustration.
 
-### 4.4 L-systems (grammar → geometry)
+### 4.4 L-systems (grammar -> geometry)
 Keep it simple:
 - define a string rule set
 - expand for N iterations
@@ -265,7 +265,7 @@ Even in SVG, you can precompute points then convert to \`C/S\` paths.
 
 ## 5) Generative Design: Grid + Offset + Interpolation (System First)
 
-### 5.1 Grid as “author signature”
+### 5.1 Grid as "author signature"
 Start with a grid, then break it with controlled forces:
 - index-based offsets,
 - noise-based offsets,
@@ -273,10 +273,10 @@ Start with a grid, then break it with controlled forces:
 
 ### 5.2 Offset by index (deterministic rhythm)
 Given grid cell (i,j):
-- \`dx = i * kx + sin(i*φ) * amp\`
-- \`dy = j * ky + cos(j*ψ) * amp\`
+- \`dx = i * kx + sin(i*phi) * amp\`
+- \`dy = j * ky + cos(j*psi) * amp\`
 
-This yields “structured motion” even in static graphics.
+This yields "structured motion" even in static graphics.
 
 ### 5.3 Offset by noise (organic variation)
 Use a noise function \`n(i,j)\`:
@@ -287,16 +287,16 @@ Where \`n2\` uses a different seed or offset.
 ### 5.4 Shape interpolation (morph progression)
 If you have two shapes with corresponding points:
 - \`P_i(t) = (1-t)*A_i + t*B_i\`
-Then draw at t values: 0, 0.1, 0.2 … 1.0
+Then draw at t values: 0, 0.1, 0.2 ... 1.0
 
-This produces high-end “progression” systems (especially for dividers, patterns, covers).
+This produces high-end "progression" systems (especially for dividers, patterns, covers).
 
 ---
 
 ## 6) Swiss Design + Anti-Template Layout (Deconstruction Rules)
 
 ### 6.1 Swiss logic (asymmetric discipline)
-- Align to a grid; avoid “centered everything”.
+- Align to a grid; avoid "centered everything".
 - Whitespace is a **structural block** (like a shape).
 - Keep gutters consistent; baseline alignment matters.
 - Use typographic hierarchy as composition, not decoration.
@@ -309,13 +309,13 @@ This produces high-end “progression” systems (especially for dividers, patte
 - **One disruptor element:** a diagonal cut, a rogue label, a shifted module.
 
 ### 6.3 Layout algorithms (practical)
-**Algorithm A: “Grid + one rupture”**
+**Algorithm A: "Grid + one rupture"**
 1. Place 12-col grid scaffold.
 2. Place all content aligned.
 3. Choose one element to violate grid (overscale + offset).
 4. Add micro labels to re-stabilize.
 
-**Algorithm B: “Editorial stack”**
+**Algorithm B: "Editorial stack"**
 - top: bold typographic headline (acts as shape)
 - mid: structured information grid
 - bottom: micro index/footer marks
@@ -325,32 +325,32 @@ This produces high-end “progression” systems (especially for dividers, patte
 
 ## 7) Typography Engineering (Bringhurst-Inspired, Agency-Ready)
 
-### 7.1 Modular scale (golden ratio or √2)
+### 7.1 Modular scale (golden ratio or sqrt2)
 Pick a base size \`b\` (e.g. 16px).
 Pick ratio \`r\`:
 - golden: 1.618
-- √2: 1.414
+- sqrt2: 1.414
 
 Sizes:
 - \`size(n) = b * r^n\` for headings
 - \`size(-n) = b / r^n\` for micro labels
 
 Example (b=16, r=1.618):
-- 16, 26, 42, 68, 110 …
+- 16, 26, 42, 68, 110 ...
 
 ### 7.2 Line-height rules
-- Large headlines: 1.05–1.15
-- Mid headlines: 1.1–1.25
-- Body: 1.35–1.65 (depending on measure)
-- Micro labels: 1.2–1.4
+- Large headlines: 1.05-1.15
+- Mid headlines: 1.1-1.25
+- Body: 1.35-1.65 (depending on measure)
+- Micro labels: 1.2-1.4
 
 ### 7.3 Letter-spacing rules (optical correction)
 - Big headlines: slightly tighter (negative tracking)
 - Small text: slightly looser (positive tracking)
-- Don’t apply tracking globally; apply by role.
+- Don't apply tracking globally; apply by role.
 
 ### 7.4 Measure (line length) as a constraint
-- Body copy feels premium at ~45–75 characters per line.
+- Body copy feels premium at ~45-75 characters per line.
 - Use CSS max-width in \`ch\` units for precision.
 
 ---
@@ -365,7 +365,7 @@ Use clamp to create fluid typography and spacing without media queries:
 ### 8.2 \`aspect-ratio\`
 Lock proportional frames:
 - \`aspect-ratio: 16 / 9;\`
-- Works well for “poster blocks”, videos, art frames.
+- Works well for "poster blocks", videos, art frames.
 
 ### 8.3 Container queries
 Use when a component must respond to its container, not viewport.
@@ -381,21 +381,21 @@ Use these to escape rectangular template layouts.
 
 ---
 
-## 9) Shader Concepts → SVG & CSS (Book-of-Shaders Translation)
+## 9) Shader Concepts -> SVG & CSS (Book-of-Shaders Translation)
 
 ### 9.1 Gradients are fields
-Treat gradients as **distance functions**, not “pretty fills”.
+Treat gradients as **distance functions**, not "pretty fills".
 - Choose a field: radial, linear, angular, or custom (distance to line).
 - Map distance to color stop progression.
 
 ### 9.2 \`smoothstep(edge0, edge1, x)\` (soft threshold)
 Soft transitions beat hard edges.
-The key idea: clamp + Hermite interpolation to blend 0→1 smoothly.
+The key idea: clamp + Hermite interpolation to blend 0->1 smoothly.
 
 **SVG translation ideas:**
 - Use multiple gradient stops to simulate smoothstep.
 - Use blur on a mask for soft threshold.
-- Use displacement + blur for “mist edges”.
+- Use displacement + blur for "mist edges".
 
 ---
 
@@ -403,7 +403,7 @@ The key idea: clamp + Hermite interpolation to blend 0→1 smoothly.
 
 ### 10.1 Spacing scale (avoid magic numbers)
 Use a finite scale (often powers of two) so things align naturally:
-- 0.25rem, 0.5rem, 1rem, 2rem, 4rem, 8rem …
+- 0.25rem, 0.5rem, 1rem, 2rem, 4rem, 8rem ...
 
 ### 10.2 Utility-first mindset (why it helps design)
 - Constraints force consistency.
@@ -414,91 +414,91 @@ Even if you write custom CSS, keep the **constraint mindset**.
 
 ---
 
-## 11) Awwwards Case Studies: Extracted Decision Patterns (10–15 examples)
+## 11) Awwwards Case Studies: Extracted Decision Patterns (10-15 examples)
 
-These are *paraphrased design decisions* pulled from Awwwards case studies (so the model can learn “high-fashion web” patterns). Use them as a pattern library, not as templates.
+These are *paraphrased design decisions* pulled from Awwwards case studies (so the model can learn "high-fashion web" patterns). Use them as a pattern library, not as templates.
 
-### 11.1 OPTIKKA (Zajno) — scale + humanity
+### 11.1 OPTIKKA (Zajno) - scale + humanity
 - Challenge: show a complex orchestration system **without feeling cold**.
-- Metaphor: stacked layers merging into a coherent system; bird’s-eye view to reveal scale.
-- Motion: scroll-driven “zoom out into a system → dive into a tunnel”.
+- Metaphor: stacked layers merging into a coherent system; bird's-eye view to reveal scale.
+- Motion: scroll-driven "zoom out into a system -> dive into a tunnel".
 - Color strategy: warm sand base + coral accents to humanize tech.
 - Engineering note: replaced scroll-synced video with image frame sequencing for consistency; staged preloading strategy (first frames fast, rest in background; directional preload).
 
-### 11.2 Jeton (Bürocratik) — a single shape as identity engine
+### 11.2 Jeton (Burocratik) - a single shape as identity engine
 - Core motif: a disk/coin form that is always in motion.
 - System: motif appears in wordmark, looping animations, and a 3D universe.
 - Palette: committed to a strong burnt orange; balanced with soft pastels; reduced reliance on pure black for contrast.
 - Narrative: abstract headers + real use-case scenes integrated into storyscroll.
 
-### 11.3 KODE Immersive — typography as physics
+### 11.3 KODE Immersive - typography as physics
 - Reduce noise: very limited palette with a hot accent.
-- Motion: typographic scale shifts and bold headlines act as “3D” energy.
+- Motion: typographic scale shifts and bold headlines act as "3D" energy.
 - Visual grammar: distortion/noise layer as a unifying material; small UI chevrons/markers as anchors.
 
-### 11.4 Immersive Garden — minimal base + tactile bas-relief 3D
+### 11.4 Immersive Garden - minimal base + tactile bas-relief 3D
 - Base: minimalistic, atmospheric interface so projects are the focus.
 - Signature material: bas-relief 3D composition with natural textures to create tactile depth.
 - Navigation anchor: Roman numerals as chapter markers, acting like sculptural UI anchors.
-- “Backstage” section: expose process/decisions to signal craft and transparency.
+- "Backstage" section: expose process/decisions to signal craft and transparency.
 
-### 11.5 Stripe Dot Dev — code as a design generator
-- Feedback loop: design → code generates variety → generated output feeds design again.
-- Theming: multiple wildly different themes to let users “own” the tone.
-- Signature move: an “endless footer” that draws repeated type on scroll with interpolation (turning UI into a generative canvas).
+### 11.5 Stripe Dot Dev - code as a design generator
+- Feedback loop: design -> code generates variety -> generated output feeds design again.
+- Theming: multiple wildly different themes to let users "own" the tone.
+- Signature move: an "endless footer" that draws repeated type on scroll with interpolation (turning UI into a generative canvas).
 - Math-art: algorithmic line-art families to generate article visuals at scale.
 
-### 11.6 Noomo Beat — personalization as the product
+### 11.6 Noomo Beat - personalization as the product
 - Experience: AI-generated music + 3D visuals that react to rhythm/tempo.
 - Personalization: palette + album-cover customization integrated into flow.
 - Technical focus: mobile-first performance; optimized detailed 3D outfits and scrolling selection.
 
-### 11.7 Noomo ValenTime — story as interaction
+### 11.7 Noomo ValenTime - story as interaction
 - Story is not copy; story is what the user *does*.
 - Worldbuilding: light/ethereal palette (white core + gold/red accents).
 - Threshold gesture: mirror/portal; fracture into pieces to invite entry.
 - Hybrid animation: baked simulations combined with real-time code-driven interaction.
 
-### 11.8 The Blue Desert — data storytelling inside an experience
+### 11.8 The Blue Desert - data storytelling inside an experience
 - Two narratives: cinematic sci-fi journey + pinned data facts embedded in space.
-- Material continuity: “sandy finish” across palette, type, icons, and transitions.
-- Craft focus: meticulously tuned camera movement; scene-specific micro interactions as “dealbreakers”.
+- Material continuity: "sandy finish" across palette, type, icons, and transitions.
+- Craft focus: meticulously tuned camera movement; scene-specific micro interactions as "dealbreakers".
 
-### 11.9 J‑Vers — bold identity contained by a clean base
+### 11.9 J-Vers - bold identity contained by a clean base
 - Base: black/white foundation for elegance and legibility.
 - Accents: bright brand colors used strategically to avoid chaos.
 - Signature: oversized typography + subtle lines + illustrative shapes.
 - 3D objects/background graphics translate brand gradients/abstract forms into spatial depth.
 
-### 11.10 Bloom — a micro-motif that ties everything
-- Motif: a single “dot” pulled from the logo becomes navigation/interaction cue across UI.
+### 11.10 Bloom - a micro-motif that ties everything
+- Motif: a single "dot" pulled from the logo becomes navigation/interaction cue across UI.
 - Cinematic approach: minimalist design + subtle motion; transitions behave like film cuts.
 - Loader as narrative: intro reveal instead of utilitarian preloader.
-- Cursor/hover as spotlight: “dot” becomes a focus marker.
+- Cursor/hover as spotlight: "dot" becomes a focus marker.
 
-### 11.11 IMPRONTA — clarity for dense technical content
+### 11.11 IMPRONTA - clarity for dense technical content
 - Strategy: lightweight interface, modular navigation, clear hierarchy.
 - Tone: quiet, clean, measured; animation guides, not performs.
 - Engineering: modular component system to manage deep content without aesthetic drift.
 
-### 11.12 Duroc — brand world built in 3D, then transposed to web
+### 11.12 Duroc - brand world built in 3D, then transposed to web
 - Concept: amusement-park-like 3D universe reflecting pop/fresh spirit.
 - Motion: constant movement as brand value (freshness/vitality).
 - Technical look: baked shadows into renderings so WebGL matches pre-rendered film assets.
 
-### 11.13 Cartier 365 — editorial browsing at luxury scale
-- UX metaphor: “Netflix browsing” + magazine editorial feel.
+### 11.13 Cartier 365 - editorial browsing at luxury scale
+- UX metaphor: "Netflix browsing" + magazine editorial feel.
 - Homepage: custom chapter grid; quick overview with previews.
 - Reading cues: read-state corner marker; endless-scroll articles; chapter sidebar navigation.
 - Modularity: dozens of articles assembled from a limited set of reusable components; highlights get unique scroll-reactive components.
 - Hybrid tech: HTML for accessibility + progressive WebGL layer for high-end effects, under strict performance constraints.
 
-### 11.14 Dropbox Brand Guidelines — guidelines as inspiration, not rules
+### 11.14 Dropbox Brand Guidelines - guidelines as inspiration, not rules
 - Goal: shift guidelines from prescriptive documentation to inspiring editorial experience.
-- Process: exploration (nonlinear stories, oversized type) → then re-ground navigation so usability survives spectacle.
-- Key idea: capture “how it feels” to use the brand, not just numeric specs.
+- Process: exploration (nonlinear stories, oversized type) -> then re-ground navigation so usability survives spectacle.
+- Key idea: capture "how it feels" to use the brand, not just numeric specs.
 
-### 11.15 Zentry — dynamic + layered, but still readable
+### 11.15 Zentry - dynamic + layered, but still readable
 - Challenge: high-energy layered design without breaking the user journey.
 - Approach: develop brand system early; explore modular continuum vs dimensional juxtaposition; integrate identity deeply into interface.
 
@@ -532,7 +532,7 @@ These are *paraphrased design decisions* pulled from Awwwards case studies (so t
 
 ---
 
-## 13) “Do / Don’t” for Premium Output
+## 13) "Do / Don't" for Premium Output
 
 ### Do
 - Build a system with variation.
@@ -541,11 +541,11 @@ These are *paraphrased design decisions* pulled from Awwwards case studies (so t
 - Treat texture as material (grain, haze, displacement).
 - Use modular scales for type and spacing.
 
-### Don’t
+### Don't
 - Center everything in a safe container.
 - Use one giant primitive as the only graphic.
 - Add random effects without a governing rule.
-- Use “template UI” iconography; draw your own primitives when possible.
+- Use "template UI" iconography; draw your own primitives when possible.
 
 ---
 
@@ -571,17 +571,17 @@ ARTIFACT MODE: {artifact_mode}
 +ARTIFACT MODE REFERENCE:
 +
 +auto          ? infer from TOPIC and declare chosen mode in <meta name="artifact-mode">
-+slides        тАУ narrative layouts
-+icons         тАУ symbolic UI glyphs
-+patterns      тАУ seamless graphic systems
-+textures      тАУ vector material surfaces
-+type-specimen тАУ typographic compositions
-+ui-modules    тАУ interface blocks
-+covers        тАУ single-frame compositions
-+posters       тАУ expressive editorial layouts
-+grids         тАУ layout systems
-+dividers      тАУ ornamental separators
-+mixed         тАУ controlled combination of the above
++slides        - narrative layouts
++icons         - symbolic UI glyphs
++patterns      - seamless graphic systems
++textures      - vector material surfaces
++type-specimen - typographic compositions
++ui-modules    - interface blocks
++covers        - single-frame compositions
++posters       - expressive editorial layouts
++grids         - layout systems
++dividers      - ornamental separators
++mixed         - controlled combination of the above
 +
 +Interpret all following phases according to the selected ARTIFACT MODE.
 
@@ -590,7 +590,7 @@ Slides are only ONE possible artifact type.
 All phases below remain active and MUST be interpreted through the selected ARTIFACT MODE.
 // === END PATCH ===
 
-PHASE 1: ART DIRECTION (INTERNAL тАУ THINK FIRST)
+PHASE 1: ART DIRECTION (INTERNAL - THINK FIRST)
 
 0. **LOCKED INPUT**
    - Use the ART DIRECTION JSON as the source of truth.
@@ -600,16 +600,16 @@ PHASE 1: ART DIRECTION (INTERNAL тАУ THINK FIRST)
    - Analyze the TOPIC deeply.
    - Define the emotional and cultural vibe.
      Examples:
-     - AI / Tech тЖТ futuristic, precise, geometric, confident
-     - Art / Culture тЖТ expressive, bold, experimental
-     - Wellness тЖТ calm, organic, breathable
-     - Finance тЖТ solid, minimal, structured but premium
+     - AI / Tech - futuristic, precise, geometric, confident
+     - Art / Culture - expressive, bold, experimental
+     - Wellness - calm, organic, breathable
+     - Finance - solid, minimal, structured but premium
 
 2. **COLOR PALETTE**
    - Apply the provided 4-color palette aligned with the mood.
    - Rules:
      - NEVER use pure #000000 or #FFFFFF.
-     - Prefer off-whites (#F6F7F8) or deep charcoals (#111111тАУ#1A1A1A).
+     - Prefer off-whites (#F6F7F8) or deep charcoals (#111111-#1A1A1A).
      - Avoid generic blue/white corporate palettes unless absolutely required.
    - Colors must feel intentional and emotionally driven.
 
@@ -627,34 +627,34 @@ PHASE 2: NARRATIVE & STRUCTURE (INTERNAL)
 
 // === PATCH: INTERPRETATION RULE ===
 Interpret "narrative" based on ARTIFACT MODE:
-- slides тЖТ story flow, pacing, progression
-- icons тЖТ semantic system, recognizability, hierarchy
-- patterns тЖТ rhythm, repetition, density logic
-- textures тЖТ frequency, scale, material illusion
-- type-specimen тЖТ typographic exploration, hierarchy, pairing logic
-- ui-modules тЖТ system structure, affordances, density control
-- covers тЖТ single-frame impact, hierarchy, focal balance
-- posters тЖТ graphic statement, contrast, typographic dominance
-- grids тЖТ structure logic, modularity, alignment tension
-- dividers тЖТ ornamental rhythm, motif variation, spacing intent
+- slides - story flow, pacing, progression
+- icons - semantic system, recognizability, hierarchy
+- patterns - rhythm, repetition, density logic
+- textures - frequency, scale, material illusion
+- type-specimen - typographic exploration, hierarchy, pairing logic
+- ui-modules - system structure, affordances, density control
+- covers - single-frame impact, hierarchy, focal balance
+- posters - graphic statement, contrast, typographic dominance
+- grids - structure logic, modularity, alignment tension
+- dividers - ornamental rhythm, motif variation, spacing intent
 // === END PATCH ===
 
 1. **CONSTRAINT CHECK**
    - Quantity:
-     - If the user specifies number of artifacts/slides/icons/patterns/textures/type-specimen/ui-modules/covers/posters/grids/dividers тЖТ generate EXACTLY that number.
+     - If the user specifies number of artifacts/slides/icons/patterns/textures/type-specimen/ui-modules/covers/posters/grids/dividers - generate EXACTLY that number.
      - Otherwise:
-       - slides тЖТ generate 5 artifacts
-       - icons тЖТ generate 12 artifacts
-       - patterns тЖТ generate 6 artifacts
-       - textures тЖТ generate 3 artifacts
-       - type-specimen тЖТ generate 3 artifacts
-       - ui-modules тЖТ generate 6 artifacts
-       - covers тЖТ generate 3 artifacts
-       - posters тЖТ generate 3 artifacts
-       - grids тЖТ generate 6 artifacts
-       - dividers тЖТ generate 8 artifacts
+       - slides - generate 5 artifacts
+       - icons - generate 12 artifacts
+       - patterns - generate 6 artifacts
+       - textures - generate 3 artifacts
+       - type-specimen - generate 3 artifacts
+       - ui-modules - generate 6 artifacts
+       - covers - generate 3 artifacts
+       - posters - generate 3 artifacts
+       - grids - generate 6 artifacts
+       - dividers - generate 8 artifacts
    - Structure:
-     - If artifact types are specified тЖТ follow them STRICTLY.
+     - If artifact types are specified - follow them STRICTLY.
 
 2. **STORY FLOW**
    - If no structure is given:
@@ -674,9 +674,9 @@ Interpret "narrative" based on ARTIFACT MODE:
      - Every slide MUST use a different layout archetype.
      - Avoid repetition.
      - Layout must support the content:
-       - Emotional тЖТ bold typography, minimal text
-       - Informational тЖТ structured grids
-       - Inspirational тЖТ image-led compositions
+       - Emotional - bold typography, minimal text
+       - Informational - structured grids
+       - Inspirational - image-led compositions
    - If ARTIFACT MODE does NOT include "slides":
      - Every artifact MUST vary in form while preserving system coherence.
      - Avoid producing the same silhouette or rhythm repeatedly.
@@ -695,26 +695,26 @@ PHASE 4: TECHNICAL EXECUTION
 
 - In <head>, include:
   - <title>
-    тАв Stock-ready Motion Template name derived from the TOPIC
-    тАв English only
-    тАв SEO-friendly and appropriate for Motion Array, VideoHive, Adobe Stock
-    тАв Clear commercial intent (opener, promo, slideshow, titles, etc.)
+    - Stock-ready Motion Template name derived from the TOPIC
+    - English only
+    - SEO-friendly and appropriate for Motion Array, VideoHive, Adobe Stock
+    - Clear commercial intent (opener, promo, slideshow, titles, etc.)
   - <meta name="project-title" content="...">
-    тАв Must EXACTLY match the <title>
+    - Must EXACTLY match the <title>
   - <meta name="description" content="...">
-    тАв Clear SEO-friendly 1тАУ2 sentence summary
-    тАв 120тАУ160 characters (target range)
-    тАв Describe what the template is and how itтАЩs used
-    тАв Include primary keywords naturally, no stuffing
+    - Clear SEO-friendly 1-2 sentence summary
+    - 120-160 characters (target range)
+    - Describe what the template is and how it's used
+    - Include primary keywords naturally, no stuffing
   - <meta name="tags" content="tag1, tag2, tag3, ...">
-    тАв EXACTLY 20 concise SEO tags
-    тАв lowercase
-    тАв comma-separated
-    тАв no duplicates
-    тАв avoid filler words
-    тАв optimized for motion templates and stock search
+    - EXACTLY 20 concise SEO tags
+    - lowercase
+    - comma-separated
+    - no duplicates
+    - avoid filler words
+    - optimized for motion templates and stock search
   - <meta name="keywords" content="same as tags">
-    тАв Must be IDENTICAL to the tags list (same order, same commas)
+    - Must be IDENTICAL to the tags list (same order, same commas)
   - <meta name="artifact-mode" content="...">
     ? Must be one of: slides, icons, patterns, textures, type-specimen, ui-modules, covers, posters, grids, dividers, mixed
     ? If ARTIFACT MODE is "auto", choose the correct mode and set it here
@@ -732,7 +732,7 @@ PHASE 4: TECHNICAL EXECUTION
 
   - **PRO DIRECTION:**
     - Do not feel constrained by standard flow.
-    - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the тАЬweb-pageтАЭ feel.
+    - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the "web-page" feel.
     - Negative margins/calc offsets are allowed on inner elements only, NEVER on the artifact/slide wrapper.
 
 3. **CREATIVE MODE**
@@ -818,7 +818,7 @@ Shaping should originate from context:
 If the image communicates the same meaning without shaping,
 shaping must not be applied.
 
-Shaping must respond to slideтАЩs narrative role,
+Shaping must respond to slide's narrative role,
 not to visual balance or decoration.
 
 6. **VISUAL ANCHORS**

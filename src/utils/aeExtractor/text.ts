@@ -10,8 +10,18 @@ type Token =
       rect: DOMRect | null;
     };
 
-const splitWordsWithSpaces = (s: string): string[] => {
-  return s.match(/\S+\s*/g) ?? [];
+const findWordTokens = (s: string): Array<{ text: string; start: number; end: number }> => {
+  const tokens: Array<{ text: string; start: number; end: number }> = [];
+  const re = /\S+\s*/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(s)) !== null) {
+    const text = match[0] ?? '';
+    if (!text) continue;
+    const start = match.index;
+    const end = start + text.length;
+    tokens.push({ text, start, end });
+  }
+  return tokens;
 };
 
 const parseTextStroke = (
@@ -90,7 +100,7 @@ const collectTextTokens = (
     const raw = textNode.data ?? '';
     if (!raw) return;
 
-    const parts = splitWordsWithSpaces(raw);
+    const parts = findWordTokens(raw);
     if (!parts.length) return;
 
     const parentEl = textNode.parentElement as HTMLElement | null;
@@ -103,12 +113,10 @@ const collectTextTokens = (
       fontStyle: cs.fontStyle
     };
 
-    let offset = 0;
     for (const part of parts) {
       const r = win.document.createRange();
-      const start = offset;
-      const end = offset + part.length;
-      offset = end;
+      const start = part.start;
+      const end = part.end;
 
       const safeStart = Math.max(0, Math.min(start, textNode.length));
       const safeEnd = Math.max(safeStart, Math.min(end, textNode.length));
@@ -121,7 +129,7 @@ const collectTextTokens = (
 
       tokens.push({
         kind: 'text',
-        text: part,
+        text: part.text,
         parentStyle,
         rect
       });
@@ -168,10 +176,13 @@ const extractWrappedTextAndLineStyles = (
   lineBounds: AEBounds[];
   lineRanges: AETextLineRange[];
 } => {
+  const DEBUG_TEXT_RECTS = false;
   const cs = win.getComputedStyle(el);
   const fontSize = parseFloat(cs.fontSize) || 16;
   const csOpacity = Number.isFinite(parseFloat(cs.opacity)) ? parseFloat(cs.opacity) : 1;
-  const tolerance = fontSize * 0.35;
+  const lineHeightRaw = parseFloat(cs.lineHeight);
+  const lineHeightPx = Number.isFinite(lineHeightRaw) ? lineHeightRaw : fontSize * 1.2;
+  let tolerance = Math.max(2, lineHeightPx * 0.3);
 
   const prevTransform = el.style.transform;
   const prevTransformOrigin = el.style.transformOrigin;
@@ -201,6 +212,7 @@ const extractWrappedTextAndLineStyles = (
   let currentBounds: { left: number; top: number; right: number; bottom: number } | null = null;
 
   let prevTop: number | null = null;
+  let currentLineIndex: number | null = null;
 
   const flushLine = () => {
     const txt = currentText.trimEnd();
@@ -220,6 +232,7 @@ const extractWrappedTextAndLineStyles = (
     currentStyle = null;
     currentBounds = null;
     prevTop = null;
+    currentLineIndex = null;
   };
 
   const updateBounds = (r: DOMRect) => {
@@ -231,6 +244,81 @@ const extractWrappedTextAndLineStyles = (
     currentBounds.top = Math.min(currentBounds.top, r.top);
     currentBounds.right = Math.max(currentBounds.right, r.right);
     currentBounds.bottom = Math.max(currentBounds.bottom, r.bottom);
+  };
+
+  if (tokens.length) {
+    const rectHeights: number[] = [];
+    for (const tok of tokens) {
+      if (tok.kind === 'text' && tok.rect && isFinite(tok.rect.height) && tok.rect.height > 0) {
+        rectHeights.push(tok.rect.height);
+      }
+    }
+    if (rectHeights.length) {
+      rectHeights.sort((a, b) => a - b);
+      const mid = Math.floor(rectHeights.length / 2);
+      const median = rectHeights.length % 2 ? rectHeights[mid] : (rectHeights[mid - 1] + rectHeights[mid]) / 2;
+      tolerance = Math.max(2, Math.min(tolerance, median * 0.6));
+    }
+  }
+
+  const buildLineTops = (tops: number[], tol: number): number[] => {
+    if (!tops.length) return [];
+    const sorted = tops.slice().sort((a, b) => a - b);
+    const clusters: Array<{ sum: number; count: number }> = [];
+    for (const top of sorted) {
+      const last = clusters[clusters.length - 1];
+      if (!last) {
+        clusters.push({ sum: top, count: 1 });
+        continue;
+      }
+      const avg = last.sum / last.count;
+      if (Math.abs(top - avg) <= tol) {
+        last.sum += top;
+        last.count += 1;
+      } else {
+        clusters.push({ sum: top, count: 1 });
+      }
+    }
+    return clusters.map(c => c.sum / c.count);
+  };
+
+  const lineTops: number[] = (() => {
+    const tops: number[] = [];
+    for (const tok of tokens) {
+      if (tok.kind === 'text' && tok.rect && isFinite(tok.rect.top)) {
+        tops.push(tok.rect.top);
+      }
+    }
+    return buildLineTops(tops, tolerance);
+  })();
+
+  if (DEBUG_TEXT_RECTS) {
+    const dbg = tokens
+      .map(tok => {
+        if (tok.kind === 'br') return '[BR]';
+        if (!tok.rect) return `"${tok.text}" -> no-rect`;
+        const top = Math.round(tok.rect.top * 100) / 100;
+        const left = Math.round(tok.rect.left * 100) / 100;
+        const h = Math.round(tok.rect.height * 100) / 100;
+        return `"${tok.text}" -> top=${top} left=${left} h=${h}`;
+      })
+      .join(' | ');
+    console.log('[aeExtractor] text token rects:', dbg);
+    console.log('[aeExtractor] lineTops:', lineTops.map(v => Math.round(v * 100) / 100));
+  }
+
+  const pickLineIndex = (top: number): number | null => {
+    if (!lineTops.length) return null;
+    let bestIdx = 0;
+    let bestDiff = Math.abs(lineTops[0] - top);
+    for (let i = 1; i < lineTops.length; i++) {
+      const diff = Math.abs(lineTops[i] - top);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
   };
 
   for (const tok of tokens) {
@@ -251,10 +339,20 @@ const extractWrappedTextAndLineStyles = (
     }
 
     if (tok.rect) {
-      if (prevTop === null) {
-        prevTop = tok.rect.top;
-      } else if (Math.abs(tok.rect.top - prevTop) > tolerance && currentText.trim().length > 0) {
+      const nextLineIndex = pickLineIndex(tok.rect.top);
+      if (currentLineIndex === null && nextLineIndex !== null) {
+        currentLineIndex = nextLineIndex;
+      } else if (
+        nextLineIndex !== null &&
+        currentLineIndex !== null &&
+        nextLineIndex !== currentLineIndex &&
+        currentText.trim().length > 0
+      ) {
         flushLine();
+        currentLineIndex = nextLineIndex;
+      }
+
+      if (prevTop === null) {
         prevTop = tok.rect.top;
       }
 

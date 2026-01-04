@@ -3435,6 +3435,20 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     });
   };
 
+  const stabilizeLayout = async (win: Window) => {
+    const doc = win.document as Document & { fonts?: FontFaceSet };
+    const fonts = doc.fonts;
+    if (fonts && typeof fonts.ready?.then === 'function') {
+      try {
+        await fonts.ready;
+      } catch (err) {
+        console.warn('Font loading wait failed:', err);
+      }
+    }
+    await new Promise<void>(resolve => win.requestAnimationFrame(() => resolve()));
+    await new Promise<void>(resolve => win.requestAnimationFrame(() => resolve()));
+  };
+
   const extractJsonFromIframe = async (win: Window) => {
     const doc = win.document;
     const artifactElement = doc.querySelector('.artifact') || doc.querySelector('.slide') || doc.body;
@@ -3443,6 +3457,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       throw new Error('Could not find artifact content to export.');
     }
 
+    await stabilizeLayout(win);
     sanitizeLayout(artifactElement);
     return extractArtifactLayout(artifactElement as HTMLElement, win, {
       targetWidth: exportResolution.width,

@@ -51,8 +51,10 @@ export interface AEBorder {
 
 export interface AETextLineRange {
   lineIndex: number;
+  x?: number;
   style: {
     color?: string;
+    opacity?: number;
     fontWeight?: string;
     fontStyle?: string;
   };

@@ -341,56 +341,164 @@
     return text;
   }
 
-  function addLineColorAnimators(layer, node) {
+  function addLineSelector(selectors, lineIndex) {
+    var selector = selectors.addProperty("ADBE Text Selector");
+    var advanced = selector.property("ADBE Text Range Advanced");
+    if (advanced) {
+      advanced.property("ADBE Text Range Units").setValue(2);
+      advanced.property("ADBE Text Range Type2").setValue(4);
+    }
+    selector.property("ADBE Text Index Start").setValue(lineIndex);
+    selector.property("ADBE Text Index End").setValue(lineIndex + 1);
+  }
+
+  function addLineStyleAnimators(layer, node) {
     if (!node || !node.lineRanges || node.lineRanges.length <= 1) return;
 
     var ranges = node.lineRanges;
-    var groups = {};
-    var keys = [];
+    var hasColor = false;
+    var hasOpacity = false;
+    var hasWeight = false;
+    var hasStyle = false;
+    var hasX = false;
 
     for (var i = 0; i < ranges.length; i++) {
-      var range = ranges[i];
-      if (!range || typeof range.lineIndex === "undefined") continue;
-      if (!range.style || !range.style.color) continue;
-
-      var rgb = parseCssColor(range.style.color);
-      var key = rgb[0] + "," + rgb[1] + "," + rgb[2];
-
-      if (!groups[key]) {
-        groups[key] = { rgb: rgb, lineIndices: [] };
-        keys.push(key);
+      var r = ranges[i];
+      if (!r || typeof r.lineIndex === "undefined") continue;
+      if (r.style) {
+        if (typeof r.style.color !== "undefined") hasColor = true;
+        if (typeof r.style.opacity !== "undefined") hasOpacity = true;
       }
-      groups[key].lineIndices.push(range.lineIndex);
+      if (typeof r.x !== "undefined") hasX = true;
     }
 
-    if (keys.length <= 1) return;
+    if (!hasColor && !hasOpacity && !hasX) return;
 
-    var animators = layer.property("Text").property("Animators");
+    var rangesSorted = ranges.slice(0).sort(function (a, b) {
+      return (a.lineIndex || 0) - (b.lineIndex || 0);
+    });
 
-    for (var k = 0; k < keys.length; k++) {
-      var group = groups[keys[k]];
-      var animator = animators.addProperty("ADBE Text Animator");
-      animator.name = "Color " + (k + 1);
+    var baseRange = rangesSorted.length ? rangesSorted[0] : null;
+    var baseColor = hasColor && baseRange && baseRange.style ? baseRange.style.color : null;
+    var baseOpacity = hasOpacity && baseRange && baseRange.style ? Number(baseRange.style.opacity) : 1;
+    if (!isFinite(baseOpacity)) baseOpacity = 1;
+    if (baseOpacity < 0) baseOpacity = 0;
+    if (baseOpacity > 1) baseOpacity = 1;
 
-      var animatorProps = animator.property("ADBE Text Animator Properties");
-      var fill = animatorProps.addProperty("ADBE Text Fill Color");
-      fill.setValue(group.rgb);
+    var baseWeight = null;
+    var baseWeightNum = 400;
+    var baseStyle = null;
+    var baseStyleNorm = "";
 
-      var selectors = animator.property("Selectors");
-      for (var j = 0; j < group.lineIndices.length; j++) {
-        var selector = selectors.addProperty("ADBE Text Selector");
-        var advanced = selector.property("ADBE Text Range Advanced");
-        if (advanced) {
-          advanced.property("ADBE Text Range Units").setValue(2);
-          advanced.property("ADBE Text Range Type2").setValue(4);
-        }
-        selector.property("ADBE Text Index Start").setValue(group.lineIndices[j]);
-        if (k === 0) {
-          selector.property("ADBE Text Index End").setValue(100);
-        } else if (k === keys.length - 1) {
-          selector.property("ADBE Text Index End").setValue(group.lineIndices[j] + 1);
+    var baseX = 0;
+    if (hasX && baseRange && typeof baseRange.x !== "undefined" && isFinite(baseRange.x)) {
+      baseX = Number(baseRange.x);
+    } else if (hasX && node.textLines && node.textLines.length) {
+      for (var bx = 0; bx < node.textLines.length; bx++) {
+        var bLine = node.textLines[bx];
+        if (bLine && isFinite(bLine.x)) {
+          baseX = Number(bLine.x);
+          break;
         }
       }
+    }
+
+    var baseColorAlpha = baseColor ? parseCssAlpha(baseColor) : 1;
+    var baseCombined = baseOpacity * baseColorAlpha;
+
+    var anyDiff = false;
+    for (var d = 0; d < rangesSorted.length; d++) {
+      var dr = rangesSorted[d];
+      if (!dr || typeof dr.lineIndex === "undefined") continue;
+      var dColor = hasColor && dr.style ? dr.style.color : baseColor;
+      var dOpacity = hasOpacity && dr.style ? Number(dr.style.opacity) : baseOpacity;
+      if (!isFinite(dOpacity)) dOpacity = baseOpacity;
+      if (dOpacity < 0) dOpacity = 0;
+      if (dOpacity > 1) dOpacity = 1;
+      var dColorAlpha = dColor ? parseCssAlpha(dColor) : baseColorAlpha;
+      var dCombined = dOpacity * dColorAlpha;
+      var dWeightNum = baseWeightNum;
+      var dStyleNorm = baseStyleNorm;
+      var dOffsetX = 0;
+      if (hasX && typeof dr.x !== "undefined" && isFinite(dr.x)) {
+        dOffsetX = Number(dr.x) - baseX;
+      }
+
+      if (
+        (hasColor && dColor && baseColor && dColor !== baseColor) ||
+        (hasOpacity && Math.abs(dOpacity - baseOpacity) > 0.001) ||
+        (hasColor && Math.abs(dCombined - baseCombined) > 0.001) ||
+        (hasX && Math.abs(dOffsetX) > 0.5)
+      ) {
+        anyDiff = true;
+        break;
+      }
+    }
+
+    if (!anyDiff) return;
+
+    var animators = layer.property("Text").property("Animators");
+    var baseAnimator = animators.addProperty("ADBE Text Animator");
+    baseAnimator.name = "Base";
+    var baseProps = baseAnimator.property("ADBE Text Animator Properties");
+
+    if (hasColor && baseColor) {
+      var baseRgb = parseCssColor(baseColor);
+      var baseFill = baseProps.addProperty("ADBE Text Fill Color");
+      baseFill.setValue(baseRgb);
+    }
+    if (hasOpacity || (hasColor && baseColorAlpha < 1)) {
+      var baseFillOpacity = baseProps.addProperty("ADBE Text Fill Opacity");
+      if (baseFillOpacity) baseFillOpacity.setValue(Math.round(baseCombined * 100));
+    }
+    for (var j = 0; j < rangesSorted.length; j++) {
+      var range = rangesSorted[j];
+      if (!range || typeof range.lineIndex === "undefined") continue;
+
+      var lineColor = hasColor && range.style ? range.style.color : baseColor;
+      var lineOpacity = hasOpacity && range.style ? Number(range.style.opacity) : baseOpacity;
+      if (!isFinite(lineOpacity)) lineOpacity = baseOpacity;
+      if (lineOpacity < 0) lineOpacity = 0;
+      if (lineOpacity > 1) lineOpacity = 1;
+      var lineColorAlpha = lineColor ? parseCssAlpha(lineColor) : baseColorAlpha;
+      var lineCombined = lineOpacity * lineColorAlpha;
+
+      var lineWeightNum = baseWeightNum;
+      var lineStyleNorm = baseStyleNorm;
+
+      var offsetX = 0;
+      if (hasX && typeof range.x !== "undefined" && isFinite(range.x)) {
+        offsetX = Number(range.x) - baseX;
+      }
+
+      var colorDiff = hasColor && lineColor && baseColor && lineColor !== baseColor;
+      var opacityDiff = hasOpacity && Math.abs(lineOpacity - baseOpacity) > 0.001;
+      var combinedDiff = hasColor && Math.abs(lineCombined - baseCombined) > 0.001;
+      var xDiff = hasX && Math.abs(offsetX) > 0.5;
+
+      if (!colorDiff && !opacityDiff && !combinedDiff && !xDiff) continue;
+
+      var animator = animators.addProperty("ADBE Text Animator");
+      animator.name = "Line " + (range.lineIndex + 1);
+      var animatorProps = animator.property("ADBE Text Animator Properties");
+
+      if (colorDiff && lineColor) {
+        var rgb = parseCssColor(lineColor);
+        var fill = animatorProps.addProperty("ADBE Text Fill Color");
+        fill.setValue(rgb);
+      }
+
+      if (opacityDiff || combinedDiff) {
+        var fillOpacity = animatorProps.addProperty("ADBE Text Fill Opacity");
+        if (fillOpacity) fillOpacity.setValue(Math.round(lineCombined * 100));
+      }
+
+      if (xDiff) {
+        var pos = animatorProps.addProperty("ADBE Text Position 3D");
+        if (pos) pos.setValue([offsetX, 0, 0]);
+      }
+
+      addLineSelector(animator.property("Selectors"), range.lineIndex);
     }
   }
 
@@ -484,7 +592,7 @@
 
     textProp.setValue(doc);
 
-    addLineColorAnimators(layer, node);
+    addLineStyleAnimators(layer, node);
 
     // 3. ������������� ��� TOP-LEFT (HTML-like)
     var placementBBox = pickTextPlacementBBox(node, localBBox);

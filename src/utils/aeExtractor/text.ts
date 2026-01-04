@@ -6,7 +6,7 @@ type Token =
   | {
       kind: 'text';
       text: string;
-      parentStyle: { color: string; fontWeight: string; fontStyle: string };
+      parentStyle: { color: string; opacity: number; fontWeight: string; fontStyle: string };
       rect: DOMRect | null;
     };
 
@@ -95,8 +95,10 @@ const collectTextTokens = (
 
     const parentEl = textNode.parentElement as HTMLElement | null;
     const cs = parentEl ? win.getComputedStyle(parentEl) : win.getComputedStyle(el);
+    const opacity = parseFloat(cs.opacity);
     const parentStyle = {
       color: cs.color,
+      opacity: Number.isFinite(opacity) ? opacity : 1,
       fontWeight: cs.fontWeight,
       fontStyle: cs.fontStyle
     };
@@ -168,6 +170,7 @@ const extractWrappedTextAndLineStyles = (
 } => {
   const cs = win.getComputedStyle(el);
   const fontSize = parseFloat(cs.fontSize) || 16;
+  const csOpacity = Number.isFinite(parseFloat(cs.opacity)) ? parseFloat(cs.opacity) : 1;
   const tolerance = fontSize * 0.35;
 
   const prevTransform = el.style.transform;
@@ -190,7 +193,7 @@ const extractWrappedTextAndLineStyles = (
   }
 
   const lines: string[] = [];
-  const lineRanges: AETextLineRange[] = [];
+  const lineStyles: AETextLineRange['style'][] = [];
   const lineBoundsRaw: Array<{ left: number; top: number; right: number; bottom: number } | null> = [];
 
   let currentText = '';
@@ -203,16 +206,14 @@ const extractWrappedTextAndLineStyles = (
     const txt = currentText.trimEnd();
     if (txt.length > 0) {
       const idx = lines.length;
+      const baseStyle = {
+        color: cs.color,
+        opacity: csOpacity,
+        fontWeight: cs.fontWeight,
+        fontStyle: cs.fontStyle
+      };
       lines.push(txt);
-      lineRanges.push({
-        lineIndex: idx,
-        style:
-          currentStyle ?? {
-            color: cs.color,
-            fontWeight: cs.fontWeight,
-            fontStyle: cs.fontStyle
-          }
-      });
+      lineStyles.push(currentStyle ?? baseStyle);
       lineBoundsRaw.push(currentBounds);
     }
     currentText = '';
@@ -243,6 +244,7 @@ const extractWrappedTextAndLineStyles = (
     if (!currentStyle && piece.trim().length > 0) {
       currentStyle = {
         color: tok.parentStyle.color,
+        opacity: tok.parentStyle.opacity,
         fontWeight: tok.parentStyle.fontWeight,
         fontStyle: tok.parentStyle.fontStyle
       };
@@ -271,10 +273,7 @@ const extractWrappedTextAndLineStyles = (
       text: flines.join('\n'),
       lines: flines,
       lineBounds: flines.map(() => ({ x: 0, y: 0, w: 0, h: 0 })),
-      lineRanges: flines.map((_, i) => ({
-        lineIndex: i,
-        style: { color: cs.color, fontWeight: cs.fontWeight, fontStyle: cs.fontStyle }
-      }))
+      lineRanges: []
     };
   }
 
@@ -287,6 +286,57 @@ const extractWrappedTextAndLineStyles = (
       h: (b.bottom - b.top) * scale
     };
   });
+
+  const baseStyle = {
+    color: cs.color,
+    opacity: csOpacity,
+    fontWeight: cs.fontWeight,
+    fontStyle: cs.fontStyle
+  };
+
+  const baseX = lineBounds.find(b => b.w > 0 && b.h > 0)?.x;
+  const lineRanges: AETextLineRange[] = [];
+
+  let colorDiff = false;
+  let opacityDiff = false;
+  let weightDiff = false;
+  let styleDiff = false;
+  let xDiff = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const style = lineStyles[i] ?? baseStyle;
+    if (style.color && style.color !== baseStyle.color) colorDiff = true;
+    if (typeof style.opacity === 'number' && Math.abs(style.opacity - baseStyle.opacity) > 0.001) {
+      opacityDiff = true;
+    }
+    if (style.fontWeight && style.fontWeight !== baseStyle.fontWeight) weightDiff = true;
+    if (style.fontStyle && style.fontStyle !== baseStyle.fontStyle) styleDiff = true;
+
+    const bound = lineBounds[i];
+    if (typeof baseX === 'number' && bound && isFinite(bound.x) && Math.abs(bound.x - baseX) > 0.5) {
+      xDiff = true;
+    }
+  }
+
+  if (colorDiff || opacityDiff || weightDiff || styleDiff || xDiff) {
+    for (let i = 0; i < lines.length; i++) {
+      const style = lineStyles[i] ?? baseStyle;
+      const bound = lineBounds[i];
+      const lineX =
+        xDiff && bound && isFinite(bound.x) ? bound.x : undefined;
+
+      lineRanges.push({
+        lineIndex: i,
+        x: lineX,
+        style: {
+          color: colorDiff ? style.color : undefined,
+          opacity: opacityDiff ? style.opacity : undefined,
+          fontWeight: weightDiff ? style.fontWeight : undefined,
+          fontStyle: styleDiff ? style.fontStyle : undefined
+        }
+      });
+    }
+  }
 
   return { text: lines.join('\n'), lines, lineBounds, lineRanges };
 };
@@ -325,7 +375,7 @@ export const buildTextExtra = (
     text: wrapped.text,
     lines: wrapped.lines,
     textLines: fixedTextLines,
-    lineRanges: wrapped.lineRanges,
+    lineRanges: wrapped.lineRanges.length ? wrapped.lineRanges : undefined,
     textTransform: style.textTransform,
     font: {
       family: style.fontFamily.replace(/['"]/g, ''),

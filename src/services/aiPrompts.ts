@@ -4,12 +4,20 @@ Task: Define art direction for a design artifact system.
 
 TOPIC: "{topic}"
 
-Return ONLY strict JSON with:
-- mood: short phrase
-- palette: array of 4 hex colors (no pure #000000 or #FFFFFF)
-- typography: { "heading": "Google Font Name", "body": "Google Font Name" }
-- motifs: array of 3-5 short phrases
-- composition_notes: 1 short sentence
+Return ONLY strict JSON that matches this shape exactly:
+{
+  "mood": "2-6 words",
+  "palette": ["#RRGGBB", "#RRGGBB", "#RRGGBB", "#RRGGBB"],
+  "typography": { "heading": "Google Font Name", "body": "Google Font Name" },
+  "motifs": ["...", "..."],
+  "composition_notes": "1 sentence, max 140 chars"
+}
+
+Rules:
+- palette: exactly 4 DISTINCT hex colors; no #000000, no #FFFFFF.
+- palette must include at least 1 clearly dark color and 1 clearly light color (for legibility).
+- typography.heading != typography.body and both must be real Google Fonts names (no weights in the name).
+- motifs: 3-5 items, each 2-6 words, no punctuation-heavy phrases.
 
 No markdown. No commentary. JSON only.
 `;
@@ -608,7 +616,15 @@ PHASE 1: ART DIRECTION (INTERNAL - THINK FIRST)
 2. **COLOR PALETTE**
    - Apply the provided 4-color palette aligned with the mood.
    - Rules:
-     - NEVER use pure #000000 or #FFFFFF.
+     - Use ONLY the 4 palette hex colors from ART DIRECTION JSON.
+- Do not introduce any additional hex colors.
+- If subtle hierarchy is needed, create tints via opacity (rgba) or by reusing palette colors at low opacity.
+- Map palette to roles by contrast:
+  - choose a dominant base (bg-main),
+  - choose a high-contrast color for text-primary,
+  - reserve one color as brand-color (accent),
+  - use the remaining for bg-accent/text-secondary.
+
      - Prefer off-whites (#F6F7F8) or deep charcoals (#111111-#1A1A1A).
      - Avoid generic blue/white corporate palettes unless absolutely required.
    - Colors must feel intentional and emotionally driven.
@@ -690,6 +706,10 @@ PHASE 4: TECHNICAL EXECUTION
   - Output ONLY raw HTML (no markdown, no explanations, no comments).
   - NEVER ask questions or request confirmation. Do not add preambles or commentary.
   - Every element MUST include a semantic, meaningful id that reflects its purpose/content.
+  ID NAMING SCHEME (MANDATORY):
+- Use kebab-case only.
+- Use role-based structure: title-main, type-caption-02, svg-frame, path-contour-03, filter-grain, fe-turbulence-01.
+- Never reuse ids across artifacts. Every artifact must have its own prefix.
 - This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
 - No element may be left without an id; ids must be unique within the document.
 
@@ -789,13 +809,31 @@ PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
    - SVG is never redundant if it establishes the requested aesthetic texture.
    - Never use pre-made icon sets. Every path must be authored specifically for this topic.
 
-4. **IMAGES**
-   - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}} for images.
-   - Provide EXACTLY 10 concise, specific keywords/phrases (2-4 words each).
-   - Prioritize precise, concrete descriptors over generic terms.
-   - NO filters (no grayscale, opacity, blur).
-   - Photography must stay clean and natural.
-   - Images MUST use the {{IMAGE:...}} placeholder (no direct URLs).
+IMAGES POLICY BY ARTIFACT MODE (NON-NEGOTIABLE)
+
+- slides: images ALLOWED and encouraged via {{IMAGE:...}}
+- covers: images ALLOWED
+- posters: images ALLOWED
+- ui-modules: images OPTIONAL (only if they add meaning, never decorative)
+- icons: images FORBIDDEN
+- patterns: images FORBIDDEN
+- textures: images FORBIDDEN
+- type-specimen: images FORBIDDEN
+- grids: images FORBIDDEN
+- dividers: images FORBIDDEN
+
+If images are forbidden for the selected ARTIFACT MODE:
+- Do NOT include {{IMAGE:...}}
+- Do NOT include <img>
+- Do NOT simulate images with SVG masks or patterns
+
+4. **IMAGES** (ONLY IF ALLOWED BY ARTIFACT MODE POLICY)
+   - Use {{IMAGE:kw1, kw2, kw3, kw4, kw5, kw6, kw7, kw8, kw9, kw10}}
+   - Provide EXACTLY 10 concise, specific keywords/phrases (2–4 words each)
+   - Prioritize precise, concrete descriptors over generic terms
+   - NO filters (no grayscale, opacity, blur)
+   - Photography must stay clean and natural
+   - Images MUST use the {{IMAGE:...}} placeholder (no direct URLs)
 
 5. **IMAGE SHAPING (ADVANCED)**
 Image shaping is a semantic action, not a stylistic choice.
@@ -857,6 +895,25 @@ Use these as internal rules of construction:
 - Studio techniques: layering, micro-typography, coordinate marks, and technical annotations to create depth and authorship.
 - Modern CSS: use clamp(), aspect-ratio, and container-aware sizing to avoid template layouts.
 
+INTERNAL FINAL LINT (DO NOT OUTPUT):
+- Head:
+  - <title> English only, matches meta project-title exactly.
+  - meta description is 120-160 characters.
+  - meta tags has EXACTLY 20 items, lowercase, unique.
+  - meta keywords is IDENTICAL to tags (same order, commas).
+  - meta artifact-mode is one of allowed values.
+- Artifacts:
+  - Correct artifact count for the chosen ARTIFACT MODE.
+  - Every artifact is wrapped in <section class="artifact..."> with margin: 0.
+  - No artifact wrappers hidden by default (no opacity:0/visibility:hidden on the wrapper).
+- CSS:
+  - No writing-mode, no text-orientation.
+  - No "mix-blend-mode: difference".
+  - No "text-align: right" on paragraphs/body text.
+  - No #000000 or #FFFFFF anywhere.
+- IDs:
+  - Every element (HTML + SVG + defs/filter nodes) has a unique, meaningful id following the naming scheme.
+
 PHASE 5: GENERATION
 
 Generate the final HTML.
@@ -890,15 +947,23 @@ INSTRUCTIONS:
    - introduce a new variation
    - avoid repeating silhouettes or compositions
 6. SVG rules:
-   - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
-   - no external assets
+- Allowed SVG structure elements: <svg>, <g>, <defs>, <pattern>, <linearGradient>, <radialGradient>, <stop>, <filter>,
+  <feTurbulence>, <feDisplacementMap>, <feGaussianBlur>, <feColorMatrix>, <clipPath>, <mask>
+- Allowed geometry primitives: <path>, <line>, <rect>, <circle>
+- Forbidden: <image>, <use>, <foreignObject>, external href/assets
 7. The wrapper must keep margin: 0 (do not add margin to the <section class="artifact...">).
-8. If ARTIFACT MODE includes "slides":
-   - return one <section class="artifact slide">
-   - images allowed via {{IMAGE:...}} (10 keywords)
-9. If ARTIFACT MODE != slides:
-   - return one <section class="artifact">
-   - no narrative, no images
+8. Artifact wrapper:
+   - If ARTIFACT MODE includes "slides":
+     - return one <section class="artifact slide">
+   - Otherwise:
+     - return one <section class="artifact">
+9. Images:
+   - slides, covers, posters:
+     - images allowed via {{IMAGE:...}} (EXACTLY 10 keywords)
+   - ui-modules:
+     - images OPTIONAL, only if they add functional or semantic meaning
+   - icons, patterns, textures, type-specimen, grids, dividers:
+     - images STRICTLY FORBIDDEN
 10. Every element MUST include a semantic, meaningful id that reflects its purpose/content.
     This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
     No element may be left without an id; ids must be unique within the artifact.
@@ -924,15 +989,24 @@ INSTRUCTIONS:
    - introduce a new variation
    - avoid repeating silhouettes or compositions
 6. SVG rules:
-   - primitives only (<path>, <line>, <rect>, <circle>, <pattern>)
-   - no external assets
+- Allowed SVG structure elements: <svg>, <g>, <defs>, <pattern>, <linearGradient>, <radialGradient>, <stop>, <filter>,
+  <feTurbulence>, <feDisplacementMap>, <feGaussianBlur>, <feColorMatrix>, <clipPath>, <mask>
+- Allowed geometry primitives: <path>, <line>, <rect>, <circle>
+- Forbidden: <image>, <use>, <foreignObject>, external href/assets
 7. The wrapper must keep margin: 0 (do not add margin to the <section class="artifact...">).
-8. If ARTIFACT MODE includes "slides":
-   - return one <section class="artifact slide">
-   - images allowed via {{IMAGE:...}} (10 keywords)
-9. If ARTIFACT MODE != slides:
-   - return one <section class="artifact">
-   - no narrative, no images
+8. Artifact wrapper:
+   - If ARTIFACT MODE includes "slides":
+     - return one <section class="artifact slide">
+   - Otherwise:
+     - return one <section class="artifact">
+
+9. Images:
+   - slides, covers, posters:
+     - images allowed via {{IMAGE:...}} (EXACTLY 10 keywords)
+   - ui-modules:
+     - images OPTIONAL, only if they add functional or semantic meaning
+   - icons, patterns, textures, type-specimen, grids, dividers:
+     - images STRICTLY FORBIDDEN
 10. Every element MUST include a semantic, meaningful id that reflects its purpose/content.
     This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
     No element may be left without an id; ids must be unique within the artifact.

@@ -919,6 +919,80 @@ PHASE 5: GENERATION
 Generate the final HTML.
 `;
 
+export const MOTION_CACHE_CONTEXT = `
+# AI Motion Cache Pack (HTML/CSS Animated HTML/CSS) v1.0
+
+Primary goal: Given HTML + CSS, return the same HTML + CSS updated with expressive, thoughtful motion.
+
+Service contract:
+- Input: html (string), css (string)
+- Output: updated html + updated css with motion appended
+
+Rules:
+- Do not change copy/text content.
+- Do not alter layout semantics or responsiveness.
+- Prefer transform + opacity for animation.
+- Avoid heavy effects (filters, box-shadow, backdrop-filter, clip-path) unless essential.
+- Add prefers-reduced-motion fallback to minimize motion.
+- Hover effects must also support :focus-visible.
+- Minimal HTML edits (add motion-* classes or data-motion attributes only).
+- No JS by default (CSS-only baseline).
+
+Timing tokens (ms):
+- micro: 120
+- fast: 180
+- ui: 240
+- enter: 225
+- exit: 195
+- base: 300
+- large: 375
+- slow: 600
+- ambient: 3000
+
+Stagger tokens:
+- tight: 25
+- normal: 45
+- loose: 70
+
+Easing set:
+- standard: cubic-bezier(0.4, 0.0, 0.2, 1)
+- deceleration: cubic-bezier(0.0, 0.0, 0.2, 1)
+- acceleration: cubic-bezier(0.4, 0.0, 1, 1)
+- sharp: cubic-bezier(0.4, 0.0, 0.6, 1)
+
+Reduced motion baseline:
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+`;
+
+export const APPLY_MOTION_PROMPT = `
+Role: Motion Designer & Frontend Engineer.
+Task: Add thoughtful motion to the provided HTML/CSS while preserving the original design.
+
+TOPIC: {topic}
+ARTIFACT MODE: {artifact_mode}
+
+INPUT_HTML:
+{html}
+
+INPUT_CSS:
+{css}
+
+OUTPUT:
+- Return a complete HTML document (with <html>, <head>, <body>).
+- Keep the same structure and visual design.
+- Append motion CSS to the existing styles or add a new <style> block.
+- Only minimal HTML edits (add motion-* classes/data-motion attributes if needed).
+- Include prefers-reduced-motion fallback.
+- No markdown, no commentary. Return raw HTML only.
+`;
+
 export const REGENERATE_PROMPT = `
 Role: Senior Frontend Developer & Art Director.
 Task: Redesign ONE existing DESIGN ARTIFACT while preserving the visual identity.

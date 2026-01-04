@@ -1,8 +1,10 @@
 import {
   ADD_ARTIFACT_PROMPT,
+  APPLY_MOTION_PROMPT,
   ART_DIRECTION_PROMPT,
   BASE_PROMPT,
   CACHE_PRIMER_CONTEXT,
+  MOTION_CACHE_CONTEXT,
   REGENERATE_PROMPT,
   UPDATE_FROM_CONTEXT_PROMPT
 } from "./aiPrompts";
@@ -1032,6 +1034,27 @@ export const generateNewArtifact = async (
     );
   } catch (error) {
     console.error("Error adding artifact:", error);
+    throw error;
+  }
+};
+
+export const applyMotionToHtml = async (
+  provider: AiProviderName,
+  topic: string,
+  artifactMode: ArtifactMode,
+  html: string,
+  css: string
+): Promise<string> => {
+  try {
+    const prompt = APPLY_MOTION_PROMPT
+      .replace(/{topic}/g, topic)
+      .replace(/{artifact_mode}/g, artifactMode)
+      .replace(/{html}/g, html)
+      .replace(/{css}/g, css);
+    const finalPrompt = `${MOTION_CACHE_CONTEXT}\n\n${prompt}`;
+    return await createResponseText(provider, finalPrompt, 0.6);
+  } catch (error) {
+    console.error('Error applying motion to html:', error);
     throw error;
   }
 };

@@ -5,6 +5,7 @@ import {
   generateArtifactsPersisted,
   regenerateArtifact,
   generateNewArtifact,
+  applyMotionToHtml,
   updateArtifactsFromContext,
   updateArtifactsFromContextPersisted,
   AiProviderName,
@@ -38,6 +39,7 @@ type PreviewLayer = {
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
 
 const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
+const LAST_ARTIFACT_INDEX_KEY = 'ae2:lastArtifactIndex';
 const AUTO_REFINE_KEY = 'ae2:autoRefine';
 
 const RESOLUTION_OPTIONS: ResolutionOption[] = [
@@ -1470,6 +1472,15 @@ const getArtifactIdFromUrl = () => {
   return id && id.trim() ? id.trim() : null;
 };
 
+const getSlideIndexFromUrl = () => {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('slide');
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const setArtifactIdInUrl = (id: string | null) => {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
@@ -1481,6 +1492,16 @@ const setArtifactIdInUrl = (id: string | null) => {
   window.history.replaceState({}, '', url.toString());
 };
 
+const setSlideIndexInUrl = (index: number | null) => {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (index == null || Number.isNaN(index)) {
+    url.searchParams.delete('slide');
+  } else {
+    url.searchParams.set('slide', String(index));
+  }
+  window.history.replaceState({}, '', url.toString());
+};
 const sanitizeImageAlts = (root: ParentNode) => {
   const images = root.querySelectorAll('img');
   images.forEach(img => {
@@ -1964,6 +1985,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     total: 0
   });
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
+  const [animatingArtifact, setAnimatingArtifact] = useState(false);
   const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [regenerateMode, setRegenerateMode] = useState<'slide' | 'project'>('slide');
@@ -1987,6 +2009,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
   const [exportFps, setExportFps] = useState<number>(30);
   const [exportDuration, setExportDuration] = useState<number>(10);
+  const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const [timelineTime, setTimelineTime] = useState(0);
   const [projectTitle, setProjectTitle] = useState('');
   const [projectTags, setProjectTags] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
@@ -2013,6 +2037,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     id: string;
     position: 'before' | 'after' | 'inside';
   } | null>(null);
+  const timelineTimeRef = useRef(0);
+  const timelinePlayingRef = useRef(false);
+  const timelineRafRef = useRef<number | null>(null);
+  const timelineStartRef = useRef(0);
+  const timelineStartTimeRef = useRef(0);
+  const timelineAppliedOffsetRef = useRef<string | null>(null);
+  const timelineUiTickRef = useRef(0);
+  const timelineRootRef = useRef<HTMLElement | null>(null);
   const artifactsRef = useRef<string[]>([]);
   const [historyItems, setHistoryItems] = useState<ArtifactHistoryItem[]>([]);
   const [historyPolling, setHistoryPolling] = useState(false);
@@ -2020,6 +2052,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const restoredArtifactIndexRef = useRef<string | null>(null);
+  const desiredArtifactIndexRef = useRef<number | null>(null);
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
@@ -2042,6 +2076,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const historyLastHashRef = useRef<number | null>(null);
   const generateRequestIdRef = useRef(0);
   const regenerateRequestIdRef = useRef(0);
+  const animateRequestIdRef = useRef(0);
   const addArtifactRequestIdRef = useRef(0);
 
   useEffect(() => {
@@ -2069,6 +2104,72 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     loadHistory();
   }, []);
 
+  useEffect(() => {
+    const clamped = Math.min(Math.max(0, timelineTimeRef.current), Math.max(exportDuration, 0));
+    if (clamped !== timelineTimeRef.current) {
+      timelineTimeRef.current = clamped;
+      setTimelineTime(clamped);
+    }
+  }, [exportDuration]);
+
+  useEffect(() => {
+    if (!timelinePlaying) {
+      timelinePlayingRef.current = false;
+      if (timelineRafRef.current) {
+        window.cancelAnimationFrame(timelineRafRef.current);
+        timelineRafRef.current = null;
+      }
+      setTimelinePlayState(false);
+      setTimelineTime(timelineTimeRef.current);
+      return;
+    }
+
+    timelinePlayingRef.current = true;
+    setTimelinePlayState(true);
+    timelineStartRef.current = performance.now();
+    timelineStartTimeRef.current = timelineTimeRef.current;
+    timelineUiTickRef.current = performance.now();
+
+    const tick = (now: number) => {
+      if (!timelinePlayingRef.current) return;
+      const duration = Math.max(exportDuration, 0.01);
+      const elapsed = (now - timelineStartRef.current) / 1000;
+      const next = timelineStartTimeRef.current + elapsed;
+      if (next >= duration) {
+        timelineStartRef.current = now;
+        timelineStartTimeRef.current = 0;
+        timelineTimeRef.current = 0;
+        setTimelineTime(0);
+        applyTimelineOffset(0);
+      } else {
+        timelineTimeRef.current = next;
+        if (now - timelineUiTickRef.current > 100) {
+          timelineUiTickRef.current = now;
+          setTimelineTime(next);
+        }
+      }
+      timelineRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    timelineRafRef.current = window.requestAnimationFrame(tick);
+    return () => {
+      timelinePlayingRef.current = false;
+      if (timelineRafRef.current) {
+        window.cancelAnimationFrame(timelineRafRef.current);
+        timelineRafRef.current = null;
+      }
+    };
+  }, [timelinePlaying, exportDuration]);
+
+  useEffect(() => {
+    const root = iframeRef.current?.contentDocument?.documentElement as HTMLElement | null;
+    timelineRootRef.current = root;
+    if (root) {
+      timelineAppliedOffsetRef.current = null;
+      root.style.setProperty('--ae2-anim-offset', `${timelineTimeRef.current}s`);
+    }
+  }, [previewRevision]);
+
 
   useEffect(() => {
     const { title, tags, description, artifactMode: headMode } = parseHeadMetadata(headContent);
@@ -2088,6 +2189,36 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setArtifactMode(headMode);
     }
   }, [headContent, editingTitle, editingTags, editingDescription, artifactMode]);
+
+  useEffect(() => {
+    if (artifacts.length === 0) return;
+    if (typeof window === 'undefined') return;
+    if (!currentHistoryId) return;
+    if (restoredArtifactIndexRef.current === currentHistoryId) return;
+    const slideFromUrl = getSlideIndexFromUrl();
+    if (slideFromUrl != null) {
+      const clamped = Math.min(Math.max(0, slideFromUrl), Math.max(0, artifacts.length - 1));
+      setCurrentArtifactIndex(clamped);
+    }
+    restoredArtifactIndexRef.current = currentHistoryId;
+  }, [artifacts.length, currentHistoryId]);
+
+  useEffect(() => {
+    if (artifacts.length === 0) return;
+    if (typeof window === 'undefined') return;
+    if (!currentHistoryId) return;
+    if (restoredArtifactIndexRef.current !== currentHistoryId) return;
+    setSlideIndexInUrl(currentArtifactIndex);
+  }, [currentArtifactIndex, artifacts.length, currentHistoryId]);
+
+  useEffect(() => {
+    const root = iframeRef.current?.contentDocument?.documentElement as HTMLElement | null;
+    if (!root) return;
+    timelineRootRef.current = root;
+    timelineAppliedOffsetRef.current = null;
+    root.style.setProperty('--ae2-anim-offset', `${timelineTimeRef.current}s`);
+    root.setAttribute('data-ae2-play', timelinePlaying ? 'true' : 'false');
+  }, [previewRevision]);
 
   const getHistoryHash = (snapshot: HistorySnapshot) =>
     hashString(
@@ -2363,6 +2494,38 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       body { background: #000; display: flex; align-items: center; justify-content: center; }
       /* Ensure artifacts fit the iframe bounds (container already keeps 16:9). */
       .artifact, .slide {overflow: hidden; position: relative; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; margin-bottom: 0 !important; transform: none !important; transform-origin: initial !important; }
+      :root {
+        --ae2-anim-offset: 0s;
+      }
+      .artifact, .slide,
+      .artifact *, .slide *,
+      .artifact *::before, .artifact *::after,
+      .slide *::before, .slide *::after {
+        animation-delay: calc(var(--ae2-anim-offset, 0s) * -1) !important;
+        animation-play-state: paused !important;
+        animation-iteration-count: 1 !important;
+        animation-fill-mode: both !important;
+      }
+      :root[data-ae2-play="true"] .artifact,
+      :root[data-ae2-play="true"] .slide,
+      :root[data-ae2-play="true"] .artifact *,
+      :root[data-ae2-play="true"] .slide *,
+      :root[data-ae2-play="true"] .artifact *::before,
+      :root[data-ae2-play="true"] .artifact *::after,
+      :root[data-ae2-play="true"] .slide *::before,
+      :root[data-ae2-play="true"] .slide *::after {
+        animation-play-state: running !important;
+      }
+      :root[data-ae2-restart="true"] .artifact,
+      :root[data-ae2-restart="true"] .slide,
+      :root[data-ae2-restart="true"] .artifact *,
+      :root[data-ae2-restart="true"] .slide *,
+      :root[data-ae2-restart="true"] .artifact *::before,
+      :root[data-ae2-restart="true"] .artifact *::after,
+      :root[data-ae2-restart="true"] .slide *::before,
+      :root[data-ae2-restart="true"] .slide *::after {
+        animation: none !important;
+      }
       /* Fallback styling for images */
       img {
         /* Hide alt text by making it transparent */
@@ -2402,9 +2565,21 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     `;
     doc.head.appendChild(script);
 
-    const nextIndex = preserveIndex
-      ? Math.min(currentArtifactIndex, Math.max(0, sections.length - 1))
-      : 0;
+    const maxIndex = Math.max(0, sections.length - 1);
+    const urlIndex = getSlideIndexFromUrl();
+    const forcedIndex =
+      desiredArtifactIndexRef.current != null
+        ? Math.min(Math.max(0, desiredArtifactIndexRef.current), maxIndex)
+        : urlIndex != null
+          ? Math.min(Math.max(0, urlIndex), maxIndex)
+          : null;
+    const nextIndex =
+      forcedIndex != null
+        ? forcedIndex
+        : preserveIndex
+          ? Math.min(currentArtifactIndex, maxIndex)
+          : 0;
+    desiredArtifactIndexRef.current = null;
 
       if (sections.length > 0) {
         const nextHead = doc.head.innerHTML;
@@ -2457,6 +2632,73 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     return styleMatch ? styleMatch[1] : '';
   };
 
+  const formatTimecode = (value: number) => {
+    const safe = Math.max(0, value);
+    const fps = Math.max(1, Math.round(exportFps));
+    const totalFrames = Math.floor(safe * fps);
+    const frames = totalFrames % fps;
+    const seconds = Math.floor(safe) % 60;
+    const minutes = Math.floor(safe / 60);
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
+  };
+
+  const restartAnimations = () => {
+    let root = timelineRootRef.current;
+    if (!root) {
+      root = iframeRef.current?.contentDocument?.documentElement as HTMLElement | null;
+      if (root) {
+        timelineRootRef.current = root;
+        timelineAppliedOffsetRef.current = null;
+      }
+    }
+    if (!root) return;
+    root.setAttribute('data-ae2-restart', 'true');
+    window.requestAnimationFrame(() => {
+      root?.removeAttribute('data-ae2-restart');
+    });
+  };
+
+  const setTimelinePlayState = (isPlaying: boolean) => {
+    let root = timelineRootRef.current;
+    if (!root) {
+      root = iframeRef.current?.contentDocument?.documentElement as HTMLElement | null;
+      if (root) {
+        timelineRootRef.current = root;
+      }
+    }
+    if (!root) return;
+    root.setAttribute('data-ae2-play', isPlaying ? 'true' : 'false');
+  };
+
+  const applyTimelineOffset = (nextTime: number) => {
+    const duration = Math.max(exportDuration, 0);
+    const clamped = Math.min(Math.max(nextTime, 0), duration);
+    let root = timelineRootRef.current;
+    if (!root) {
+      root = iframeRef.current?.contentDocument?.documentElement as HTMLElement | null;
+      if (root) {
+        timelineRootRef.current = root;
+        timelineAppliedOffsetRef.current = null;
+      }
+    }
+    if (root) {
+      const nextOffset = `${clamped}s`;
+      if (timelineAppliedOffsetRef.current !== nextOffset) {
+        root.style.setProperty('--ae2-anim-offset', nextOffset);
+        timelineAppliedOffsetRef.current = nextOffset;
+      }
+    }
+    restartAnimations();
+    timelineTimeRef.current = clamped;
+    setTimelineTime(clamped);
+  };
+
+  const updateTimelineTime = (nextTime: number) => {
+    applyTimelineOffset(nextTime);
+    timelineStartRef.current = performance.now();
+    timelineStartTimeRef.current = timelineTimeRef.current;
+  };
+
   const loadHistory = async () => {
     if (!getAuthToken()) {
       setHistoryItems([]);
@@ -2476,6 +2718,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         const urlId = getArtifactIdFromUrl();
         const candidate = urlId && items.some(item => item.id === urlId) ? urlId : null;
         if (candidate) {
+          const slideFromUrl = getSlideIndexFromUrl();
+          if (slideFromUrl != null) {
+            desiredArtifactIndexRef.current = slideFromUrl;
+          }
           await handleHistorySelect(candidate);
         }
       }
@@ -2528,6 +2774,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     stopHistoryPolling();
     setHistoryError(null);
     try {
+      const slideFromUrl = getSlideIndexFromUrl();
+      if (slideFromUrl != null) {
+        desiredArtifactIndexRef.current = slideFromUrl;
+      }
       const detail = await getArtifactHistory(id);
       if (!detail?.response) {
         setCurrentHistoryId(id);
@@ -2592,6 +2842,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     setArtifacts([]);
     setHeadContent('');
     setCurrentArtifactIndex(0);
+    restoredArtifactIndexRef.current = null;
+    if (typeof window !== 'undefined') {
+      Object.keys(window.localStorage)
+        .filter(key => key.startsWith(`${LAST_ARTIFACT_INDEX_KEY}:`))
+        .forEach(key => window.localStorage.removeItem(key));
+    }
     setProjectTitle('');
     setProjectTags('');
     setProjectDescription('');
@@ -2833,6 +3089,24 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     return tempDiv.innerHTML;
   };
 
+  const extractAnimatedArtifact = (html: string, index: number) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    sanitizeLayout(doc);
+    convertVideoImages(doc);
+    const sections = collectArtifactElements(doc);
+    if (sections.length > 0) {
+      normalizeArtifactClassOrder(sections[0], index + 1, includeSlideClass);
+      return { headHtml: doc.head.innerHTML, artifactHtml: sections[0].outerHTML };
+    }
+    const fallback = doc.body.innerHTML.trim();
+    const wrapperClass = includeSlideClass ? 'artifact slide' : 'artifact';
+    return {
+      headHtml: doc.head.innerHTML,
+      artifactHtml: `<section class="${wrapperClass}">${fallback || ''}</section>`
+    };
+  };
+
   const handleRegenerateCurrentArtifact = async () => {
     if (artifacts.length === 0) return;
     const requestId = ++regenerateRequestIdRef.current;
@@ -2874,6 +3148,58 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     } finally {
       if (requestId === regenerateRequestIdRef.current) {
         setRegeneratingArtifact(false);
+      }
+    }
+  };
+
+  const handleAnimateArtifacts = async () => {
+    if (artifacts.length === 0) return;
+    const requestId = ++animateRequestIdRef.current;
+    setAnimatingArtifact(true);
+    try {
+      pendingSaveDelayRef.current = 200;
+      const cssContext = getCssContext();
+
+      if (regenerateMode === 'project') {
+        const contextHtml = buildPersistedHtml(headContent, artifacts);
+        const animatedHtml = await applyMotionToHtml(
+          provider,
+          topic,
+          artifactMode,
+          contextHtml,
+          cssContext
+        );
+        if (requestId !== animateRequestIdRef.current) return;
+        const parsed = parseAndSetHtml(animatedHtml, true);
+        if (parsed) {
+          await saveHistorySnapshot(parsed.artifacts, parsed.headHtml);
+        }
+        return;
+      }
+
+      const cleanHead = stripRuntimeHead(headContent);
+      const singleHtml = buildArtifactHtml(cleanHead, artifacts[currentArtifactIndex]);
+      const animatedHtml = await applyMotionToHtml(
+        provider,
+        topic,
+        artifactMode,
+        singleHtml,
+        cssContext
+      );
+      if (requestId !== animateRequestIdRef.current) return;
+      const parsed = extractAnimatedArtifact(animatedHtml, currentArtifactIndex);
+      const nextArtifacts = [...artifacts];
+      nextArtifacts[currentArtifactIndex] = parsed.artifactHtml;
+      const reindexed = reindexArtifactClasses(nextArtifacts, includeSlideClass);
+      historyImmediateNextRef.current = true;
+      setHeadContent(parsed.headHtml);
+      setArtifacts(reindexed);
+      await saveHistorySnapshot(reindexed, parsed.headHtml);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      if (requestId === animateRequestIdRef.current) {
+        setAnimatingArtifact(false);
       }
     }
   };
@@ -3819,9 +4145,43 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                 {viewMode === 'preview' ? (
                   <div className="w-full max-w-6xl px-4">
                     <div className="rounded-xl border border-white/10 bg-neutral-950/80">
-                      <div className="px-4 py-2 text-[11px] uppercase tracking-[0.12em] text-sky-200 border-b border-white/10">
-                        Layers
+                      <div className="px-4 py-2 text-[11px] uppercase tracking-[0.12em] text-sky-200 border-b border-white/10 flex items-center justify-between">
+                        <span>Timeline</span>
+                        <span className="text-[10px] text-white/40">
+                          {formatTimecode(timelineTime)} / {formatTimecode(exportDuration)}
+                        </span>
                       </div>
+                      {/*
+                      <div className="px-4 py-3 border-b border-white/10 flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (timelinePlaying) {
+                                setTimelinePlaying(false);
+                                return;
+                              }
+                              applyTimelineOffset(timelineTimeRef.current);
+                              setTimelinePlaying(true);
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] rounded border border-white/15 text-white/80 hover:text-white hover:border-white/30"
+                          >
+                            {timelinePlaying ? 'Pause' : 'Play'}
+                          </button>
+                          <div className="text-[11px] text-white/50">Loop</div>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(exportDuration, 0)}
+                          step={1 / Math.max(1, Math.round(exportFps))}
+                          value={timelineTime}
+                          onChange={(event) => updateTimelineTime(Number(event.target.value))}
+                          className="w-full"
+                          aria-label="Timeline position"
+                        />
+                      </div>
+                      */}
                       <div className="h-32 overflow-auto py-1">
                         {previewLayers.length > 0 ? (
                           renderLayerTree(previewLayers)
@@ -3851,6 +4211,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                     regenerateMode={regenerateMode}
                     onRegenerateModeChange={setRegenerateMode}
                     regenerating={regeneratingArtifact}
+                    // onAnimate={handleAnimateArtifacts}
+                    // animating={animatingArtifact}
                     onAdd={handleAddArtifact}
                     adding={addingArtifact}
                     onDelete={handleDeleteArtifact}

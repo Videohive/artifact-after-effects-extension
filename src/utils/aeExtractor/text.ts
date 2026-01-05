@@ -10,16 +10,10 @@ type Token =
       rect: DOMRect | null;
     };
 
-const findWordTokens = (s: string): Array<{ text: string; start: number; end: number }> => {
+const findCharTokens = (s: string): Array<{ text: string; start: number; end: number }> => {
   const tokens: Array<{ text: string; start: number; end: number }> = [];
-  const re = /\S+\s*/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(s)) !== null) {
-    const text = match[0] ?? '';
-    if (!text) continue;
-    const start = match.index;
-    const end = start + text.length;
-    tokens.push({ text, start, end });
+  for (let i = 0; i < s.length; i++) {
+    tokens.push({ text: s[i], start: i, end: i + 1 });
   }
   return tokens;
 };
@@ -100,7 +94,7 @@ const collectTextTokens = (
     const raw = textNode.data ?? '';
     if (!raw) return;
 
-    const parts = findWordTokens(raw);
+    const parts = findCharTokens(raw);
     if (!parts.length) return;
 
     const parentEl = textNode.parentElement as HTMLElement | null;
@@ -177,6 +171,7 @@ const extractWrappedTextAndLineStyles = (
   lineRanges: AETextLineRange[];
 } => {
   const DEBUG_TEXT_RECTS = false;
+  const DEBUG_TEXT_ID = 'text-beta';
   const cs = win.getComputedStyle(el);
   const writingModeRaw = (cs as any).writingMode || cs.getPropertyValue('writing-mode') || '';
   const isVertical = String(writingModeRaw).toLowerCase().indexOf('vertical') === 0;
@@ -217,7 +212,7 @@ const extractWrappedTextAndLineStyles = (
   let currentLineIndex: number | null = null;
 
   const flushLine = () => {
-    const txt = currentText.trimEnd();
+    const txt = currentText.trim();
     if (txt.length > 0) {
       const idx = lines.length;
       const baseStyle = {
@@ -306,7 +301,19 @@ const extractWrappedTextAndLineStyles = (
       })()
     : lineTops;
 
-  if (DEBUG_TEXT_RECTS) {
+  if (DEBUG_TEXT_RECTS || el.id === DEBUG_TEXT_ID) {
+    const range = win.document.createRange();
+    range.selectNodeContents(el);
+    const rangeRects = Array.from(range.getClientRects()).map(r => ({
+      left: r.left,
+      top: r.top,
+      right: r.right,
+      bottom: r.bottom,
+      w: r.width,
+      h: r.height
+    }));
+    const parent = el.parentElement;
+    const parentStyle = parent ? win.getComputedStyle(parent) : null;
     const dbg = tokens
       .map(tok => {
         if (tok.kind === 'br') return '[BR]';
@@ -317,6 +324,30 @@ const extractWrappedTextAndLineStyles = (
         return `"${tok.text}" -> top=${top} left=${left} h=${h}`;
       })
       .join(' | ');
+    console.log('[aeExtractor] text debug:', el.id || el.tagName, {
+      fontFamily: cs.fontFamily,
+      fontSize: cs.fontSize,
+      lineHeight: cs.lineHeight,
+      letterSpacing: cs.letterSpacing,
+      whiteSpace: cs.whiteSpace,
+      maxWidth: cs.maxWidth,
+      width: cs.width,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      bboxWidth: el.getBoundingClientRect().width,
+      parent: parent
+        ? {
+            tag: parent.tagName,
+            id: parent.getAttribute('id'),
+            width: parentStyle ? parentStyle.width : null,
+            maxWidth: parentStyle ? parentStyle.maxWidth : null,
+            clientWidth: parent.clientWidth,
+            scrollWidth: parent.scrollWidth,
+            bboxWidth: parent.getBoundingClientRect().width
+          }
+        : null,
+      rangeRects
+    });
     console.log('[aeExtractor] text token rects:', dbg);
     if (isVertical) {
       console.log('[aeExtractor] lineCoords:', lineCoords.map(v => Math.round(v * 100) / 100));
@@ -346,6 +377,9 @@ const extractWrappedTextAndLineStyles = (
     }
 
     const piece = tok.text;
+    if (!currentText && piece.trim().length === 0) {
+      continue;
+    }
 
     if (!currentStyle && piece.trim().length > 0) {
       currentStyle = {

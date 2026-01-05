@@ -617,7 +617,7 @@ export const detectPrecomp = (
     parseClipPathInset(style.clipPath, elementBox, scale) ||
     parseClipPathCircle(style.clipPath, elementBox, scale) ||
     parseClipPathEllipse(style.clipPath, elementBox, scale);
-  const clips = style.overflow === 'hidden' || !!clipPath || borderRadiusPx > 0;
+  const clips = style.overflow === 'hidden' || !!clipPath;
 
   return {
     needsPrecomp:

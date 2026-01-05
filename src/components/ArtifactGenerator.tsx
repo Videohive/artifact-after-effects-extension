@@ -1482,6 +1482,14 @@ const getSlideIndexFromUrl = () => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const getUrlSlideIndexForHistory = (historyId: string | null) => {
+  const urlArtifact = getArtifactIdFromUrl();
+  if (historyId) {
+    if (!urlArtifact || urlArtifact !== historyId) return null;
+  }
+  return getSlideIndexFromUrl();
+};
+
 const setArtifactIdInUrl = (id: string | null) => {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
@@ -1502,6 +1510,43 @@ const setSlideIndexInUrl = (index: number | null) => {
     url.searchParams.set('slide', String(index));
   }
   window.history.replaceState({}, '', url.toString());
+};
+
+const getStoredArtifactIndex = (historyId: string) => {
+  if (typeof window === 'undefined') return null;
+  if (!historyId) return null;
+  const raw = window.localStorage.getItem(`${LAST_ARTIFACT_INDEX_KEY}:${historyId}`);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const setStoredArtifactIndex = (historyId: string, index: number | null) => {
+  if (typeof window === 'undefined') return;
+  if (!historyId) return;
+  const key = `${LAST_ARTIFACT_INDEX_KEY}:${historyId}`;
+  if (index == null || Number.isNaN(index)) {
+    window.localStorage.removeItem(key);
+    return;
+  }
+  window.localStorage.setItem(key, String(index));
+};
+
+const resolveDesiredArtifactIndex = (historyId: string, allowUrlSlide: boolean) => {
+  const storedIndex = getStoredArtifactIndex(historyId);
+  if (allowUrlSlide) {
+    const urlIndex = getUrlSlideIndexForHistory(historyId);
+    if (urlIndex != null) {
+      console.debug('[ae2] slide index from url', { historyId, urlIndex });
+      return urlIndex;
+    }
+  }
+  if (storedIndex != null) {
+    console.debug('[ae2] slide index from storage', { historyId, storedIndex });
+    return storedIndex;
+  }
+  console.debug('[ae2] slide index defaulted', { historyId, index: 0 });
+  return null;
 };
 const sanitizeImageAlts = (root: ParentNode) => {
   const images = root.querySelectorAll('img');
@@ -2377,9 +2422,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (typeof window === 'undefined') return;
     if (!currentHistoryId) return;
     if (restoredArtifactIndexRef.current === currentHistoryId) return;
-    const slideFromUrl = getSlideIndexFromUrl();
-    if (slideFromUrl != null) {
-      const clamped = Math.min(Math.max(0, slideFromUrl), Math.max(0, artifacts.length - 1));
+    const desiredIndex = resolveDesiredArtifactIndex(currentHistoryId, false);
+    if (desiredIndex != null) {
+      const clamped = Math.min(Math.max(0, desiredIndex), Math.max(0, artifacts.length - 1));
       setCurrentArtifactIndex(clamped);
     }
     restoredArtifactIndexRef.current = currentHistoryId;
@@ -2391,6 +2436,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (!currentHistoryId) return;
     if (restoredArtifactIndexRef.current !== currentHistoryId) return;
     setSlideIndexInUrl(currentArtifactIndex);
+    setStoredArtifactIndex(currentHistoryId, currentArtifactIndex);
   }, [currentArtifactIndex, artifacts.length, currentHistoryId]);
 
   useEffect(() => {
@@ -2651,7 +2697,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     };
   }, [headContent, artifacts, projectTitle, currentHistoryId]);
 
-  const parseAndSetHtml = (html: string, preserveIndex = false) => {
+  const parseAndSetHtml = (html: string, preserveIndex = false, allowUrlIndex = false) => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     
@@ -2748,7 +2794,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     doc.head.appendChild(script);
 
     const maxIndex = Math.max(0, sections.length - 1);
-    const urlIndex = getSlideIndexFromUrl();
+    const urlIndex = allowUrlIndex ? getUrlSlideIndexForHistory(currentHistoryId) : null;
     const forcedIndex =
       desiredArtifactIndexRef.current != null
         ? Math.min(Math.max(0, desiredArtifactIndexRef.current), maxIndex)
@@ -2906,11 +2952,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         const urlId = getArtifactIdFromUrl();
         const candidate = urlId && items.some(item => item.id === urlId) ? urlId : null;
         if (candidate) {
-          const slideFromUrl = getSlideIndexFromUrl();
-          if (slideFromUrl != null) {
-            desiredArtifactIndexRef.current = slideFromUrl;
-          }
-          await handleHistorySelect(candidate);
+          await handleHistorySelect(candidate, true);
         }
       }
     } catch (error: any) {
@@ -2987,14 +3029,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
-  const handleHistorySelect = async (id: string) => {
+  const handleHistorySelect = async (id: string, allowUrlSlide = false) => {
     if (!id || id === currentHistoryId) return;
     stopHistoryPolling();
     setHistoryError(null);
     try {
-      const slideFromUrl = getSlideIndexFromUrl();
-      if (slideFromUrl != null) {
-        desiredArtifactIndexRef.current = slideFromUrl;
+      const desiredIndex = resolveDesiredArtifactIndex(id, allowUrlSlide);
+      if (desiredIndex != null) {
+        desiredArtifactIndexRef.current = desiredIndex;
       }
       const detail = await getArtifactHistory(id);
       if (!detail?.response) {
@@ -3025,7 +3067,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       historyLastHashRef.current = null;
       setArtifactIdInUrl(id);
       lastSavedHashRef.current = hashString(detail.response);
-      parseAndSetHtml(detail.response);
+      parseAndSetHtml(detail.response, false, allowUrlSlide);
       setProvider(detail.provider);
     } catch (error: any) {
       console.error(error);
@@ -3039,6 +3081,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (!confirmed) return;
     try {
       await deleteArtifactHistory(id);
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(`${LAST_ARTIFACT_INDEX_KEY}:${id}`);
+      }
       setHistoryItems(prev => prev.filter(item => item.id !== id));
       if (currentHistoryId === id) {
         handleNewChat();
@@ -3061,11 +3106,6 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     setHeadContent('');
     setCurrentArtifactIndex(0);
     restoredArtifactIndexRef.current = null;
-    if (typeof window !== 'undefined') {
-      Object.keys(window.localStorage)
-        .filter(key => key.startsWith(`${LAST_ARTIFACT_INDEX_KEY}:`))
-        .forEach(key => window.localStorage.removeItem(key));
-    }
     setProjectTitle('');
     setProjectTags('');
     setProjectDescription('');

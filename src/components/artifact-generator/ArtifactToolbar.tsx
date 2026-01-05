@@ -7,8 +7,8 @@ import {
   LayoutGrid,
   Play,
   Plus,
-  Sparkles,
   RefreshCw,
+  RefreshCcw,
   ChevronLeft,
   ChevronRight,
   Trash2,
@@ -32,9 +32,8 @@ type ArtifactToolbarProps = {
   totalCount: number;
   onPrev: () => void;
   onNext: () => void;
-  onRegenerate: () => void;
-  regenerateMode: 'slide' | 'project';
-  onRegenerateModeChange: (mode: 'slide' | 'project') => void;
+  onRegenerateCurrent: () => void;
+  onRegenerateAll: () => void;
   regenerating: boolean;
   onAnimate?: () => void;
   animating?: boolean;
@@ -55,9 +54,8 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   totalCount,
   onPrev,
   onNext,
-  onRegenerate,
-  regenerateMode,
-  onRegenerateModeChange,
+  onRegenerateCurrent,
+  onRegenerateAll,
   regenerating,
   onAnimate,
   animating,
@@ -238,38 +236,26 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
         </div>
         <div className="flex items-center gap-1 bg-neutral-950 rounded-lg p-1 border border-neutral-800">
           <button
-            onClick={() => onRegenerateModeChange('slide')}
-            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-              regenerateMode === 'slide'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-neutral-400 hover:text-white'
-            }`}
+            onClick={onRegenerateCurrent}
+            disabled={regenerating}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-neutral-300 transition-colors hover:text-white hover:bg-neutral-800 disabled:opacity-50"
             type="button"
             title="Regenerate current slide"
           >
-            S
+            {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Slide
           </button>
           <button
-            onClick={() => onRegenerateModeChange('project')}
-            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-              regenerateMode === 'project'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-neutral-400 hover:text-white'
-            }`}
+            onClick={onRegenerateAll}
+            disabled={regenerating}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-neutral-300 transition-colors hover:text-white hover:bg-neutral-800 disabled:opacity-50"
             type="button"
             title="Regenerate all slides"
           >
-            P
+            {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+            Project
           </button>
         </div>
-        <button
-          onClick={onRegenerate}
-          disabled={regenerating}
-          className="p-2 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
-          title="Regenerate"
-        >
-          {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-        </button>
         {/*
         <button
           onClick={onAnimate}

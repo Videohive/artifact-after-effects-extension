@@ -67,6 +67,10 @@
     var slideComp = createSlideComp(slideData, projectFolder);
     // originOffset: where (0,0) of current comp sits in global slide coords
     buildNode(slideData.root, slideComp, null, { x: 0, y: 0 }, slideData, null);
+    var controlsLayer = slideComp.layer("Controls");
+    if (controlsLayer) {
+      controlsLayer.moveToBeginning();
+    }
 
     slideComps.push(slideComp);
   }

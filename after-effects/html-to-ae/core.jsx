@@ -28,6 +28,10 @@
     // ��������� ������
     ROOT_COMP = comp;
 
+    if (data && data.pallete && data.pallete.length) {
+      createPaletteAdjustmentLayer(comp, data.pallete);
+    }
+
     return comp;
   }
 
@@ -311,4 +315,5 @@
 
     return null;
   }
+
 

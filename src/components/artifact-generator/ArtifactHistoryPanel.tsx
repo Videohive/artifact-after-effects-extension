@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Trash2, X } from 'lucide-react';
 import { ArtifactHistoryItem } from '../../services/artifactHistoryService';
 
@@ -11,6 +11,9 @@ type ArtifactHistoryPanelProps = {
   onDelete: (id: string) => void;
   onRefresh: () => void;
   onNewChat: () => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
   onClose?: () => void;
   variant?: 'default' | 'overlay';
 };
@@ -31,9 +34,33 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
   onDelete,
   onRefresh,
   onNewChat,
+  onLoadMore,
+  hasMore = false,
+  loadingMore = false,
   onClose,
   variant = 'default'
 }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!onLoadMore) return;
+    const node = listRef.current;
+    const sentinel = sentinelRef.current;
+    if (!node || !sentinel) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (!hasMore || loading || loadingMore) return;
+        if (entries.some(entry => entry.isIntersecting)) {
+          onLoadMore();
+        }
+      },
+      { root: node, rootMargin: '80px 0px', threshold: 0.01 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadingMore, onLoadMore]);
+
   const wrapperClassName =
     variant === 'overlay'
       ? 'w-full max-w-xs sm:max-w-sm h-full'
@@ -82,7 +109,7 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
         ) : items.length === 0 ? (
           <div className="mt-3 text-xs text-neutral-500">No saved artifacts yet.</div>
         ) : (
-          <div className="mt-3 flex flex-1 flex-col gap-2 overflow-auto pr-1">
+          <div className="mt-3 flex flex-1 flex-col gap-2 overflow-auto pr-1" ref={listRef}>
             {items.map(item => {
               const active = item.id === selectedId;
               const displayName = (item.name || 'Untitled Project').replace(/\s+/g, ' ').trim();
@@ -125,6 +152,12 @@ export const ArtifactHistoryPanel: React.FC<ArtifactHistoryPanelProps> = ({
                 </div>
               );
             })}
+            <div ref={sentinelRef} />
+            {loadingMore ? (
+              <div className="mt-1 px-3 py-2 text-xs font-semibold text-neutral-500">
+                Loading...
+              </div>
+            ) : null}
           </div>
         )}
       </div>

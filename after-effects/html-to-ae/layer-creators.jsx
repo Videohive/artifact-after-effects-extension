@@ -2,6 +2,41 @@
   // LAYER CREATORS
   // ============================================================
 
+  function normalizePaletteControlName(value) {
+    var s = String(value || "");
+    s = s.replace(/\bbg\b/gi, "Background");
+    return safeName(s);
+  }
+
+  function createPaletteAdjustmentLayer(comp, palette) {
+    if (!palette || !palette.length) return null;
+    setControlsCompName(comp.name);
+    var layer = comp.layers.addSolid(
+      [1, 1, 1],
+      safeName("Controls"),
+      comp.width,
+      comp.height,
+      1
+    );
+    layer.adjustmentLayer = true;
+    layer.enabled = false;
+    layer.label = 2;
+
+    var effects = layer.property("Effects");
+    for (var i = 0; i < palette.length; i++) {
+      var entry = palette[i];
+      if (!entry || !entry.color) continue;
+      var effect = effects.addProperty("ADBE Color Control");
+      var controlName = normalizePaletteControlName(entry.name || entry.id || "Color");
+      effect.name = controlName;
+      var colorProp = effect.property("Color");
+      if (colorProp) colorProp.setValue(parseCssColor(entry.color));
+      registerColorControl(comp.name, controlName, entry.color);
+    }
+
+    return layer;
+  }
+
   function createSolidBackground(comp, cssColor, w, h, name) {
     var rgb = parseCssColor(cssColor);
     var solid = comp.layers.addSolid(
@@ -11,6 +46,7 @@
       h,
       1
     );
+    applyFillEffect(solid, rgb, parseCssAlpha(cssColor));
     solid
       .property("Transform")
       .property("Position")
@@ -78,7 +114,7 @@
 
     var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
     var fillColor = getEffectiveBackgroundColor(node.style);
-    fill.property("Color").setValue(parseCssColor(fillColor));
+    applyCssColorProperty(fill.property("Color"), fillColor, comp.name);
 
     // Position: shapes have their own Transform inside group; easiest: layer position to bbox center
     setLayerTransform(layer, localBBox);
@@ -137,7 +173,7 @@
         );
 
       var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
-      stroke.property("Color").setValue(parseCssColor(border.color));
+      applyCssColorProperty(stroke.property("Color"), border.color, comp.name);
       stroke.property("Stroke Width").setValue(strokeWidth);
       var opacityProp = stroke.property("ADBE Vector Stroke Opacity");
       if (opacityProp) opacityProp.setValue(Math.round(parseCssAlpha(border.color) * 100));
@@ -181,7 +217,7 @@
       pathProp.property("Path").setValue(shape);
 
       var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
-      stroke.property("Color").setValue(parseCssColor(side.color));
+      applyCssColorProperty(stroke.property("Color"), side.color, comp.name);
       stroke.property("Stroke Width").setValue(sw);
       var opacityProp = stroke.property("ADBE Vector Stroke Opacity");
       if (opacityProp) opacityProp.setValue(Math.round(parseCssAlpha(side.color) * 100));
@@ -355,12 +391,15 @@
   function addLineStyleAnimators(layer, node) {
     if (!node || !node.lineRanges || node.lineRanges.length <= 1) return;
 
+    var currentCompName = layer && layer.containingComp ? layer.containingComp.name : null;
     var ranges = node.lineRanges;
     var hasColor = false;
     var hasOpacity = false;
     var hasWeight = false;
     var hasStyle = false;
     var hasX = false;
+    var align = node.font && node.font.textAlign ? String(node.font.textAlign).toLowerCase() : "";
+    var ignoreX = align === "center" || align === "centre";
 
     for (var i = 0; i < ranges.length; i++) {
       var r = ranges[i];
@@ -372,6 +411,7 @@
       if (typeof r.x !== "undefined") hasX = true;
     }
 
+    if (ignoreX) hasX = false;
     if (!hasColor && !hasOpacity && !hasX) return;
 
     var rangesSorted = ranges.slice(0).sort(function (a, b) {
@@ -443,9 +483,8 @@
     var baseProps = baseAnimator.property("ADBE Text Animator Properties");
 
     if (hasColor && baseColor) {
-      var baseRgb = parseCssColor(baseColor);
       var baseFill = baseProps.addProperty("ADBE Text Fill Color");
-      baseFill.setValue(baseRgb);
+      applyCssColorProperty(baseFill, baseColor, currentCompName);
     }
     if (hasOpacity || (hasColor && baseColorAlpha < 1)) {
       var baseFillOpacity = baseProps.addProperty("ADBE Text Fill Opacity");
@@ -483,9 +522,8 @@
       var animatorProps = animator.property("ADBE Text Animator Properties");
 
       if (colorDiff && lineColor) {
-        var rgb = parseCssColor(lineColor);
         var fill = animatorProps.addProperty("ADBE Text Fill Color");
-        fill.setValue(rgb);
+        applyCssColorProperty(fill, lineColor, currentCompName);
       }
 
       if (opacityDiff || combinedDiff) {
@@ -500,6 +538,35 @@
 
       addLineSelector(animator.property("Selectors"), range.lineIndex);
     }
+  }
+
+  function getUniformTextColor(node) {
+    if (!node) return { color: null, hasColor: false, isUniform: false, isMultiple: false };
+    var color = null;
+    var hasColor = false;
+    var multiple = false;
+
+    if (node.font && typeof node.font.color !== "undefined") {
+      color = String(node.font.color);
+      hasColor = true;
+    }
+
+    if (node.lineRanges && node.lineRanges.length) {
+      for (var i = 0; i < node.lineRanges.length; i++) {
+        var range = node.lineRanges[i];
+        if (!range || !range.style || typeof range.style.color === "undefined") continue;
+        var c = String(range.style.color);
+        if (!hasColor) {
+          color = c;
+          hasColor = true;
+        } else if (c !== color) {
+          multiple = true;
+          break;
+        }
+      }
+    }
+
+    return { color: color, hasColor: hasColor, isUniform: hasColor && !multiple, isMultiple: multiple };
   }
 
   function pickTextPlacementBBox(node, localBBox) {
@@ -566,12 +633,13 @@
       doc.tracking = toAETracking(node.font.tracking);
     }
 
-    if (node.font && node.font.color) {
-      if (isTransparentColor(node.font.color) || parseCssAlpha(node.font.color) === 0) {
+    var colorInfo = getUniformTextColor(node);
+    doc.fillColor = [1, 1, 1];
+    doc.applyFill = true;
+    if (colorInfo.isUniform && colorInfo.hasColor) {
+      var uniformAlpha = parseCssAlpha(colorInfo.color);
+      if (isTransparentColor(colorInfo.color) || uniformAlpha === 0) {
         doc.applyFill = false;
-      } else {
-        doc.applyFill = true;
-        doc.fillColor = parseCssColor(node.font.color);
       }
     }
 
@@ -593,6 +661,13 @@
     textProp.setValue(doc);
 
     addLineStyleAnimators(layer, node);
+
+    if (colorInfo.isUniform && colorInfo.hasColor) {
+      var fillAlpha = parseCssAlpha(colorInfo.color);
+      if (!isTransparentColor(colorInfo.color) && fillAlpha > 0) {
+        applyFillEffect(layer, parseCssColor(colorInfo.color), fillAlpha);
+      }
+    }
 
     // 3. ������������� ��� TOP-LEFT (HTML-like)
     var placementBBox = pickTextPlacementBBox(node, localBBox);

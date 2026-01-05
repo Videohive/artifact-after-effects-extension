@@ -240,19 +240,19 @@
       if (!el) continue;
 
       if (el.tag === "circle") {
-        addSvgCircle(rootContents, el.attrs, svgData, scaleData);
+        addSvgCircle(rootContents, el.attrs, svgData, scaleData, comp.name);
       } else if (el.tag === "ellipse") {
-        addSvgEllipse(rootContents, el.attrs, svgData, scaleData);
+        addSvgEllipse(rootContents, el.attrs, svgData, scaleData, comp.name);
       } else if (el.tag === "rect") {
-        addSvgRect(rootContents, el.attrs, svgData, scaleData);
+        addSvgRect(rootContents, el.attrs, svgData, scaleData, comp.name);
       } else if (el.tag === "line") {
-        addSvgLine(rootContents, el.attrs, svgData, scaleData);
+        addSvgLine(rootContents, el.attrs, svgData, scaleData, comp.name);
       } else if (el.tag === "polyline") {
-        addSvgPolyline(rootContents, el.attrs, false, svgData, scaleData);
+        addSvgPolyline(rootContents, el.attrs, false, svgData, scaleData, comp.name);
       } else if (el.tag === "polygon") {
-        addSvgPolyline(rootContents, el.attrs, true, svgData, scaleData);
+        addSvgPolyline(rootContents, el.attrs, true, svgData, scaleData, comp.name);
       } else if (el.tag === "path") {
-        addSvgPath(rootContents, el.attrs, svgData, scaleData);
+        addSvgPath(rootContents, el.attrs, svgData, scaleData, comp.name);
       }
     }
 
@@ -445,7 +445,7 @@
     return isNaN(n) ? fallback : n;
   }
 
-  function addSvgCircle(parentContents, attrs, svgData, scaleData) {
+  function addSvgCircle(parentContents, attrs, svgData, scaleData, compName) {
     var cx = parseSvgLength(attrs.cx, svgData.width, 0);
     var cy = parseSvgLength(attrs.cy, svgData.height, 0);
     var refLen = getSvgNormalizedLength(svgData.width, svgData.height);
@@ -460,10 +460,10 @@
     ellipse.property("Size").setValue([r * 2, r * 2]);
     ellipse.property("Position").setValue([cx, cy]);
 
-    applySvgPaint(grpContents, attrs, false);
+    applySvgPaint(grpContents, attrs, false, compName);
   }
 
-  function addSvgEllipse(parentContents, attrs, svgData, scaleData) {
+  function addSvgEllipse(parentContents, attrs, svgData, scaleData, compName) {
     var cx = parseSvgLength(attrs.cx, svgData.width, 0);
     var cy = parseSvgLength(attrs.cy, svgData.height, 0);
     var rx = parseSvgLength(attrs.rx, svgData.width, 0);
@@ -478,10 +478,10 @@
     ellipse.property("Size").setValue([rx * 2, ry * 2]);
     ellipse.property("Position").setValue([cx, cy]);
 
-    applySvgPaint(grpContents, attrs, false);
+    applySvgPaint(grpContents, attrs, false, compName);
   }
 
-  function addSvgRect(parentContents, attrs, svgData, scaleData) {
+  function addSvgRect(parentContents, attrs, svgData, scaleData, compName) {
     var x = parseSvgLength(attrs.x, svgData.width, 0);
     var y = parseSvgLength(attrs.y, svgData.height, 0);
     var w = parseSvgLength(attrs.width, svgData.width, 0);
@@ -501,10 +501,10 @@
     var r = Math.max(rx, ry);
     if (r > 0) rect.property("Roundness").setValue(r);
 
-    applySvgPaint(grpContents, attrs, true);
+    applySvgPaint(grpContents, attrs, true, compName);
   }
 
-  function addSvgLine(parentContents, attrs, svgData, scaleData) {
+  function addSvgLine(parentContents, attrs, svgData, scaleData, compName) {
     var x1 = parseSvgLength(attrs.x1, svgData.width, 0);
     var y1 = parseSvgLength(attrs.y1, svgData.height, 0);
     var x2 = parseSvgLength(attrs.x2, svgData.width, 0);
@@ -531,10 +531,10 @@
     shape.closed = false;
     pathProp.property("Path").setValue(shape);
 
-    applySvgPaint(grpContents, attrs, false);
+    applySvgPaint(grpContents, attrs, false, compName);
   }
 
-  function addSvgPolyline(parentContents, attrs, closed, svgData, scaleData) {
+  function addSvgPolyline(parentContents, attrs, closed, svgData, scaleData, compName) {
     var points = parseSvgPoints(attrs.points || "", svgData.width, svgData.height);
     if (!points.length) return;
 
@@ -550,10 +550,10 @@
     shape.closed = closed;
     pathProp.property("Path").setValue(shape);
 
-    applySvgPaint(grpContents, attrs, closed);
+    applySvgPaint(grpContents, attrs, closed, compName);
   }
 
-  function addSvgPath(parentContents, attrs, svgData, scaleData) {
+  function addSvgPath(parentContents, attrs, svgData, scaleData, compName) {
     var d = attrs.d;
     if (!d) return;
 
@@ -598,7 +598,7 @@
       shape.closed = sp.closed;
       pathProp.property("Path").setValue(shape);
 
-      applySvgPaint(grpContents, attrs, sp.closed);
+      applySvgPaint(grpContents, attrs, sp.closed, compName);
     }
   }
 
@@ -1100,7 +1100,7 @@
     return Math.sqrt((w * w + h * h) / 2);
   }
 
-  function applySvgPaint(grpContents, attrs, defaultFillOn) {
+  function applySvgPaint(grpContents, attrs, defaultFillOn, compName) {
     var fillColor = parseSvgColor(attrs.fill);
     var strokeColor = parseSvgColor(attrs.stroke);
     var strokeWidth = parseNumber(attrs["stroke-width"], 1);
@@ -1116,7 +1116,7 @@
 
     var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
     if (fillColor) {
-      fill.property("Color").setValue(fillColor.rgb);
+      applyRgbColorProperty(fill.property("Color"), fillColor.rgb, fillColor.alpha, compName);
       fill.property("Opacity").setValue(opacity * fillOpacity * fillColor.alpha * 100);
       fill.enabled = true;
     } else {
@@ -1125,7 +1125,7 @@
 
     var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
     if (strokeColor && strokeWidth > 0) {
-      stroke.property("Color").setValue(strokeColor.rgb);
+      applyRgbColorProperty(stroke.property("Color"), strokeColor.rgb, strokeColor.alpha, compName);
       stroke.property("Stroke Width").setValue(strokeWidth);
       stroke.property("Opacity").setValue(opacity * strokeOpacity * strokeColor.alpha * 100);
       stroke.enabled = true;
@@ -1308,16 +1308,25 @@
       doc.tracking = toAETracking(scaledSpacing);
     }
 
+    var hasExplicitFill =
+      typeof attrs.fill !== "undefined" || typeof attrs.color !== "undefined";
     var fillColor = parseSvgColor(attrs.fill) || parseSvgColor(attrs.color);
-    if (fillColor) {
-      doc.applyFill = true;
-      doc.fillColor = fillColor.rgb;
-    } else {
-      doc.applyFill = true;
+    if (!fillColor && !hasExplicitFill) {
+      fillColor = { rgb: [0, 0, 0], alpha: 1 };
+    }
+
+    doc.fillColor = [1, 1, 1];
+    doc.applyFill = true;
+    if (!fillColor || fillColor.alpha === 0) {
+      doc.applyFill = false;
     }
 
     doc.justification = mapTextAlign(mapSvgTextAnchor(attrs["text-anchor"]));
     textProp.setValue(doc);
+
+    if (fillColor && fillColor.alpha > 0) {
+      applyFillEffect(layer, fillColor.rgb, fillColor.alpha);
+    }
 
     if (hasTextPath) {
       var pathEl = findSvgPathById(baseSvgData, el.pathRef);

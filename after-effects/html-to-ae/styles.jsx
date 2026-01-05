@@ -47,6 +47,7 @@
     if (!layer || !style || !style.boxShadow || !style.boxShadow.length) return;
     var effects = layer.property("Effects");
     if (!effects) return;
+    var currentCompName = layer.containingComp ? layer.containingComp.name : null;
 
     for (var i = 0; i < style.boxShadow.length; i++) {
       var sh = style.boxShadow[i];
@@ -65,7 +66,7 @@
       if (!effect) continue;
 
       var colorProp = effect.property("Shadow Color") || effect.property("Color");
-      if (colorProp) colorProp.setValue(parseCssColor(color));
+      if (colorProp) applyCssColorProperty(colorProp, color, currentCompName);
       var opacityProp = effect.property("Opacity");
       if (opacityProp) {
         var alpha = parseCssAlpha(color);

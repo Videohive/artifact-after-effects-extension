@@ -65,6 +65,7 @@ const PREVIEW_BASE_HEIGHT = 720;
 const GRID_DIMENSION = 3;
 const GRID_CELL_COUNT = GRID_DIMENSION * GRID_DIMENSION;
 const GRID_SCALE = 1 / GRID_DIMENSION;
+const HISTORY_PAGE_SIZE = 20;
 const TEXT_PLACEHOLDER_TAGS = [
   'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'li', 'figcaption', 'label', 'button', 'a',
@@ -1798,6 +1799,11 @@ type RootVarEntry = {
   value: string;
 };
 
+type ScenePaletteEntry = {
+  name: string;
+  color: string;
+};
+
 const extractRootVariables = (headHtml: string): RootVarEntry[] => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
@@ -1886,7 +1892,7 @@ const normalizeColorToHex = (value?: string | null) => {
   const hex = normalizeHex(value);
   if (hex) return hex;
   const rgbMatch = value.match(
-    /rgba?(s*(d{1,3})s*,s*(d{1,3})s*,s*(d{1,3})(?:s*,s*[d.]+)?s*)/i
+    /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*[\d.]+)?\s*\)/i
   );
   if (!rgbMatch) return null;
   const clamp = (n: number) => Math.min(255, Math.max(0, n));
@@ -1895,6 +1901,179 @@ const normalizeColorToHex = (value?: string | null) => {
   const g = Number(rgbMatch[2]);
   const b = Number(rgbMatch[3]);
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
+const isColorValue = (value: string, win: Window) => {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return !!normalizeHex(trimmed);
+};
+
+const VAR_REF_RE = /var\(\s*--([a-z0-9-]+)\s*(?:,[^)]+)?\)/gi;
+
+const collectVarRefs = (source: string, out: Set<string>) => {
+  if (!source) return;
+  VAR_REF_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = VAR_REF_RE.exec(source)) !== null) {
+    if (match[1]) out.add(match[1]);
+  }
+};
+
+const collectVarRefsFromAttributes = (el: Element, out: Set<string>) => {
+  for (const attr of Array.from(el.attributes)) {
+    collectVarRefs(attr.value, out);
+  }
+};
+
+const collectVarRefsFromElementTree = (root: Element, out: Set<string>) => {
+  collectVarRefsFromAttributes(root, out);
+  root.querySelectorAll('*').forEach(el => collectVarRefsFromAttributes(el, out));
+};
+
+const stripPseudoSelectors = (selector: string) =>
+  selector.replace(
+    /:{1,2}(before|after|first-letter|first-line|selection|placeholder|marker|backdrop|file-selector-button|cue|cue-region|part\([^)]+\)|slotted\([^)]+\))/gi,
+    ''
+  );
+
+const selectorMatchesArtifact = (selector: string, artifactEl: Element) => {
+  const cleaned = stripPseudoSelectors(selector).trim();
+  if (!cleaned) return false;
+  if (cleaned === ':root' || cleaned === 'html' || cleaned === 'body') return true;
+  try {
+    if (artifactEl.matches(cleaned)) return true;
+    return !!artifactEl.querySelector(cleaned);
+  } catch {
+    return false;
+  }
+};
+
+const collectVarRefsFromRules = (
+  rules: CSSRuleList,
+  win: Window,
+  artifactEl: Element,
+  out: Set<string>
+) => {
+  for (const rule of Array.from(rules)) {
+    if (rule.type === CSSRule.STYLE_RULE) {
+      const styleRule = rule as CSSStyleRule;
+      const selectors = styleRule.selectorText
+        .split(',')
+        .map(sel => sel.trim())
+        .filter(Boolean);
+      const matches = selectors.some(sel => selectorMatchesArtifact(sel, artifactEl));
+      if (matches) collectVarRefs(styleRule.style.cssText, out);
+      continue;
+    }
+
+    if (rule.type === CSSRule.MEDIA_RULE) {
+      const mediaRule = rule as CSSMediaRule;
+      const matches = win.matchMedia ? win.matchMedia(mediaRule.media.mediaText).matches : true;
+      if (matches) collectVarRefsFromRules(mediaRule.cssRules, win, artifactEl, out);
+      continue;
+    }
+
+    if (rule.type === CSSRule.SUPPORTS_RULE) {
+      const supportsRule = rule as CSSSupportsRule;
+      collectVarRefsFromRules(supportsRule.cssRules, win, artifactEl, out);
+    }
+  }
+};
+
+const collectVarRefsFromStyleSheets = (win: Window, artifactEl: Element, out: Set<string>) => {
+  const sheets = Array.from(win.document.styleSheets || []);
+  for (const sheet of sheets) {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      continue;
+    }
+    if (!rules) continue;
+    collectVarRefsFromRules(rules, win, artifactEl, out);
+  }
+};
+
+const extractScenePalette = (
+  headHtml: string,
+  win: Window,
+  artifactEl: Element
+): ScenePaletteEntry[] => {
+  const rootVars = extractRootVariables(headHtml);
+  const rootMap = new Map(rootVars.map(entry => [entry.name, entry.value]));
+  const used = new Set<string>();
+  collectVarRefsFromElementTree(artifactEl, used);
+  collectVarRefsFromStyleSheets(win, artifactEl, used);
+  return Array.from(used)
+    .sort()
+    .map(name => {
+      const value = rootMap.get(name);
+      if (!value) return null;
+      if (!isColorValue(value, win)) return null;
+      const color = normalizeColorToHex(value) || value;
+      return color ? { name, color } : null;
+    })
+    .filter((entry): entry is ScenePaletteEntry => !!entry);
+};
+
+const collectUsedHexColors = (node: any, out: Set<string>) => {
+  if (!node) return;
+  const pushColor = (value?: string | null) => {
+    if (!value) return;
+    const hex = normalizeColorToHex(value);
+    if (hex) out.add(hex);
+  };
+
+  if (node.style) {
+    pushColor(node.style.backgroundColor);
+    if (node.style.backgroundGradients && node.style.backgroundGradients.length) {
+      node.style.backgroundGradients.forEach((gradient: any) => {
+        if (!gradient || !gradient.stops) return;
+        gradient.stops.forEach((stop: any) => pushColor(stop && stop.color));
+      });
+    }
+    if (node.style.boxShadow && node.style.boxShadow.length) {
+      node.style.boxShadow.forEach((shadow: any) => pushColor(shadow && shadow.color));
+    }
+  }
+
+  if (node.font) {
+    pushColor(node.font.color);
+    pushColor(node.font.strokeColor);
+  }
+
+  if (node.border) {
+    pushColor(node.border.color);
+    if (node.border.sides) {
+      Object.values(node.border.sides).forEach((side: any) => pushColor(side && side.color));
+    }
+  }
+
+  if (node.outline) {
+    pushColor(node.outline.color);
+    if (node.outline.sides) {
+      Object.values(node.outline.sides).forEach((side: any) => pushColor(side && side.color));
+    }
+  }
+
+  if (node.children && node.children.length) {
+    node.children.forEach((child: any) => collectUsedHexColors(child, out));
+  }
+};
+
+const filterPaletteByUsedColors = (
+  palette: ScenePaletteEntry[],
+  usedHex: Set<string>
+) => {
+  const byColor = new Map<string, ScenePaletteEntry>();
+  palette.forEach(entry => {
+    const color = normalizeHex(entry.color) || entry.color;
+    if (!color) return;
+    if (!usedHex.has(color)) return;
+    if (!byColor.has(color)) byColor.set(color, entry);
+  });
+  return Array.from(byColor.values());
 };
 
 const countPlaceholders = (artifactHtmls: string[]) => {
@@ -1988,7 +2167,6 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [animatingArtifact, setAnimatingArtifact] = useState(false);
   const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
-  const [regenerateMode, setRegenerateMode] = useState<'slide' | 'project'>('slide');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copiedJsonArtifact, setCopiedJsonArtifact] = useState(false);
   const [copiedJsonProject, setCopiedJsonProject] = useState(false);
@@ -2051,7 +2229,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const historyPollTimerRef = useRef<number | null>(null);
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
   const restoredArtifactIndexRef = useRef<string | null>(null);
   const desiredArtifactIndexRef = useRef<number | null>(null);
   
@@ -2703,13 +2884,19 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (!getAuthToken()) {
       setHistoryItems([]);
       setHistoryError('Sign in to load artifacts.');
+      setHistoryCursor(null);
+      setHistoryHasMore(false);
       return;
     }
     setHistoryLoading(true);
     setHistoryError(null);
+    setHistoryCursor(null);
+    setHistoryHasMore(false);
     try {
-      const items = await listArtifactHistory(50);
+      const { items, nextCursor, hasMore } = await listArtifactHistory({ limit: HISTORY_PAGE_SIZE });
       setHistoryItems(items);
+      setHistoryCursor(nextCursor);
+      setHistoryHasMore(hasMore);
       if (suppressAutoSelectRef.current) {
         suppressAutoSelectRef.current = false;
         return;
@@ -2730,6 +2917,36 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setHistoryError('Failed to load saved artifacts.');
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  const loadHistoryMore = async () => {
+    if (!getAuthToken()) return;
+    if (historyLoading || historyLoadingMore) return;
+    if (!historyHasMore || !historyCursor) return;
+    setHistoryLoadingMore(true);
+    setHistoryError(null);
+    try {
+      const { items, nextCursor, hasMore } = await listArtifactHistory({
+        limit: HISTORY_PAGE_SIZE,
+        cursor: historyCursor
+      });
+      setHistoryItems(prev => {
+        if (items.length === 0) return prev;
+        const seen = new Set(prev.map(item => item.id));
+        const merged = [...prev];
+        items.forEach(item => {
+          if (!seen.has(item.id)) merged.push(item);
+        });
+        return merged;
+      });
+      setHistoryCursor(nextCursor);
+      setHistoryHasMore(hasMore);
+    } catch (error) {
+      console.error(error);
+      setHistoryError('Failed to load more artifacts.');
+    } finally {
+      setHistoryLoadingMore(false);
     }
   };
 
@@ -3107,13 +3324,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     };
   };
 
-  const handleRegenerateCurrentArtifact = async () => {
+  const handleRegenerateCurrentArtifact = async (mode: 'slide' | 'project') => {
     if (artifacts.length === 0) return;
     const requestId = ++regenerateRequestIdRef.current;
     setRegeneratingArtifact(true);
     try {
       pendingSaveDelayRef.current = 200;
-      if (regenerateMode === 'project') {
+      if (mode === 'project') {
         const cssContext = getCssContext();
         const nextArtifacts = [...artifacts];
         const used = new Set<string>();
@@ -3152,7 +3369,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
-  const handleAnimateArtifacts = async () => {
+  const handleAnimateArtifacts = async (mode: 'slide' | 'project' = 'slide') => {
     if (artifacts.length === 0) return;
     const requestId = ++animateRequestIdRef.current;
     setAnimatingArtifact(true);
@@ -3160,7 +3377,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       pendingSaveDelayRef.current = 200;
       const cssContext = getCssContext();
 
-      if (regenerateMode === 'project') {
+      if (mode === 'project') {
         const contextHtml = buildPersistedHtml(headContent, artifacts);
         const animatedHtml = await applyMotionToHtml(
           provider,
@@ -3449,9 +3666,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     await new Promise<void>(resolve => win.requestAnimationFrame(() => resolve()));
   };
 
+  const getArtifactElement = (doc: Document) =>
+    doc.querySelector('.artifact') || doc.querySelector('.slide') || doc.body;
+
   const extractJsonFromIframe = async (win: Window) => {
     const doc = win.document;
-    const artifactElement = doc.querySelector('.artifact') || doc.querySelector('.slide') || doc.body;
+    const artifactElement = getArtifactElement(doc);
 
     if (!artifactElement) {
       throw new Error('Could not find artifact content to export.');
@@ -3474,9 +3694,17 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     
     try {
       const win = await loadArtifactIntoExportIframe(currentArtifactIndex);
+      const artifactElement = getArtifactElement(win.document);
+      if (!artifactElement) {
+        throw new Error('Could not find artifact content to export.');
+      }
+      const pallete = extractScenePalette(headContent, win, artifactElement);
       const jsonStructure = await extractJsonFromIframe(win);
+      const usedHex = new Set<string>();
+      collectUsedHexColors((jsonStructure as any).root, usedHex);
+      const filteredPallete = filterPaletteByUsedColors(pallete, usedHex);
 
-      const jsonString = JSON.stringify(jsonStructure, null, 2);
+      const jsonString = JSON.stringify({ ...jsonStructure, pallete: filteredPallete }, null, 2);
       await navigator.clipboard.writeText(jsonString);
       
       setCopiedJsonArtifact(true);
@@ -3491,11 +3719,19 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (artifacts.length === 0) return;
 
     try {
-      const results = [];
+      const results: Array<{ jsonStructure: any; pallete: ScenePaletteEntry[] }> = [];
       for (let i = 0; i < artifacts.length; i += 1) {
         const win = await loadArtifactIntoExportIframe(i);
+        const artifactElement = getArtifactElement(win.document);
+        if (!artifactElement) {
+          throw new Error('Could not find artifact content to export.');
+        }
+        const pallete = extractScenePalette(headContent, win, artifactElement);
         const jsonStructure = await extractJsonFromIframe(win);
-        results.push(jsonStructure);
+        const usedHex = new Set<string>();
+        collectUsedHexColors((jsonStructure as any).root, usedHex);
+        const filteredPallete = filterPaletteByUsedColors(pallete, usedHex);
+        results.push({ jsonStructure, pallete: filteredPallete });
       }
 
       const settings = {
@@ -3507,15 +3743,16 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           label: exportResolution.label
         }
       };
-      const artifactsPayload = results.map(result => {
+      const artifactsPayload = results.map(({ jsonStructure, pallete }) => {
         const artifactId =
-          (result as { artifactId?: string; slideId?: string }).artifactId ||
-          (result as { slideId?: string }).slideId ||
+          (jsonStructure as { artifactId?: string; slideId?: string }).artifactId ||
+          (jsonStructure as { slideId?: string }).slideId ||
           '';
-        const { settings: _settings, ...rest } = result as Record<string, any>;
+        const { settings: _settings, ...rest } = jsonStructure as Record<string, any>;
         return {
           ...rest,
-          artifactId
+          artifactId,
+          pallete
         };
       });
 
@@ -4067,6 +4304,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
             <ArtifactHistoryPanel
               items={historyItems}
               loading={historyLoading}
+              loadingMore={historyLoadingMore}
+              hasMore={historyHasMore}
               selectedId={currentHistoryId}
               error={historyError}
               onSelect={(id) => {
@@ -4077,6 +4316,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               }}
               onDelete={handleHistoryDelete}
               onRefresh={loadHistory}
+              onLoadMore={loadHistoryMore}
               onNewChat={() => {
                 handleNewChat();
                 if (shouldAutoCloseOverlay()) {
@@ -4222,9 +4462,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                     totalCount={artifacts.length}
                     onPrev={handlePrevArtifact}
                     onNext={handleNextArtifact}
-                    onRegenerate={handleRegenerateCurrentArtifact}
-                    regenerateMode={regenerateMode}
-                    onRegenerateModeChange={setRegenerateMode}
+                    onRegenerateCurrent={() => handleRegenerateCurrentArtifact('slide')}
+                    onRegenerateAll={() => handleRegenerateCurrentArtifact('project')}
                     regenerating={regeneratingArtifact}
                     // onAnimate={handleAnimateArtifacts}
                     // animating={animatingArtifact}

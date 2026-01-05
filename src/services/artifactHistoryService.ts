@@ -12,6 +12,12 @@ export type ArtifactHistoryItem = {
   errorMessage?: string;
 };
 
+export type ArtifactHistoryPage = {
+  items: ArtifactHistoryItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 export type ArtifactHistoryDetail = ArtifactHistoryItem & {
   response: string;
 };
@@ -61,11 +67,20 @@ const mapHistoryItem = (item: any): ArtifactHistoryItem => ({
   errorMessage: item?.errorMessage || undefined,
 });
 
-export const listArtifactHistory = async (limit = 50): Promise<ArtifactHistoryItem[]> => {
+export const listArtifactHistory = async (
+  options: { limit?: number; cursor?: string | null } = {}
+): Promise<ArtifactHistoryPage> => {
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) throw new Error(getApiError());
   const authHeader = getAuthHeader();
-  const response = await fetch(`${apiBaseUrl}/artifact/history?limit=${limit}`, {
+  const limit = Number.isFinite(Number(options.limit)) ? Number(options.limit) : 50;
+  const cursor = options.cursor ? options.cursor.trim() : '';
+  const url = new URL(`${apiBaseUrl}/artifact/history`);
+  url.searchParams.set('limit', String(limit));
+  if (cursor) {
+    url.searchParams.set('cursor', cursor);
+  }
+  const response = await fetch(url.toString(), {
     method: 'GET',
     headers: authHeader,
   });
@@ -74,7 +89,15 @@ export const listArtifactHistory = async (limit = 50): Promise<ArtifactHistoryIt
     throw new Error(`History API error (${response.status}): ${errorText}`);
   }
   const data = await response.json();
-  return Array.isArray(data?.items) ? data.items.map(mapHistoryItem) : [];
+  const items = Array.isArray(data?.items) ? data.items.map(mapHistoryItem) : [];
+  const serverCursor =
+    typeof data?.nextCursor === 'string' && data.nextCursor.trim() ? data.nextCursor : null;
+  const serverHasMore = typeof data?.hasMore === 'boolean' ? data.hasMore : null;
+  const fallbackCursor =
+    items.length > 0 ? `${items[items.length - 1].updatedAt}|${items[items.length - 1].id}` : null;
+  const hasMore = serverHasMore ?? (items.length === limit);
+  const nextCursor = serverCursor ?? (hasMore ? fallbackCursor : null);
+  return { items, nextCursor, hasMore };
 };
 
 export const getArtifactHistory = async (id: string): Promise<ArtifactHistoryDetail> => {

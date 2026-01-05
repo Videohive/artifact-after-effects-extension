@@ -683,7 +683,13 @@
 
     // 3. ������������� ��� TOP-LEFT (HTML-like)
     var placementBBox = pickTextPlacementBBox(node, localBBox);
-    placePointTextTopLeft(layer, placementBBox);
+    var lineHeightPx = null;
+    if (node && node.font && isFinite(Number(node.font.lineHeightPx))) {
+      lineHeightPx = Number(node.font.lineHeightPx);
+    } else if (node && node.textLines && node.textLines.length && isFinite(Number(node.textLines[0].h))) {
+      lineHeightPx = Number(node.textLines[0].h);
+    }
+    placePointTextTopLeft(layer, placementBBox, lineHeightPx);
 
     return layer;
   }
@@ -724,12 +730,14 @@
     };
   }
 
-  function placePointTextTopLeft(layer, bbox) {
+  function placePointTextTopLeft(layer, bbox, lineHeightPx) {
     var r = layer.sourceRectAtTime(0, false);
     var doc = layer.property("Text").property("Source Text").value;
 
     var posX = bbox.x;
+    var posY = bbox.y;
     var anchorX = r.left;
+    var anchorY = r.top;
 
     if (doc.justification === ParagraphJustification.CENTER_JUSTIFY) {
       posX = bbox.x + bbox.w / 2;
@@ -739,12 +747,17 @@
       anchorX = r.left + r.width;
     }
 
+    if (isFinite(lineHeightPx) && lineHeightPx > 0) {
+      var extra = lineHeightPx - r.height;
+      if (extra > 0.1) posY += extra / 2;
+    }
+
     layer
       .property("Transform")
       .property("Anchor Point")
-      .setValue([anchorX, r.top]);
+      .setValue([anchorX, anchorY]);
 
-    layer.property("Transform").property("Position").setValue([posX, bbox.y]);
+    layer.property("Transform").property("Position").setValue([posX, posY]);
   }
 
   function createImageLayer(comp, node, localBBox) {

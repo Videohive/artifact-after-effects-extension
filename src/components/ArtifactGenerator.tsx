@@ -1537,15 +1537,12 @@ const resolveDesiredArtifactIndex = (historyId: string, allowUrlSlide: boolean) 
   if (allowUrlSlide) {
     const urlIndex = getUrlSlideIndexForHistory(historyId);
     if (urlIndex != null) {
-      console.debug('[ae2] slide index from url', { historyId, urlIndex });
       return urlIndex;
     }
   }
   if (storedIndex != null) {
-    console.debug('[ae2] slide index from storage', { historyId, storedIndex });
     return storedIndex;
   }
-  console.debug('[ae2] slide index defaulted', { historyId, index: 0 });
   return null;
 };
 const sanitizeImageAlts = (root: ParentNode) => {

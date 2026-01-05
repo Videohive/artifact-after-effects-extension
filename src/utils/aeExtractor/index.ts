@@ -34,6 +34,34 @@ import { AEBounds, AENode, AERenderHints, AEExportOptions, AEArtifactExport } fr
 const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
   el instanceof (win as Window & typeof globalThis).HTMLElement;
 
+const parseMatrixTransform = (
+  value: string
+): { a: number; b: number; c: number; d: number; e: number; f: number } | null => {
+  if (!value) return null;
+  const match = value.match(/matrix\(([^)]+)\)/i);
+  if (!match || !match[1]) return null;
+  const nums = match[1]
+    .split(/[, ]+/)
+    .map(n => parseFloat(n))
+    .filter(n => Number.isFinite(n));
+  if (nums.length < 6) return null;
+  return { a: nums[0], b: nums[1], c: nums[2], d: nums[3], e: nums[4], f: nums[5] };
+};
+
+const isPureRotationTransform = (value: string): boolean => {
+  if (!value || value === 'none') return false;
+  const m = parseMatrixTransform(value);
+  if (!m) return false;
+  const tol = 0.001;
+  if (Math.abs(m.e) > tol || Math.abs(m.f) > tol) return false;
+  const scaleX = Math.hypot(m.a, m.b);
+  const scaleY = Math.hypot(m.c, m.d);
+  if (Math.abs(scaleX - 1) > tol || Math.abs(scaleY - 1) > tol) return false;
+  const det = m.a * m.d - m.b * m.c;
+  if (Math.abs(det - 1) > tol) return false;
+  return true;
+};
+
 const getVideoSrc = (videoEl: HTMLVideoElement): string | null => {
   const direct = videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src');
   if (direct) return direct;
@@ -508,12 +536,32 @@ export const extractSlideLayout = async (
   };
 
   const process = (el: Element): AENode | null => {
-    const rect = el.getBoundingClientRect();
     const style = win.getComputedStyle(el);
     let transformValue = style.transform;
-    if (!isVisible(style, rect)) return null;
-
     const isHtmlEl = isHTMLElement(el, win);
+    const shouldNeutralizeTransform = isHtmlEl && isPureRotationTransform(transformValue);
+    let restoreTransform: (() => void) | null = null;
+
+    if (shouldNeutralizeTransform) {
+      const htmlEl = el as HTMLElement;
+      const prevTransform = htmlEl.style.transform;
+      const prevTransformOrigin = htmlEl.style.transformOrigin;
+      htmlEl.style.transform = 'none';
+      htmlEl.style.transformOrigin = '0 0';
+      restoreTransform = () => {
+        htmlEl.style.transform = prevTransform;
+        htmlEl.style.transformOrigin = prevTransformOrigin;
+      };
+    }
+
+    const finalize = <T,>(value: T): T => {
+      if (restoreTransform) restoreTransform();
+      return value;
+    };
+
+    const rect = el.getBoundingClientRect();
+    if (!isVisible(style, rect)) return finalize(null);
+
     const rawBBox: AEBounds = {
       x: rect.left - coordRootRect.left,
       y: rect.top - coordRootRect.top,
@@ -551,7 +599,15 @@ export const extractSlideLayout = async (
       extra = { src: getVideoSrc(el as HTMLVideoElement) || '', assetType: 'url' };
     }
 
-    const { needsPrecomp, clip } = detectPrecomp(el, style, rawBBox, scale);
+    const styleForDetect = {
+      borderRadius: style.borderRadius,
+      clipPath: style.clipPath,
+      overflow: style.overflow,
+      transform: transformValue,
+      opacity: style.opacity
+    } as CSSStyleDeclaration;
+
+    const { needsPrecomp, clip } = detectPrecomp(el, styleForDetect, rawBBox, scale);
     if (needsPrecomp) renderHints.needsPrecomp = true;
 
     const border = extractBorder(style, scale, rawBBox);
@@ -872,25 +928,28 @@ export const extractSlideLayout = async (
       const textTransformValue =
         textStyle && textStyle.transform && textStyle.transform !== 'none'
           ? textStyle.transform
-          : transformValue;
+          : '';
 
       if (!paints && !hasPseudo) {
         type = 'text';
         renderHints.isText = true;
-        transformValue = textTransformValue;
+        if (textTransformValue) {
+          transformValue = textTransformValue;
+        }
 
         extra = {
           ...extra,
           ...buildTextExtra(win, el, textStyle, coordRootRect, scale, bbox)
         };
       } else {
+        const textChildTransform = textTransformValue;
         pushBefore();
         children.push({
           type: 'text',
           name: `${getName(el)}__text`,
           bbox: { ...bbox },
           bboxSpace: 'global',
-          style: textTransformValue && textTransformValue !== 'none' ? { transform: textTransformValue } : {},
+          style: textChildTransform ? { transform: textChildTransform } : {},
           renderHints: {
             needsPrecomp: false,
             isMask: false,
@@ -967,7 +1026,7 @@ export const extractSlideLayout = async (
       type === 'group' && children.length > 0 && !clip?.enabled && el !== slide;
     const finalBBox = shouldExpandGroupBounds ? mergeBounds(bbox, children) : bbox;
 
-    return {
+    return finalize({
       type,
       name: getName(el),
       bbox: finalBBox,
@@ -986,7 +1045,7 @@ export const extractSlideLayout = async (
       border,
       outline,
       ...extra
-    };
+    });
   };
 
   const root = process(slide);

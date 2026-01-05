@@ -178,6 +178,8 @@ const extractWrappedTextAndLineStyles = (
 } => {
   const DEBUG_TEXT_RECTS = false;
   const cs = win.getComputedStyle(el);
+  const writingModeRaw = (cs as any).writingMode || cs.getPropertyValue('writing-mode') || '';
+  const isVertical = String(writingModeRaw).toLowerCase().indexOf('vertical') === 0;
   const fontSize = parseFloat(cs.fontSize) || 16;
   const csOpacity = Number.isFinite(parseFloat(cs.opacity)) ? parseFloat(cs.opacity) : 1;
   const lineHeightRaw = parseFloat(cs.lineHeight);
@@ -292,6 +294,18 @@ const extractWrappedTextAndLineStyles = (
     return buildLineTops(tops, tolerance);
   })();
 
+  const lineCoords: number[] = isVertical
+    ? (() => {
+        const coords: number[] = [];
+        for (const tok of tokens) {
+          if (tok.kind === 'text' && tok.rect && isFinite(tok.rect.left) && isFinite(tok.rect.right)) {
+            coords.push((tok.rect.left + tok.rect.right) / 2);
+          }
+        }
+        return buildLineTops(coords, tolerance);
+      })()
+    : lineTops;
+
   if (DEBUG_TEXT_RECTS) {
     const dbg = tokens
       .map(tok => {
@@ -304,15 +318,19 @@ const extractWrappedTextAndLineStyles = (
       })
       .join(' | ');
     console.log('[aeExtractor] text token rects:', dbg);
-    console.log('[aeExtractor] lineTops:', lineTops.map(v => Math.round(v * 100) / 100));
+    if (isVertical) {
+      console.log('[aeExtractor] lineCoords:', lineCoords.map(v => Math.round(v * 100) / 100));
+    } else {
+      console.log('[aeExtractor] lineTops:', lineTops.map(v => Math.round(v * 100) / 100));
+    }
   }
 
-  const pickLineIndex = (top: number): number | null => {
-    if (!lineTops.length) return null;
+  const pickLineIndex = (coord: number): number | null => {
+    if (!lineCoords.length) return null;
     let bestIdx = 0;
-    let bestDiff = Math.abs(lineTops[0] - top);
-    for (let i = 1; i < lineTops.length; i++) {
-      const diff = Math.abs(lineTops[i] - top);
+    let bestDiff = Math.abs(lineCoords[0] - coord);
+    for (let i = 1; i < lineCoords.length; i++) {
+      const diff = Math.abs(lineCoords[i] - coord);
       if (diff < bestDiff) {
         bestDiff = diff;
         bestIdx = i;
@@ -339,7 +357,10 @@ const extractWrappedTextAndLineStyles = (
     }
 
     if (tok.rect) {
-      const nextLineIndex = pickLineIndex(tok.rect.top);
+      const coord = isVertical
+        ? (tok.rect.left + tok.rect.right) / 2
+        : tok.rect.top;
+      const nextLineIndex = pickLineIndex(coord);
       if (currentLineIndex === null && nextLineIndex !== null) {
         currentLineIndex = nextLineIndex;
       } else if (
@@ -484,6 +505,7 @@ export const buildTextExtra = (
       tracking: calculateTracking(style.letterSpacing, fontSizeSafe),
       color: style.color,
       textAlign: style.textAlign,
+      writingMode: (style as any).writingMode || style.getPropertyValue('writing-mode'),
       strokeWidthPx: stroke ? stroke.strokeWidthPx : undefined,
       strokeColor: stroke ? stroke.strokeColor : undefined
     }

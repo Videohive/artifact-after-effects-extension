@@ -219,7 +219,7 @@
       if (fillAlpha === 0 && strokeAlpha > 0) textAlpha = strokeAlpha;
       applyOpacity(layer, node.style, textAlpha);
       applyBlendMode(layer, node.style);
-      applyTransform(layer, node.style, textBBox);
+      applyTransform(layer, node.style, textBBox, node.font ? node.font.writingMode : null);
       applyDropShadow(layer, node.style);
       if (hasBorder(node.border)) {
         var borderShape = createBorderShape(comp, node, textBBox);
@@ -227,13 +227,13 @@
           if (parentLayer) borderShape.parent = parentLayer;
           applyOpacity(borderShape, node.style);
           applyBlendMode(borderShape, node.style);
-          applyTransform(borderShape, node.style, textBBox);
+          applyTransform(borderShape, node.style, textBBox, null);
           borderShape.moveAfter(layer);
         }
       }
       if (node.clip && node.clip.enabled) {
         var clipLayer = createClipShapeLayer(comp, node, textBBox, node.clip, parentLayer, layer);
-        applyTransform(clipLayer, node.style, textBBox);
+        applyTransform(clipLayer, node.style, textBBox, null);
       }
       return layer;
     }
@@ -252,7 +252,7 @@
       if (parentLayer) layer.parent = parentLayer;
       applyOpacity(layer, node.style, placeholderAlpha);
       applyBlendMode(layer, node.style);
-      applyTransform(layer, node.style, imgBBox);
+      applyTransform(layer, node.style, imgBBox, null);
       applyDropShadow(layer, node.style);
       if (
         imgResult &&

@@ -111,6 +111,7 @@ export interface AENode {
     color: string;
     textAlign: string;
     textTransform?: 'uppercase' | 'lowercase' | 'capitalize' | 'none';
+    writingMode?: string;
     strokeWidthPx?: number;
     strokeColor?: string;
   };

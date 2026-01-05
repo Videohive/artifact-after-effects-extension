@@ -262,11 +262,18 @@
   }
 
     function buildFontCandidates(family, weight, style) {
-    var base = trim(family.replace(/['"]/g, ""));
-    var baseNoSpaces = base.replace(/\s+/g, "");
+    if (!family) return [];
+    var rawFamily = String(family);
+    var familyParts = rawFamily.split(",");
 
-    var w = Number(weight) || 400;
-    var isItalic = style === "italic";
+    var w = parseFloat(weight);
+    if (!isFinite(w)) {
+      var wRaw = String(weight || "").toLowerCase();
+      if (wRaw === "bold" || wRaw === "bolder") w = 700;
+      else if (wRaw === "lighter") w = 300;
+      else w = 400;
+    }
+    var isItalic = /italic|oblique/i.test(String(style || ""));
 
     var names = [];
     function pushUnique(list, value) {
@@ -275,21 +282,20 @@
       }
       list.push(value);
     }
-    function addWeightNameCandidates(list, weightName) {
+    function addWeightNameCandidates(list, baseName, weightName) {
+      if (!baseName) return;
+      var baseNoSpaces = baseName.replace(/\s+/g, "");
       if (isItalic) {
-        pushUnique(list, base + "-" + weightName + "Italic");
-        pushUnique(list, base + "-" + weightName + " Italic");
+        pushUnique(list, baseName + "-" + weightName + "Italic");
+        pushUnique(list, baseName + "-" + weightName + " Italic");
         pushUnique(list, baseNoSpaces + "-" + weightName + "Italic");
       }
-      pushUnique(list, base + "-" + weightName);
-      pushUnique(list, base + " " + weightName);
+      pushUnique(list, baseName + "-" + weightName);
+      pushUnique(list, baseName + " " + weightName);
       pushUnique(list, baseNoSpaces + "-" + weightName);
     }
 
-
-    // ���������������� ��������
     var weightNames = [];
-
     if (w >= 900) weightNames = ["Black", "Heavy"];
     else if (w >= 800) weightNames = ["ExtraBold", "UltraBold"];
     else if (w >= 700) weightNames = ["Bold"];
@@ -297,22 +303,26 @@
     else if (w >= 500) weightNames = ["Medium"];
     else weightNames = ["Regular", "Book", "Normal"];
 
-    for (var i = 0; i < weightNames.length; i++) {
-      addWeightNameCandidates(names, weightNames[i]);
+    for (var f = 0; f < familyParts.length; f++) {
+      var base = trim(String(familyParts[f]).replace(/['"]/g, ""));
+      if (!base) continue;
+
+      for (var i = 0; i < weightNames.length; i++) {
+        addWeightNameCandidates(names, base, weightNames[i]);
+      }
+
+      // Try regular weight before falling back to the base family name.
+      addWeightNameCandidates(names, base, "Regular");
+      addWeightNameCandidates(names, base, "Book");
+      addWeightNameCandidates(names, base, "Normal");
+
+      // fallback
+      pushUnique(names, base);
+      pushUnique(names, base.replace(/\s+/g, ""));
     }
-
-    // Try regular weight before falling back to the base family name.
-    addWeightNameCandidates(names, "Regular");
-    addWeightNameCandidates(names, "Book");
-    addWeightNameCandidates(names, "Normal");
-
-    // fallback
-    pushUnique(names, base);
-    pushUnique(names, baseNoSpaces);
 
     return names;
   }
-
   function clampFontSize(sizePx) {
     var size = Number(sizePx);
     if (!isFinite(size)) return null;
@@ -399,7 +409,9 @@
     var hasStyle = false;
     var hasX = false;
     var align = node.font && node.font.textAlign ? String(node.font.textAlign).toLowerCase() : "";
-    var ignoreX = align === "center" || align === "centre";
+    var writingMode = node.font && node.font.writingMode ? String(node.font.writingMode) : "";
+    var isVerticalText = writingMode.toLowerCase().indexOf("vertical") === 0;
+    var ignoreX = align === "center" || align === "centre" || isVerticalText;
 
     for (var i = 0; i < ranges.length; i++) {
       var r = ranges[i];

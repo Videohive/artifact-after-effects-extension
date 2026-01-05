@@ -190,8 +190,13 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
     if (!copy.getAttribute('fill-opacity') && fillOpacity)
       copy.setAttribute('fill-opacity', fillOpacity);
 
-    if (!copy.getAttribute('font-family') && fontFamily)
+    const existingFamily = copy.getAttribute('font-family');
+    if (
+      fontFamily &&
+      (!existingFamily || /var\(/i.test(existingFamily) || existingFamily === 'inherit')
+    ) {
       copy.setAttribute('font-family', fontFamily);
+    }
     if (!copy.getAttribute('font-size') && fontSize) copy.setAttribute('font-size', fontSize);
     if (!copy.getAttribute('font-weight') && fontWeight)
       copy.setAttribute('font-weight', fontWeight);

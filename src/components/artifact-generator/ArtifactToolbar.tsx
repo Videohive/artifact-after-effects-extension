@@ -35,6 +35,7 @@ type ArtifactToolbarProps = {
   onRegenerateCurrent: () => void;
   onRegenerateAll: () => void;
   regenerating: boolean;
+  regeneratingMode?: 'slide' | 'project' | null;
   onAnimate?: () => void;
   animating?: boolean;
   onAdd: () => void;
@@ -57,6 +58,7 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   onRegenerateCurrent,
   onRegenerateAll,
   regenerating,
+  regeneratingMode,
   onAnimate,
   animating,
   onAdd,
@@ -242,7 +244,9 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
             type="button"
             title="Regenerate current slide"
           >
-            {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {regenerating && regeneratingMode === 'slide'
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <RefreshCw className="w-4 h-4" />}
             Slide
           </button>
           <button
@@ -252,7 +256,9 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
             type="button"
             title="Regenerate all slides"
           >
-            {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+            {regenerating && regeneratingMode === 'project'
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <RefreshCcw className="w-4 h-4" />}
             Project
           </button>
         </div>

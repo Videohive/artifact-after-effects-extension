@@ -44,19 +44,34 @@
       .setValue([bbox.x + bbox.w / 2, bbox.y + bbox.h / 2]);
   }
 
-  function applyTransform(layer, style, bbox) {
-    if (!style || !style.transform || style.transform === "none") return;
-    var tr = parseTransform(style.transform);
-    if (!tr) return;
+  function getWritingModeRotation(writingMode) {
+    if (!writingMode) return 0;
+    var wm = String(writingMode).toLowerCase();
+    if (wm.indexOf("vertical-rl") === 0) return 90;
+    if (wm.indexOf("vertical-lr") === 0) return -90;
+    if (wm.indexOf("vertical") === 0) return 90;
+    return 0;
+  }
+
+  function applyTransform(layer, style, bbox, writingMode) {
+    if (!style) return;
+    var baseRotation = getWritingModeRotation(writingMode);
+    var hasCssTransform = style.transform && style.transform !== "none";
+    var tr = hasCssTransform ? parseTransform(style.transform) : null;
+    if (!tr && !baseRotation) return;
 
     // Center anchor to match CSS transform-origin: center (default).
     normalizeLayerAnchorToCenter(layer, bbox);
 
-    if (typeof tr.rotation !== "undefined" && !isNaN(tr.rotation)) {
+    var rotation = baseRotation;
+    if (tr && typeof tr.rotation !== "undefined" && !isNaN(tr.rotation)) {
+      rotation += tr.rotation;
+    }
+    if (rotation) {
       layer
         .property("Transform")
         .property("Rotation")
-        .setValue(tr.rotation);
+        .setValue(rotation);
     }
   }
 

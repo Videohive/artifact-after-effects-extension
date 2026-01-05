@@ -388,7 +388,7 @@
     var re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*["']([^"']*)["']/g;
     var match = null;
     while ((match = re.exec(tagText)) !== null) {
-      attrs[match[1]] = match[2];
+      attrs[match[1]] = decodeSvgEntities(match[2]);
     }
     return attrs;
   }

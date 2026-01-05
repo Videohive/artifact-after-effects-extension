@@ -2164,6 +2164,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     total: 0
   });
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
+  const [regeneratingArtifactMode, setRegeneratingArtifactMode] = useState<'slide' | 'project' | null>(null);
   const [animatingArtifact, setAnimatingArtifact] = useState(false);
   const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -3328,6 +3329,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (artifacts.length === 0) return;
     const requestId = ++regenerateRequestIdRef.current;
     setRegeneratingArtifact(true);
+    setRegeneratingArtifactMode(mode);
     try {
       pendingSaveDelayRef.current = 200;
       if (mode === 'project') {
@@ -3365,6 +3367,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     } finally {
       if (requestId === regenerateRequestIdRef.current) {
         setRegeneratingArtifact(false);
+        setRegeneratingArtifactMode(null);
       }
     }
   };
@@ -4465,6 +4468,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                     onRegenerateCurrent={() => handleRegenerateCurrentArtifact('slide')}
                     onRegenerateAll={() => handleRegenerateCurrentArtifact('project')}
                     regenerating={regeneratingArtifact}
+                    regeneratingMode={regeneratingArtifactMode}
                     // onAnimate={handleAnimateArtifacts}
                     // animating={animatingArtifact}
                     onAdd={handleAddArtifact}

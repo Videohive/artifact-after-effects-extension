@@ -123,7 +123,7 @@
         // 2. ��������� ����� � precomp layer
         applyOpacity(layer, node.style);
         applyBlendMode(layer, node.style);
-        applyTransform(layer, node.style, preBBox);
+        applyTransform(layer, node.style, preBBox, null);
         applyDropShadow(layer, node.style);
 
         // 3. parent (���� ����)
@@ -167,7 +167,7 @@
         // 7. clip shape - � ��� �� COMP, ��� � PRECOMP LAYER
         if (node.clip && node.clip.enabled) {
           var clipLayer = createClipShapeLayer(comp, node, preBBox, node.clip, parentLayer, layer);
-          applyTransform(clipLayer, node.style, preBBox);
+          applyTransform(clipLayer, node.style, preBBox, null);
         }
 
         return layer;
@@ -270,13 +270,13 @@
           if (parentLayer) borderShape.parent = parentLayer;
           applyOpacity(borderShape, node.style);
           applyBlendMode(borderShape, node.style);
-          applyTransform(borderShape, node.style, imgBBox);
+          applyTransform(borderShape, node.style, imgBBox, null);
           borderShape.moveAfter(layer);
         }
       }
       if (node.clip && node.clip.enabled) {
         var clipLayer = createClipShapeLayer(comp, node, imgBBox, node.clip, parentLayer, layer);
-        applyTransform(clipLayer, node.style, imgBBox);
+        applyTransform(clipLayer, node.style, imgBBox, null);
       }
       return layer;
     }
@@ -290,7 +290,7 @@
       if (parentLayer) layer.parent = parentLayer;
       applyOpacity(layer, node.style);
       applyBlendMode(layer, node.style);
-      applyTransform(layer, node.style, svgBBox);
+      applyTransform(layer, node.style, svgBBox, null);
       applyDropShadow(layer, node.style);
 
       var childComp = layer.source;

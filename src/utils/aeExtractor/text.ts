@@ -18,6 +18,20 @@ const findCharTokens = (s: string): Array<{ text: string; start: number; end: nu
   return tokens;
 };
 
+const findWordTokens = (s: string): Array<{ text: string; start: number; end: number }> => {
+  const tokens: Array<{ text: string; start: number; end: number }> = [];
+  const re = /\S+\s*/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(s)) !== null) {
+    const text = match[0] ?? '';
+    if (!text) continue;
+    const start = match.index;
+    const end = start + text.length;
+    tokens.push({ text, start, end });
+  }
+  return tokens;
+};
+
 const parseTextStroke = (
   style: CSSStyleDeclaration,
   scale: number
@@ -86,7 +100,8 @@ const parseTextStroke = (
 const collectTextTokens = (
   win: Window,
   el: HTMLElement,
-  textNodes?: Text[]
+  textNodes?: Text[],
+  useCharTokens: boolean = true
 ): Token[] => {
   const tokens: Token[] = [];
 
@@ -94,7 +109,7 @@ const collectTextTokens = (
     const raw = textNode.data ?? '';
     if (!raw) return;
 
-    const parts = findCharTokens(raw);
+    const parts = useCharTokens ? findCharTokens(raw) : findWordTokens(raw);
     if (!parts.length) return;
 
     const parentEl = textNode.parentElement as HTMLElement | null;
@@ -171,7 +186,16 @@ const extractWrappedTextAndLineStyles = (
   lineRanges: AETextLineRange[];
 } => {
   const DEBUG_TEXT_RECTS = false;
-  const DEBUG_TEXT_ID = 'text-beta';
+  const DEBUG_TEXT_ID = 's3-vertical-index';
+  const debugLog = (...args: any[]) => {
+    try {
+      const host = win.parent && win.parent !== win ? (win.parent as any) : (win as any);
+      const targetConsole = host && host.console ? host.console : console;
+      targetConsole.log(...args);
+    } catch {
+      console.log(...args);
+    }
+  };
   const cs = win.getComputedStyle(el);
   const writingModeRaw = (cs as any).writingMode || cs.getPropertyValue('writing-mode') || '';
   const isVertical = String(writingModeRaw).toLowerCase().indexOf('vertical') === 0;
@@ -192,7 +216,7 @@ const extractWrappedTextAndLineStyles = (
 
   let tokens: Token[] = [];
   try {
-    tokens = collectTextTokens(win, el, textNodes);
+    tokens = collectTextTokens(win, el, textNodes, true);
   } finally {
     if (cs.transform && cs.transform !== 'none') {
       el.style.transform = prevTransform;
@@ -243,18 +267,43 @@ const extractWrappedTextAndLineStyles = (
     currentBounds.bottom = Math.max(currentBounds.bottom, r.bottom);
   };
 
-  if (tokens.length) {
-    const rectHeights: number[] = [];
-    for (const tok of tokens) {
-      if (tok.kind === 'text' && tok.rect && isFinite(tok.rect.height) && tok.rect.height > 0) {
-        rectHeights.push(tok.rect.height);
-      }
+  const tokenRects: DOMRect[] = [];
+  for (const tok of tokens) {
+    if (tok.kind === 'text' && tok.rect) {
+      tokenRects.push(tok.rect);
     }
-    if (rectHeights.length) {
-      rectHeights.sort((a, b) => a - b);
-      const mid = Math.floor(rectHeights.length / 2);
-      const median = rectHeights.length % 2 ? rectHeights[mid] : (rectHeights[mid - 1] + rectHeights[mid]) / 2;
-      tolerance = Math.max(2, Math.min(tolerance, median * 0.6));
+  }
+  const detectRotatedFlow = (): boolean => {
+    if (tokenRects.length < 2) return false;
+    let minLeft = tokenRects[0].left;
+    let maxLeft = tokenRects[0].left;
+    let minTop = tokenRects[0].top;
+    let maxTop = tokenRects[0].top;
+    for (const r of tokenRects) {
+      minLeft = Math.min(minLeft, r.left);
+      maxLeft = Math.max(maxLeft, r.left);
+      minTop = Math.min(minTop, r.top);
+      maxTop = Math.max(maxTop, r.top);
+    }
+    const leftRange = maxLeft - minLeft;
+    const topRange = maxTop - minTop;
+    return leftRange <= Math.max(2, fontSize * 0.25) && topRange > Math.max(8, fontSize * 0.9);
+  };
+  const isVerticalFlow = isVertical || detectRotatedFlow();
+
+  if (tokens.length) {
+    const rectSizes: number[] = [];
+    for (const tok of tokens) {
+      if (tok.kind !== 'text' || !tok.rect) continue;
+      const size = isVerticalFlow ? tok.rect.width : tok.rect.height;
+      if (isFinite(size) && size > 0) rectSizes.push(size);
+    }
+    if (rectSizes.length) {
+      rectSizes.sort((a, b) => a - b);
+      const mid = Math.floor(rectSizes.length / 2);
+      const median = rectSizes.length % 2 ? rectSizes[mid] : (rectSizes[mid - 1] + rectSizes[mid]) / 2;
+      const scale = isVerticalFlow ? 0.9 : 0.6;
+      tolerance = Math.max(2, Math.min(tolerance, median * scale));
     }
   }
 
@@ -289,7 +338,7 @@ const extractWrappedTextAndLineStyles = (
     return buildLineTops(tops, tolerance);
   })();
 
-  const lineCoords: number[] = isVertical
+  const lineCoords: number[] = isVerticalFlow
     ? (() => {
         const coords: number[] = [];
         for (const tok of tokens) {
@@ -297,7 +346,8 @@ const extractWrappedTextAndLineStyles = (
             coords.push((tok.rect.left + tok.rect.right) / 2);
           }
         }
-        return buildLineTops(coords, tolerance);
+        const verticalTol = Math.max(tolerance, fontSize * 0.8);
+        return buildLineTops(coords, verticalTol);
       })()
     : lineTops;
 
@@ -324,7 +374,12 @@ const extractWrappedTextAndLineStyles = (
         return `"${tok.text}" -> top=${top} left=${left} h=${h}`;
       })
       .join(' | ');
-    console.log('[aeExtractor] text debug:', el.id || el.tagName, {
+    debugLog('[aeExtractor] text debug:', el.id || el.tagName, {
+      isVertical,
+      isVerticalFlow,
+      writingMode: writingModeRaw,
+      transform: cs.transform,
+      transformOrigin: cs.transformOrigin,
       fontFamily: cs.fontFamily,
       fontSize: cs.fontSize,
       lineHeight: cs.lineHeight,
@@ -348,11 +403,11 @@ const extractWrappedTextAndLineStyles = (
         : null,
       rangeRects
     });
-    console.log('[aeExtractor] text token rects:', dbg);
-    if (isVertical) {
-      console.log('[aeExtractor] lineCoords:', lineCoords.map(v => Math.round(v * 100) / 100));
+    debugLog('[aeExtractor] text token rects:', dbg);
+    if (isVerticalFlow) {
+      debugLog('[aeExtractor] lineCoords:', lineCoords.map(v => Math.round(v * 100) / 100));
     } else {
-      console.log('[aeExtractor] lineTops:', lineTops.map(v => Math.round(v * 100) / 100));
+      debugLog('[aeExtractor] lineTops:', lineTops.map(v => Math.round(v * 100) / 100));
     }
   }
 
@@ -391,7 +446,7 @@ const extractWrappedTextAndLineStyles = (
     }
 
     if (tok.rect) {
-      const coord = isVertical
+      const coord = isVerticalFlow
         ? (tok.rect.left + tok.rect.right) / 2
         : tok.rect.top;
       const nextLineIndex = pickLineIndex(coord);
@@ -507,6 +562,8 @@ export const buildTextExtra = (
   const fontSizeSafe = Number.isFinite(fontSize) ? fontSize : 16;
 
   const wrapped = extractWrappedTextAndLineStyles(win, el, rootRect, scale, textNodes);
+  const writingModeRaw =
+    (style as any).writingMode || style.getPropertyValue('writing-mode') || '';
 
   const computedLineHeight =
     style.lineHeight === 'normal'
@@ -539,7 +596,7 @@ export const buildTextExtra = (
       tracking: calculateTracking(style.letterSpacing, fontSizeSafe),
       color: style.color,
       textAlign: style.textAlign,
-      writingMode: (style as any).writingMode || style.getPropertyValue('writing-mode'),
+      writingMode: writingModeRaw,
       strokeWidthPx: stroke ? stroke.strokeWidthPx : undefined,
       strokeColor: stroke ? stroke.strokeColor : undefined
     }

@@ -7,26 +7,31 @@
     var t = String(transformStr).trim();
     if (t === "none") return null;
 
-    if (t.indexOf("matrix(") === 0) {
-      var m = t.match(/-?[\d.]+/g);
-      if (!m || m.length < 6) return null;
-      var a = Number(m[0]);
-      var b = Number(m[1]);
-      var rot = Math.atan2(b, a) * (180 / Math.PI);
-      return { rotation: rot };
+    var matrixMatch = t.match(/matrix\(([^)]+)\)/i);
+    var rotateMatch = t.match(/rotate\(([-\d.]+)(deg|rad)?\)/i);
+    var rotation = 0;
+
+    if (matrixMatch && matrixMatch[1]) {
+      var nums = matrixMatch[1].match(/-?[\d.]+/g);
+      if (nums && nums.length >= 6) {
+        var a = Number(nums[0]);
+        var b = Number(nums[1]);
+        if (!isNaN(a) && !isNaN(b)) {
+          rotation += Math.atan2(b, a) * (180 / Math.PI);
+        }
+      }
     }
 
-    if (t.indexOf("rotate(") === 0) {
-      var r = t.match(/rotate\(([-\d.]+)(deg|rad)?\)/i);
-      if (!r) return null;
-      var v = Number(r[1]);
-      if (isNaN(v)) return null;
-      var unit = r[2] || "deg";
-      var rotDeg = unit === "rad" ? (v * 180) / Math.PI : v;
-      return { rotation: rotDeg };
+    if (rotateMatch) {
+      var v = Number(rotateMatch[1]);
+      if (!isNaN(v)) {
+        var unit = rotateMatch[2] || "deg";
+        rotation += unit === "rad" ? (v * 180) / Math.PI : v;
+      }
     }
 
-    return null;
+    if (!rotation) return null;
+    return { rotation: rotation };
   }
 
   function normalizeLayerAnchorToCenter(layer, bbox) {

@@ -510,7 +510,7 @@ export const extractSlideLayout = async (
   const process = (el: Element): AENode | null => {
     const rect = el.getBoundingClientRect();
     const style = win.getComputedStyle(el);
-    const transformValue = style.transform;
+    let transformValue = style.transform;
     if (!isVisible(style, rect)) return null;
 
     const isHtmlEl = isHTMLElement(el, win);
@@ -869,10 +869,15 @@ export const extractSlideLayout = async (
       };
       const paints = hasVisualPaint(style);
       const textStyle = pickInlineTextStyle(el, style);
+      const textTransformValue =
+        textStyle && textStyle.transform && textStyle.transform !== 'none'
+          ? textStyle.transform
+          : transformValue;
 
       if (!paints && !hasPseudo) {
         type = 'text';
         renderHints.isText = true;
+        transformValue = textTransformValue;
 
         extra = {
           ...extra,
@@ -885,7 +890,7 @@ export const extractSlideLayout = async (
           name: `${getName(el)}__text`,
           bbox: { ...bbox },
           bboxSpace: 'global',
-          style: {},
+          style: textTransformValue && textTransformValue !== 'none' ? { transform: textTransformValue } : {},
           renderHints: {
             needsPrecomp: false,
             isMask: false,

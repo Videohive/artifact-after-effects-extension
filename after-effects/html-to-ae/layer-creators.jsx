@@ -123,6 +123,7 @@
     return layer;
   }
 
+
   function isVisibleBorderSide(side) {
     if (!side) return false;
     if (!side.widthPx || side.widthPx <= 0) return false;

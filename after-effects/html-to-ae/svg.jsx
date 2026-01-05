@@ -62,6 +62,9 @@
       var id = styledAttrs.id || block.tag + "-" + (i + 1);
       var wrapped = svgOpenTag + block.raw + "</svg>";
       var svgData = parseSvgData(wrapped);
+      if (rootSvgData && rootSvgData.patterns) {
+        svgData.patterns = mergeSvgPatterns(svgData.patterns, rootSvgData.patterns);
+      }
       normalizeSvgData(svgData, localBBox, rootData, rootSvgData);
 
       var hasShapes = svgData && svgData.elements && svgData.elements.length;
@@ -332,6 +335,7 @@
       width: 0,
       height: 0,
       elements: [],
+      patterns: {},
       preserveAspectRatio: "",
       percentWidth: false,
       percentHeight: false
@@ -380,18 +384,62 @@
       out.preserveAspectRatio = preserveMatch[1];
     }
 
-    collectSvgElements(svg, "circle", out.elements);
-    collectSvgElements(svg, "ellipse", out.elements);
-    collectSvgElements(svg, "rect", out.elements);
-    collectSvgElements(svg, "line", out.elements);
-    collectSvgElements(svg, "polyline", out.elements);
-    collectSvgElements(svg, "polygon", out.elements);
-    collectSvgElements(svg, "path", out.elements);
+    collectSvgPatterns(svg, out.patterns);
+
+    var svgNoDefs = stripSvgDefs(svg);
+    collectSvgElements(svgNoDefs, "circle", out.elements);
+    collectSvgElements(svgNoDefs, "ellipse", out.elements);
+    collectSvgElements(svgNoDefs, "rect", out.elements);
+    collectSvgElements(svgNoDefs, "line", out.elements);
+    collectSvgElements(svgNoDefs, "polyline", out.elements);
+    collectSvgElements(svgNoDefs, "polygon", out.elements);
+    collectSvgElements(svgNoDefs, "path", out.elements);
     out.textElements = [];
-    collectSvgTextElements(svg, out.textElements);
+    collectSvgTextElements(svgNoDefs, out.textElements);
 
     debugLog("SVG: elements=" + out.elements.length);
     return out;
+  }
+
+  function stripSvgDefs(svg) {
+    if (!svg) return "";
+    return String(svg).replace(/<defs\b[\s\S]*?<\/defs>/gi, "");
+  }
+
+  function collectSvgPatterns(svg, outPatterns) {
+    if (!svg || !outPatterns) return;
+    var re = /<pattern\b[\s\S]*?<\/pattern>/gi;
+    var match = null;
+    while ((match = re.exec(svg)) !== null) {
+      var block = match[0];
+      var openMatch = block.match(/<pattern\b[^>]*>/i);
+      var openTag = openMatch ? openMatch[0] : "<pattern>";
+      var attrs = parseSvgAttributes(openTag);
+      var styledAttrs = parseSvgStyleAttributes(attrs);
+      var id = styledAttrs.id || attrs.id;
+      if (!id) continue;
+
+      var inner = block.replace(/<pattern\b[^>]*>/i, "").replace(/<\/pattern>/i, "");
+      var pattern = {
+        id: id,
+        xRaw: styledAttrs.x || attrs.x || "0",
+        yRaw: styledAttrs.y || attrs.y || "0",
+        widthRaw: styledAttrs.width || attrs.width || "0",
+        heightRaw: styledAttrs.height || attrs.height || "0",
+        units: String(styledAttrs.patternUnits || attrs.patternUnits || "objectBoundingBox"),
+        elements: []
+      };
+
+      collectSvgElements(inner, "circle", pattern.elements);
+      collectSvgElements(inner, "ellipse", pattern.elements);
+      collectSvgElements(inner, "rect", pattern.elements);
+      collectSvgElements(inner, "line", pattern.elements);
+      collectSvgElements(inner, "polyline", pattern.elements);
+      collectSvgElements(inner, "polygon", pattern.elements);
+      collectSvgElements(inner, "path", pattern.elements);
+
+      outPatterns[id] = pattern;
+    }
   }
 
   function collectSvgElements(svg, tag, list) {
@@ -507,6 +555,17 @@
     var h = parseSvgLength(attrs.height, svgData.height, 0);
     if (w <= 0 || h <= 0) return;
 
+    var patternRef = parseSvgPatternRef(attrs.fill);
+    if (patternRef && svgData && svgData.patterns && svgData.patterns[patternRef]) {
+      var pattern = svgData.patterns[patternRef];
+      var rectData = { x: x, y: y, w: w, h: h };
+      var added = addSvgPatternFill(parentContents, pattern, attrs, svgData, compName, rectData);
+      if (added) {
+        addSvgRectStrokeOnly(parentContents, attrs, svgData, compName, x, y, w, h);
+        return;
+      }
+    }
+
     var grp = parentContents.addProperty("ADBE Vector Group");
     grp.name = attrs && attrs.id ? attrs.id : "Rect";
     var grpContents = grp.property("Contents");
@@ -521,6 +580,160 @@
     if (r > 0) rect.property("Roundness").setValue(r);
 
     applySvgPaint(grpContents, attrs, true, compName);
+  }
+
+  function addSvgRectStrokeOnly(parentContents, attrs, svgData, compName, x, y, w, h) {
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = attrs && attrs.id ? attrs.id + "_stroke" : "RectStroke";
+    var grpContents = grp.property("Contents");
+
+    var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
+    rect.property("Size").setValue([w, h]);
+    rect.property("Position").setValue([x + w / 2, y + h / 2]);
+
+    var rx = parseNumber(attrs.rx, 0);
+    var ry = parseNumber(attrs.ry, 0);
+    var r = Math.max(rx, ry);
+    if (r > 0) rect.property("Roundness").setValue(r);
+
+    var attrsStroke = {};
+    for (var key in attrs) attrsStroke[key] = attrs[key];
+    attrsStroke.fill = "none";
+    applySvgPaint(grpContents, attrsStroke, false, compName);
+  }
+
+  function parseSvgPatternRef(value) {
+    if (!value) return null;
+    var s = String(value).trim();
+    var m = s.match(/^url\(\s*(['"])?#([^'")]+)\1\s*\)$/i);
+    return m && m[2] ? m[2] : null;
+  }
+
+  function mergeSvgPatterns(localPatterns, rootPatterns) {
+    var out = {};
+    if (rootPatterns) {
+      for (var k in rootPatterns) out[k] = rootPatterns[k];
+    }
+    if (localPatterns) {
+      for (var j in localPatterns) out[j] = localPatterns[j];
+    }
+    return out;
+  }
+
+  function normalizePatternUnits(units) {
+    var u = String(units || "").toLowerCase();
+    return u || "objectboundingbox";
+  }
+
+  function resolvePatternLength(raw, axisLength, fallback, units) {
+    if (raw === undefined || raw === null || raw === "") return fallback;
+    var s = String(raw).trim();
+    if (!s) return fallback;
+    if (s.indexOf("%") !== -1) return parseSvgLength(s, axisLength, fallback);
+    var n = parseFloat(s);
+    if (isNaN(n)) return fallback;
+    if (units === "objectboundingbox" && n <= 1) return n * axisLength;
+    return n;
+  }
+
+  function addSvgPatternFill(parentContents, pattern, attrs, svgData, compName, rect) {
+    if (!pattern || !pattern.elements || !pattern.elements.length) return false;
+    if (!rect || rect.w <= 0 || rect.h <= 0) return false;
+
+    var units = normalizePatternUnits(pattern.units);
+    var axisW = units === "objectboundingbox" ? rect.w : svgData.width;
+    var axisH = units === "objectboundingbox" ? rect.h : svgData.height;
+
+    var tileW = resolvePatternLength(pattern.widthRaw, axisW, 0, units);
+    var tileH = resolvePatternLength(pattern.heightRaw, axisH, 0, units);
+    if (tileW <= 0 || tileH <= 0) return false;
+
+    var baseX = resolvePatternLength(pattern.xRaw, axisW, 0, units);
+    var baseY = resolvePatternLength(pattern.yRaw, axisH, 0, units);
+    if (units === "objectboundingbox") {
+      baseX = rect.x + baseX;
+      baseY = rect.y + baseY;
+    }
+
+    var start = getPatternStart(baseX, baseY, tileW, tileH, rect);
+    var copiesX = Math.ceil((rect.x + rect.w - start.x) / tileW);
+    var copiesY = Math.ceil((rect.y + rect.h - start.y) / tileH);
+    if (!isFinite(copiesX) || copiesX < 1) copiesX = 1;
+    if (!isFinite(copiesY) || copiesY < 1) copiesY = 1;
+
+    var grp = parentContents.addProperty("ADBE Vector Group");
+    grp.name = "PatternFill_" + pattern.id;
+    var grpContents = grp.property("Contents");
+
+    var tileGroup = grpContents.addProperty("ADBE Vector Group");
+    tileGroup.name = "PatternTile";
+    var tileContents = tileGroup.property("Contents");
+
+    var patternSvgData = {
+      minX: 0,
+      minY: 0,
+      width: tileW,
+      height: tileH,
+      preserveAspectRatio: "none"
+    };
+    addSvgPatternElements(tileContents, pattern, patternSvgData, compName);
+
+    var tileTr = tileGroup.property("Transform");
+    if (tileTr) {
+      tileTr.property("Anchor Point").setValue([0, 0]);
+      tileTr.property("Position").setValue([start.x, start.y]);
+    }
+
+    var repX = grpContents.addProperty("ADBE Vector Filter - Repeater");
+    repX.name = "PatternRepeatX";
+    repX.property("Copies").setValue(copiesX);
+    var repXTr = repX.property("Transform") || repX.property("ADBE Vector Repeater Transform");
+    if (repXTr) repXTr.property("Position").setValue([tileW, 0]);
+
+    var repY = grpContents.addProperty("ADBE Vector Filter - Repeater");
+    repY.name = "PatternRepeatY";
+    repY.property("Copies").setValue(copiesY);
+    var repYTr = repY.property("Transform") || repY.property("ADBE Vector Repeater Transform");
+    if (repYTr) repYTr.property("Position").setValue([0, tileH]);
+
+    return true;
+  }
+
+  function getPatternStart(baseX, baseY, tileW, tileH, rect) {
+    var startX = baseX;
+    var startY = baseY;
+    var dx = rect.x - baseX;
+    var dy = rect.y - baseY;
+    if (isFinite(dx) && tileW > 0) {
+      startX = baseX + Math.floor(dx / tileW) * tileW;
+    }
+    if (isFinite(dy) && tileH > 0) {
+      startY = baseY + Math.floor(dy / tileH) * tileH;
+    }
+    return { x: startX, y: startY };
+  }
+
+  function addSvgPatternElements(parentContents, pattern, patternSvgData, compName) {
+    if (!pattern || !pattern.elements || !pattern.elements.length) return;
+    for (var i = 0; i < pattern.elements.length; i++) {
+      var el = pattern.elements[i];
+      if (!el) continue;
+      if (el.tag === "circle") {
+        addSvgCircle(parentContents, el.attrs, patternSvgData, null, compName);
+      } else if (el.tag === "ellipse") {
+        addSvgEllipse(parentContents, el.attrs, patternSvgData, null, compName);
+      } else if (el.tag === "rect") {
+        addSvgRect(parentContents, el.attrs, patternSvgData, null, compName);
+      } else if (el.tag === "line") {
+        addSvgLine(parentContents, el.attrs, patternSvgData, null, compName);
+      } else if (el.tag === "polyline") {
+        addSvgPolyline(parentContents, el.attrs, false, patternSvgData, null, compName);
+      } else if (el.tag === "polygon") {
+        addSvgPolyline(parentContents, el.attrs, true, patternSvgData, null, compName);
+      } else if (el.tag === "path") {
+        addSvgPath(parentContents, el.attrs, patternSvgData, null, compName);
+      }
+    }
   }
 
   function addSvgLine(parentContents, attrs, svgData, scaleData, compName) {

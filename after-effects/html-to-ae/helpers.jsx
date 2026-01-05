@@ -289,6 +289,7 @@
     return [data];
   }
 
+
   function isValidSlide(slide) {
     return slide && slide.viewport && slide.root;
   }

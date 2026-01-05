@@ -10,7 +10,7 @@
     var svgInner = extractSvgInner(svg);
     var topBlocks = extractSvgTopLevelBlocks(svgInner);
     var rootSvgData = parseSvgData(svg);
-    normalizeSvgData(rootSvgData, localBBox, rootData);
+    normalizeSvgData(rootSvgData, localBBox, rootData, null);
 
     debugLog(
       "SVG: create layers name=" +
@@ -62,7 +62,7 @@
       var id = styledAttrs.id || block.tag + "-" + (i + 1);
       var wrapped = svgOpenTag + block.raw + "</svg>";
       var svgData = parseSvgData(wrapped);
-      normalizeSvgData(svgData, localBBox, rootData);
+      normalizeSvgData(svgData, localBBox, rootData, rootSvgData);
 
       var hasShapes = svgData && svgData.elements && svgData.elements.length;
       if (hasShapes) {
@@ -194,7 +194,7 @@
     return m ? m[0] : "";
   }
 
-  function normalizeSvgData(svgData, localBBox, rootData) {
+  function normalizeSvgData(svgData, localBBox, rootData, baseSvgData) {
     if (!svgData) return;
     if (svgData && (svgData.percentWidth || svgData.percentHeight)) {
       var viewportScale = 1;
@@ -215,13 +215,32 @@
     }
 
     if (svgData && (svgData.width <= 0 || svgData.height <= 0)) {
-      var fallback = getSvgFallbackSize(localBBox, rootData);
-      if (fallback.w > 0 && fallback.h > 0) {
-        // Fallback to source viewport size when SVG lacks viewBox/width/height.
-        svgData.minX = 0;
-        svgData.minY = 0;
-        svgData.width = fallback.w;
-        svgData.height = fallback.h;
+      if (
+        baseSvgData &&
+        baseSvgData.width > 0 &&
+        baseSvgData.height > 0
+      ) {
+        svgData.minX = baseSvgData.minX || 0;
+        svgData.minY = baseSvgData.minY || 0;
+        svgData.width = baseSvgData.width;
+        svgData.height = baseSvgData.height;
+      } else {
+        var contentBounds = computeSvgContentBounds(svgData);
+        if (contentBounds && contentBounds.width > 0 && contentBounds.height > 0) {
+          svgData.minX = contentBounds.minX;
+          svgData.minY = contentBounds.minY;
+          svgData.width = contentBounds.width;
+          svgData.height = contentBounds.height;
+        } else {
+          var fallback = getSvgFallbackSize(localBBox, rootData);
+          if (fallback.w > 0 && fallback.h > 0) {
+            // Fallback to source viewport size when SVG lacks viewBox/width/height.
+            svgData.minX = 0;
+            svgData.minY = 0;
+            svgData.width = fallback.w;
+            svgData.height = fallback.h;
+          }
+        }
       }
     }
   }
@@ -1073,6 +1092,88 @@
       if (!isFinite(p[0]) || !isFinite(p[1])) return false;
     }
     return true;
+  }
+
+  function computeSvgContentBounds(svgData) {
+    if (!svgData || !svgData.elements || !svgData.elements.length) return null;
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+
+    function includePoint(x, y) {
+      if (!isFinite(x) || !isFinite(y)) return;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+
+    function includeRect(x, y, w, h) {
+      if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h)) return;
+      includePoint(x, y);
+      includePoint(x + w, y + h);
+    }
+
+    function includePoints(points) {
+      if (!points || !points.length) return;
+      for (var i = 0; i < points.length; i++) {
+        includePoint(points[i][0], points[i][1]);
+      }
+    }
+
+    for (var i = 0; i < svgData.elements.length; i++) {
+      var el = svgData.elements[i];
+      if (!el || !el.attrs) continue;
+      var attrs = el.attrs;
+      if (el.tag === "rect") {
+        var x = parseSvgLength(attrs.x, 0, NaN);
+        var y = parseSvgLength(attrs.y, 0, NaN);
+        var w = parseSvgLength(attrs.width, 0, NaN);
+        var h = parseSvgLength(attrs.height, 0, NaN);
+        includeRect(x, y, w, h);
+      } else if (el.tag === "circle") {
+        var cx = parseSvgLength(attrs.cx, 0, NaN);
+        var cy = parseSvgLength(attrs.cy, 0, NaN);
+        var r = parseSvgLength(attrs.r, 0, NaN);
+        if (isFinite(cx) && isFinite(cy) && isFinite(r)) {
+          includeRect(cx - r, cy - r, r * 2, r * 2);
+        }
+      } else if (el.tag === "ellipse") {
+        var ecx = parseSvgLength(attrs.cx, 0, NaN);
+        var ecy = parseSvgLength(attrs.cy, 0, NaN);
+        var rx = parseSvgLength(attrs.rx, 0, NaN);
+        var ry = parseSvgLength(attrs.ry, 0, NaN);
+        if (isFinite(ecx) && isFinite(ecy) && isFinite(rx) && isFinite(ry)) {
+          includeRect(ecx - rx, ecy - ry, rx * 2, ry * 2);
+        }
+      } else if (el.tag === "line") {
+        var x1 = parseSvgLength(attrs.x1, 0, NaN);
+        var y1 = parseSvgLength(attrs.y1, 0, NaN);
+        var x2 = parseSvgLength(attrs.x2, 0, NaN);
+        var y2 = parseSvgLength(attrs.y2, 0, NaN);
+        includePoint(x1, y1);
+        includePoint(x2, y2);
+      } else if (el.tag === "polyline" || el.tag === "polygon") {
+        var points = parseSvgPoints(attrs.points || "", 0, 0);
+        includePoints(points);
+      } else if (el.tag === "path") {
+        var d = attrs.d;
+        if (!d) continue;
+        var subpaths = parseSvgPathData(d, svgData);
+        for (var s = 0; s < subpaths.length; s++) {
+          var sp = subpaths[s];
+          if (!sp || !sp.points || !sp.points.length) continue;
+          if (!allSvgPointsFinite(sp.points)) continue;
+          includePoints(sp.points);
+        }
+      }
+    }
+
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      return null;
+    }
+    return { minX: minX, minY: minY, width: maxX - minX, height: maxY - minY };
   }
 
   function buildTangents(len) {

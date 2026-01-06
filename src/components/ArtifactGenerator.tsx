@@ -66,6 +66,7 @@ const GRID_DIMENSION = 3;
 const GRID_CELL_COUNT = GRID_DIMENSION * GRID_DIMENSION;
 const GRID_SCALE = 1 / GRID_DIMENSION;
 const HISTORY_PAGE_SIZE = 20;
+const MAX_CHAT_IMAGES = 5;
 const TEXT_PLACEHOLDER_TAGS = [
   'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'li', 'figcaption', 'label', 'button', 'a',
@@ -2192,7 +2193,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   onHistoryOverlayClose
 }) => {
   const [topic, setTopic] = useState('');
-  const [chatImage, setChatImage] = useState<string | null>(null);
+  const [chatImages, setChatImages] = useState<string[]>([]);
   const [headContent, setHeadContent] = useState<string>('');
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [currentArtifactIndex, setCurrentArtifactIndex] = useState(0);
@@ -3110,25 +3111,44 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     setTagsDraft('');
     setDescriptionDraft('');
     setTopic('');
-    setChatImage(null);
+    setChatImages([]);
+  };
+
+  const handleChatImagesAttach = (images: string[]) => {
+    if (images.length === 0) return;
+    setChatImages(prev => {
+      if (prev.length >= MAX_CHAT_IMAGES) return prev;
+      const next = [...prev];
+      for (const image of images) {
+        if (next.length >= MAX_CHAT_IMAGES) break;
+        next.push(image);
+      }
+      return next;
+    });
+  };
+
+  const handleChatImageRemove = (index: number) => {
+    setChatImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleGenerate = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!topic.trim() && !chatImage) return;
+    if (!topic.trim() && chatImages.length === 0) return;
 
     const requestId = ++generateRequestIdRef.current;
     const promptText =
       topic.trim() ||
-      'Use the attached image as the primary reference. If no confident change is possible, return the HTML unchanged.';
+      (chatImages.length > 1
+        ? 'Use the attached images as the primary reference. If no confident change is possible, return the HTML unchanged.'
+        : 'Use the attached image as the primary reference. If no confident change is possible, return the HTML unchanged.');
     const requestedMode = inferArtifactModeFromTopic(promptText);
     const hasContext = artifacts.length > 0;
     if (!currentHistoryId && !hasContext) {
       setArtifactMode(requestedMode);
     }
     setTopic('');
-    const imageData = chatImage;
-    setChatImage(null);
+    const imageData = chatImages.length > 0 ? [...chatImages] : null;
+    setChatImages([]);
     setLoading(true);
     if (!currentHistoryId && !hasContext) {
       setArtifacts([]);
@@ -4577,9 +4597,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   onGenerate={handleGenerate}
                   loading={loading}
                   isEmpty={isEmpty}
-                  attachedImage={chatImage}
-                  onImageAttach={setChatImage}
-                  onImageClear={() => setChatImage(null)}
+                  attachedImages={chatImages}
+                  maxImages={MAX_CHAT_IMAGES}
+                  onImagesAttach={handleChatImagesAttach}
+                  onImageRemove={handleChatImageRemove}
                 />
               </div>
             </div>
@@ -4605,9 +4626,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   onGenerate={handleGenerate}
                   loading={loading}
                   isEmpty={isEmpty}
-                  attachedImage={chatImage}
-                  onImageAttach={setChatImage}
-                  onImageClear={() => setChatImage(null)}
+                  attachedImages={chatImages}
+                  maxImages={MAX_CHAT_IMAGES}
+                  onImagesAttach={handleChatImagesAttach}
+                  onImageRemove={handleChatImageRemove}
                 />
               </div>
             </div>

@@ -1,4 +1,4 @@
-
+﻿
   // -----------------------
   // CONFIG
   // -----------------------
@@ -29,7 +29,7 @@
 
   if (!app.project) app.newProject();
 
-  var jsonFile = File.openDialog("Select layout JSON", "*.json");
+  var jsonFile = new File("~/Desktop/Test AE.json");
   if (!jsonFile) {
     app.endUndoGroup();
     return;

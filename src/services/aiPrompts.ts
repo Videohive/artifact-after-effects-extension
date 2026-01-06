@@ -740,20 +740,21 @@ PHASE 4: TECHNICAL EXECUTION
     ? If ARTIFACT MODE is "auto", choose the correct mode and set it here
 
 2. **LAYOUT**
-- If ARTIFACT MODE includes "slides":
-  - Width: 100vw
-  - Height: 56.25vw (16:9)
-- If ARTIFACT MODE does NOT include "slides":
-  - The canvas may be any proportion, but must present artifacts clearly and beautifully in a curated layout.
+ASPECT RATIO + ARTIFACT MODE RULES
 
-  - Artifacts must be visible by default with no user interaction.
-  - Do NOT use radio inputs or CSS that hides artifacts by default (no opacity: 0 or visibility: hidden on the main artifact blocks).
-  - The main <section class="artifact"> / <section class="artifact slide"> wrapper MUST have no margin (margin: 0).
+Aspect Ratio:
+- The AI should choose the aspect ratio based on user context and available data.
+- If the aspect ratio is not explicitly specified, default to 16:9.
+- The canvas may be any proportion, but must present artifacts clearly and beautifully in a curated layout.
+- Artifacts must be visible by default with no user interaction.
+- Do NOT use radio inputs or CSS that hides artifacts by default
+  (no opacity: 0 or visibility: hidden on the main artifact blocks).
+- The main <section class="artifact"> / <section class="artifact slide"> wrapper MUST have margin: 0.
 
-  - **PRO DIRECTION:**
-    - Do not feel constrained by standard flow.
-    - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the "web-page" feel.
-    - Negative margins/calc offsets are allowed on inner elements only, NEVER on the artifact/slide wrapper.
+PRO DIRECTION:
+- Do not feel constrained by standard flow.
+- Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the “web-page” feel.
+- Negative margins / calc() offsets are allowed on inner elements only, NEVER on the artifact/slide wrapper.
 
 3. **CREATIVE MODE**
 - Bolder is better.

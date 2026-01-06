@@ -18,9 +18,14 @@
     - ��� URL-����������� AE ��� ��������� �� ����� ��� ������� ������.
 */
 
-(function () {
+function artifact() {
   // Enable verbose logs in the AE console.
   var AE2_DEBUG = true;
+  //@include "../Global Function/Modules/patch.array.js"
+  //@include "../Global Function/Modules/patch.object.js"
+  //@include "../Global Function/Modules/patch.string.js"
+  //@include "../Global Function/inlineJSON.js"
+  //@include "../Global Function/JSON2.js"
   //@include "./html-to-ae/config-entry.jsx"
   //@include "./html-to-ae/core.jsx"
   //@include "./html-to-ae/layer-creators.jsx"
@@ -30,4 +35,6 @@
   //@include "./html-to-ae/styles.jsx"
   //@include "./html-to-ae/import.jsx"
   //@include "./html-to-ae/helpers.jsx"
-})();
+}
+
+artifact();

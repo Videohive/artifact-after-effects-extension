@@ -21,9 +21,10 @@ type GeneratorInputProps = {
   onGenerate: () => void;
   loading: boolean;
   isEmpty: boolean;
-  attachedImage: string | null;
-  onImageAttach: (dataUrl: string) => void;
-  onImageClear: () => void;
+  attachedImages: string[];
+  maxImages?: number;
+  onImagesAttach: (dataUrls: string[]) => void;
+  onImageRemove: (index: number) => void;
 };
 
 export const GeneratorInput: React.FC<GeneratorInputProps> = ({
@@ -44,42 +45,54 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   onGenerate,
   loading,
   isEmpty,
-  attachedImage,
-  onImageAttach,
-  onImageClear
+  attachedImages,
+  maxImages = 5,
+  onImagesAttach,
+  onImageRemove
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const remainingSlots = Math.max(0, maxImages - attachedImages.length);
+
+  const readFilesAsDataUrls = React.useCallback(
+    (files: File[]) => {
+      const tasks = files.map(file => new Promise<string | null>(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+      }));
+      Promise.all(tasks).then(results => {
+        const dataUrls = results.filter((result): result is string => typeof result === 'string');
+        if (dataUrls.length > 0) {
+          onImagesAttach(dataUrls);
+        }
+      });
+    },
+    [onImagesAttach]
+  );
 
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = event.clipboardData?.items || [];
+    if (remainingSlots <= 0) return;
+    const files: File[] = [];
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         const file = item.getAsFile();
         if (!file) continue;
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            onImageAttach(reader.result);
-          }
-        };
-        reader.readAsDataURL(file);
-        event.preventDefault();
-        return;
+        files.push(file);
       }
     }
+    if (files.length === 0) return;
+    event.preventDefault();
+    readFilesAsDataUrls(files.slice(0, remainingSlots));
   };
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const file = event.dataTransfer?.files?.[0];
-    if (!file || !file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onImageAttach(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    if (remainingSlots <= 0) return;
+    const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'));
+    if (files.length === 0) return;
+    readFilesAsDataUrls(files.slice(0, remainingSlots));
   };
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -87,19 +100,15 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
   };
 
   const handlePickImage = () => {
+    if (remainingSlots <= 0) return;
     fileInputRef.current?.click();
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onImageAttach(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
+    if (remainingSlots <= 0) return;
+    const files = Array.from(event.target.files || []).filter(file => file.type.startsWith('image/'));
+    if (files.length === 0) return;
+    readFilesAsDataUrls(files.slice(0, remainingSlots));
     event.target.value = '';
   };
 
@@ -199,27 +208,33 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept="image/*"
           onChange={handleFileChange}
           className="hidden"
         />
-        {attachedImage ? (
-          <div className="flex items-center gap-3 px-2 pt-2">
-            <div className="relative h-12 w-12">
-              <img
-                src={attachedImage}
-                alt="Attachment preview"
-                className="h-12 w-12 rounded-lg object-cover border border-neutral-800"
-              />
-              <button
-                type="button"
-                onClick={onImageClear}
-                className="absolute -right-2 -top-2 rounded-full bg-neutral-950/90 p-1 text-neutral-300 hover:text-red-300 border border-neutral-800"
-                aria-label="Remove image"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
+        {attachedImages.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-3 px-2 pt-2">
+            {attachedImages.map((image, index) => (
+              <div className="relative h-12 w-12" key={`attachment-${index}`}>
+                <img
+                  src={image}
+                  alt={`Attachment preview ${index + 1}`}
+                  className="h-12 w-12 rounded-lg object-cover border border-neutral-800"
+                />
+                <button
+                  type="button"
+                  onClick={() => onImageRemove(index)}
+                  className="absolute -right-2 -top-2 rounded-full bg-neutral-950/90 p-1 text-neutral-300 hover:text-red-300 border border-neutral-800"
+                  aria-label={`Remove image ${index + 1}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            <span className="text-[11px] text-neutral-500 font-medium">
+              {attachedImages.length}/{maxImages}
+            </span>
           </div>
         ) : null}
         <textarea
@@ -227,21 +242,22 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
           onChange={(e) => onTopicChange(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={handlePaste}
-          placeholder="Describe your artifacts... (e.g. 'A futuristic identity kit for a quantum computing startup with dark aesthetic')"
+          placeholder="Describe your artifacts... (attach up to 5 images)"
           className="w-full bg-transparent text-neutral-100 placeholder-neutral-500 focus:outline-none pl-14 pr-14 py-3 resize-none min-h-[60px] max-h-[200px] text-lg"
           rows={2}
         />
         <button
           type="button"
           onClick={handlePickImage}
-          className="absolute left-2 top-1/2 -translate-y-1/2 p-3 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-xl transition-all"
+          disabled={remainingSlots <= 0}
+          className="absolute left-2 top-1/2 -translate-y-1/2 p-3 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Attach image"
         >
           <Image className="w-5 h-5" />
         </button>
         <button
           onClick={onGenerate}
-          disabled={loading || (!topic.trim() && !attachedImage)}
+          disabled={loading || (!topic.trim() && attachedImages.length === 0)}
           className="absolute right-2 bottom-2 p-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20"
         >
           {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}

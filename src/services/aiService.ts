@@ -13,6 +13,7 @@ import { getAuthToken } from "./authService";
 export type AiProviderName = 'gemini' | 'openai' | 'claude';
 export type ImageProviderName = 'random' | 'pexels' | 'unsplash' | 'pixabay' | 'placeholder';
 export type MediaKind = 'image' | 'video' | 'random';
+export type ImageDataInput = string | string[] | null | undefined;
 export type ArtifactMode =
   | 'auto'
   | 'slides'
@@ -73,6 +74,17 @@ const cleanResponseText = (text: string) =>
   text.replace(/```html/g, "").replace(/```/g, "");
 
 type StreamEventHandler = (event: { type: string; [key: string]: any }) => void;
+
+const normalizeImageData = (imageData?: ImageDataInput) => {
+  if (!imageData) {
+    return { imageData: null as string | null, imageDataList: [] as string[] };
+  }
+  if (Array.isArray(imageData)) {
+    const compact = imageData.filter(Boolean);
+    return { imageData: compact[0] ?? null, imageDataList: compact };
+  }
+  return { imageData, imageDataList: [imageData] };
+};
 
 const streamSseResponse = async (
   response: Response,
@@ -159,12 +171,13 @@ const createResponseText = async (
   provider: AiProviderName,
   prompt: string,
   temperature: number,
-  imageData?: string | null,
+  imageData?: ImageDataInput,
   options?: { autoRefine?: boolean; extraBody?: Record<string, unknown> }
 ) => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) throw new Error(getApiError());
+    const imagePayload = normalizeImageData(imageData);
     const response = await fetch(`${apiBaseUrl}/artifact/ai`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -172,7 +185,8 @@ const createResponseText = async (
         provider,
         prompt,
         temperature,
-        imageData,
+        imageData: imagePayload.imageData,
+        imageDataList: imagePayload.imageDataList.length > 0 ? imagePayload.imageDataList : undefined,
         autoRefine: options?.autoRefine ?? false,
         ...(options?.extraBody || {})
       })
@@ -195,13 +209,14 @@ const createStreamedResponseText = async (
   provider: AiProviderName,
   prompt: string,
   temperature: number,
-  imageData?: string | null,
+  imageData?: ImageDataInput,
   onEvent?: StreamEventHandler,
   options?: { autoRefine?: boolean; extraBody?: Record<string, unknown> }
 ): Promise<{ text: string }> => {
   return callWithRetry(async () => {
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) throw new Error(getApiError());
+    const imagePayload = normalizeImageData(imageData);
     const response = await fetch(`${apiBaseUrl}/artifact/ai/stream`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -209,7 +224,8 @@ const createStreamedResponseText = async (
         provider,
         prompt,
         temperature,
-        imageData,
+        imageData: imagePayload.imageData,
+        imageDataList: imagePayload.imageDataList.length > 0 ? imagePayload.imageDataList : undefined,
         autoRefine: options?.autoRefine ?? false,
         ...(options?.extraBody || {})
       })
@@ -226,7 +242,7 @@ const createStreamedResponseText = async (
 const createArtDirectionJson = async (
   provider: AiProviderName,
   topic: string,
-  imageData?: string | null
+  imageData?: ImageDataInput
 ): Promise<string> => {
   const artPrompt = ART_DIRECTION_PROMPT.replace(/{topic}/g, topic);
   const text = await createResponseText(provider, artPrompt, 0.6, imageData);
@@ -237,7 +253,7 @@ const createPersistedResponseText = async (
   provider: AiProviderName,
   prompt: string,
   temperature: number,
-  imageData?: string | null,
+  imageData?: ImageDataInput,
   options?: {
     historyId?: string | null;
     name?: string | null;
@@ -252,6 +268,7 @@ const createPersistedResponseText = async (
     if (!token) {
       throw new Error('Please sign in to save artifacts.');
     }
+    const imagePayload = normalizeImageData(imageData);
     const response = await fetch(`${apiBaseUrl}/artifact/ai/history`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -259,7 +276,8 @@ const createPersistedResponseText = async (
         provider,
         prompt,
         temperature,
-        imageData,
+        imageData: imagePayload.imageData,
+        imageDataList: imagePayload.imageDataList.length > 0 ? imagePayload.imageDataList : undefined,
         autoRefine: options?.autoRefine ?? false,
         historyId: options?.historyId || null,
         name: options?.name,
@@ -761,7 +779,7 @@ export const generateArtifacts = async (
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
   contextHtml?: string,
-  imageData?: string | null,
+  imageData?: ImageDataInput,
   options?: { autoRefine?: boolean }
 ): Promise<string> => {
   try {
@@ -801,7 +819,7 @@ export const generateArtifactsStream = async (
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
   onEvent?: StreamEventHandler,
-  imageData?: string | null,
+  imageData?: ImageDataInput,
   options?: { autoRefine?: boolean }
 ): Promise<string> => {
   try {
@@ -850,7 +868,7 @@ export const generateArtifactsPersisted = async (
   mediaKind: MediaKind,
   options?: {
     contextHtml?: string;
-    imageData?: string | null;
+    imageData?: ImageDataInput;
     historyId?: string | null;
     name?: string | null;
     autoRefine?: boolean;
@@ -901,7 +919,7 @@ export const updateArtifactsFromContext = async (
   contextHtml: string,
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
-  imageData?: string | null
+  imageData?: ImageDataInput
 ): Promise<string> => {
   try {
     const finalPrompt = UPDATE_FROM_CONTEXT_PROMPT
@@ -932,7 +950,7 @@ export const updateArtifactsFromContextPersisted = async (
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
   options?: {
-    imageData?: string | null;
+    imageData?: ImageDataInput;
     historyId?: string | null;
     name?: string | null;
   }
@@ -973,7 +991,7 @@ export const regenerateArtifact = async (
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
-  imageData?: string | null,
+  imageData?: ImageDataInput,
   contextHtml?: string
 ): Promise<string> => {
   try {
@@ -1011,7 +1029,7 @@ export const generateNewArtifact = async (
   artifactMode: ArtifactMode,
   imageProvider: ImageProviderName,
   mediaKind: MediaKind,
-  imageData?: string | null
+  imageData?: ImageDataInput
 ): Promise<string> => {
   try {
     const truncatedCss = cssContext.length > 6000 ? cssContext.substring(0, 6000) + "..." : cssContext;

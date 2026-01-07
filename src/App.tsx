@@ -15,6 +15,8 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false);
 
+  const isAdminUser = (user?: { role?: string | null }) => user?.role === 'admin';
+
   useEffect(() => {
     const token = getAuthToken();
     if (!token) {
@@ -23,6 +25,12 @@ export default function App() {
     }
     fetchCurrentUser()
       .then(user => {
+        if (!isAdminUser(user)) {
+          clearAuthToken();
+          setAuthUser(null);
+          setAuthError('Access denied. Admins only.');
+          return;
+        }
         setAuthUser({ login: user.login, email: user.email });
       })
       .catch(() => {
@@ -38,6 +46,12 @@ export default function App() {
     try {
       await loginUser(email, password);
       const user = await fetchCurrentUser();
+      if (!isAdminUser(user)) {
+        clearAuthToken();
+        setAuthUser(null);
+        setAuthError('Access denied. Admins only.');
+        return;
+      }
       setAuthUser({ login: user.login, email: user.email });
     } catch (error: any) {
       setAuthError(error?.message || 'Login failed');

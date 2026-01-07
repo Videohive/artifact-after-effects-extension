@@ -3066,7 +3066,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setArtifactIdInUrl(id);
       lastSavedHashRef.current = hashString(detail.response);
       parseAndSetHtml(detail.response, false, allowUrlSlide);
-      setProvider(detail.provider);
+      if (detail.provider) {
+        setProvider(detail.provider);
+      }
     } catch (error: any) {
       console.error(error);
       setHistoryError('Failed to load selected artifact.');

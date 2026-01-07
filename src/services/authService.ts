@@ -3,6 +3,7 @@ type AuthUser = {
   email?: string;
   login?: string;
   name?: string;
+  role?: string;
 };
 
 const DEFAULT_API_BASE_URL = 'https://api.ae2authors.net';

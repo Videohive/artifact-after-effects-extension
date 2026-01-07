@@ -4,8 +4,8 @@ import { getAuthToken } from './authService';
 export type ArtifactHistoryItem = {
   id: string;
   name: string;
-  provider: AiProviderName;
-  prompt: string;
+  provider?: AiProviderName;
+  prompt?: string;
   createdAt: string;
   updatedAt: string;
   status?: 'pending' | 'done' | 'error';
@@ -56,16 +56,17 @@ const getAuthHeader = () => {
   return { authorization: `Bearer ${token}` };
 };
 
-const mapHistoryItem = (item: any): ArtifactHistoryItem => ({
-  id: item?._id || item?.id || '',
-  name: item?.name || '',
-  provider: item?.provider || 'gemini',
-  prompt: item?.prompt || '',
-  createdAt: item?.createdAt || '',
-  updatedAt: item?.updatedAt || '',
-  status: item?.status || undefined,
-  errorMessage: item?.errorMessage || undefined,
-});
+const mapHistoryItem = (item: any): ArtifactHistoryItem => {
+  const mapped: ArtifactHistoryItem = {
+    id: item?._id || item?.id || '',
+    name: item?.name || '',
+    createdAt: item?.createdAt || '',
+    updatedAt: item?.updatedAt || '',
+    status: item?.status || undefined,
+    errorMessage: item?.errorMessage || undefined,
+  };
+  return mapped;
+};
 
 export const listArtifactHistory = async (
   options: { limit?: number; cursor?: string | null } = {}

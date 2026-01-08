@@ -164,5 +164,9 @@ export interface AEProjectExport {
   name: string;
   description: string;
   tags: string;
+  placeholders?: {
+    media: number;
+    text: number;
+  };
   artifacts: AEArtifactExport[];
 }

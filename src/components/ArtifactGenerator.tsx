@@ -3822,6 +3822,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         name: projectTitle.trim(),
         description: projectDescription.trim(),
         tags: projectTags.trim(),
+        placeholders: {
+          media: placeholderCounts.media,
+          text: placeholderCounts.text
+        },
         settings,
         artifacts: artifactsPayload
       };

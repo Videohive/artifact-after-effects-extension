@@ -27,6 +27,7 @@
 
     // ��������� ������
     ROOT_COMP = comp;
+    setControlsCompName(comp.name);
 
     if (data && data.pallete && data.pallete.length) {
       createPaletteAdjustmentLayer(comp, data.pallete);

@@ -1,13 +1,14 @@
 export const ART_DIRECTION_PROMPT = `
-Role: World-Class Art Director.
-Task: Define art direction for a design artifact system.
+Role: Visionary Art Director.
+Task: Synthesize a high-level design DNA for the topic: "{topic}".
 
-TOPIC: "{topic}"
+Your goal is to define a "Visual North Star" that feels authored, not generated. 
 
-Return ONLY strict JSON that matches this shape exactly:
+Return ONLY strict JSON:
 {
-  "mood": "2-6 words",
-  "palette": ["#RRGGBB", "#RRGGBB", "#RRGGBB", "#RRGGBB"],
+  "rationale": "1-2 sentences explaining the psychological connection between the topic and visual choices",
+  "mood": "2-6 words (e.g., 'Industrial Elegance', 'Submerged High-Tech')",
+  "palette": ["#RRGGBB", "#RRGGBB", "#RRGGBB", "#RRGGBB", "#RRGGBB"],
   "color_roles": {
     "bg_main": "#RRGGBB",
     "bg_accent": "#RRGGBB",
@@ -15,20 +16,19 @@ Return ONLY strict JSON that matches this shape exactly:
     "text_secondary": "#RRGGBB",
     "brand_color": "#RRGGBB"
   },
-  "typography": { "heading": "Google Font Name", "body": "Google Font Name" },
-  "motifs": ["...", "..."],
-  "composition_notes": "1 sentence, max 140 chars"
+  "typography": { 
+     "heading": "Google Font Name", 
+     "body": "Google Font Name",
+     "logic": "e.g., 'Monospace for data-rich feel' or 'Serif for luxury contrast'" 
+  },
+  "motifs": ["A specific visual gesture or recurring element"],
+  "composition_notes": "A core layout principle (e.g., 'Massive whitespace vs. microscopic details')"
 }
 
-Rules:
-- palette: exactly 4 DISTINCT hex colors; no #000000, no #FFFFFF.
-- palette must include 1 near-offwhite (e.g. #F2F3F5..#FAFAFA) AND 1 near-charcoal (e.g. #101114..#1C1D22).
-- color_roles values MUST be chosen ONLY from palette items.
-- Ensure text_primary contrasts bg_main strongly (pick the darkest vs the lightest).
-- typography.heading != typography.body; both real Google Fonts names (no weights).
-- motifs: 3-5 items, each 2-6 words.
-
-No markdown. No commentary. JSON only.
+Constraints:
+- Palette: 5 distinct colors. Include one near-neutral (light or dark) and one high-energy accent.
+- Typography: Pick contrasting Google Fonts. No weights in names.
+- Rationale: Must justify the emotional impact.
 `;
 
 export const CACHE_PRIMER_CONTEXT = `
@@ -623,17 +623,18 @@ PHASE 1: ART DIRECTION (INTERNAL - THINK FIRST)
      - Finance - solid, minimal, structured but premium
 
 2. **COLOR PALETTE**
-   - Apply the provided 5-color palette aligned with the mood.
+   - Apply the provided 4-color palette aligned with the mood.
    - Rules:
-     - Use ONLY the 5 palette hex colors from ART DIRECTION JSON.
-     - Do not introduce any additional hex colors.
-     - If subtle hierarchy is needed, create tints via opacity (rgba) or by reusing palette colors at low opacity.
-     - Map palette to roles by contrast:
-       - choose a dominant base (bg-main),
-       - choose a high-contrast color for text-primary,
-       - reserve one color as brand-color (accent),
-       - use the remaining for bg-accent/text-secondary.
-     - Prefer palettes where one of the PROVIDED colors can act as off-white-like and one as deep-charcoal-like (but still use ONLY the 4 provided colors).
+     - Use ONLY the 4 palette hex colors from ART DIRECTION JSON.
+- Do not introduce any additional hex colors.
+- If subtle hierarchy is needed, create tints via opacity (rgba) or by reusing palette colors at low opacity.
+- Map palette to roles by contrast:
+  - choose a dominant base (bg-main),
+  - choose a high-contrast color for text-primary,
+  - reserve one color as brand-color (accent),
+  - use the remaining for bg-accent/text-secondary.
+
+     - Prefer off-whites (#F6F7F8) or deep charcoals (#111111-#1A1A1A).
      - Avoid generic blue/white corporate palettes unless absolutely required.
    - Colors must feel intentional and emotionally driven.
 
@@ -705,6 +706,7 @@ Interpret "narrative" based on ARTIFACT MODE:
      - Every artifact MUST vary in form while preserving system coherence.
      - Avoid producing the same silhouette or rhythm repeatedly.
 
+
 PHASE 3: TECHNICAL EXECUTION
 
 1. **OUTPUT**
@@ -713,13 +715,12 @@ PHASE 3: TECHNICAL EXECUTION
   - Output ONLY raw HTML (no markdown, no explanations, no comments).
   - NEVER ask questions or request confirmation. Do not add preambles or commentary.
   - Every element MUST include a semantic, meaningful id that reflects its purpose/content.
-
   ID NAMING SCHEME (MANDATORY):
-  - Use kebab-case only.
-  - Use role-based structure: title-main, type-caption-02, svg-frame, path-contour-03, filter-grain, fe-turbulence-01.
-  - Never reuse ids across artifacts. Every artifact must have its own prefix.
-  - This includes all HTML tags and all SVG elements (svg, g, defs, filter nodes, path, rect, circle, line, etc.).
-  - No element may be left without an id; ids must be unique within the document.
+- Use kebab-case only.
+- Use role-based structure: title-main, type-caption-02, svg-frame, path-contour-03, filter-grain, fe-turbulence-01.
+- Never reuse ids across artifacts. Every artifact must have its own prefix.
+- This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
+- No element may be left without an id; ids must be unique within the document.
 
 - In <head>, include:
   - <title>
@@ -748,21 +749,20 @@ PHASE 3: TECHNICAL EXECUTION
     ? If ARTIFACT MODE is "auto", choose the correct mode and set it here
 
 2. **LAYOUT**
-ASPECT RATIO + ARTIFACT MODE RULES
+- If ARTIFACT MODE includes "slides":
+  - Width: 100vw
+  - Height: 56.25vw (16:9)
+- If ARTIFACT MODE does NOT include "slides":
+  - The canvas may be any proportion, but must present artifacts clearly and beautifully in a curated layout.
 
-Aspect Ratio:
-- The AI should choose the aspect ratio based on user context and available data.
-- If the aspect ratio is not explicitly specified, default to 16:9.
-- The canvas may be any proportion, but must present artifacts clearly and beautifully in a curated layout.
-- Artifacts must be visible by default with no user interaction.
-- Do NOT use radio inputs or CSS that hides artifacts by default
-  (no opacity: 0 or visibility: hidden on the main artifact blocks).
-- The main <section class="artifact"> / <section class="artifact slide"> wrapper MUST have margin: 0.
+  - Artifacts must be visible by default with no user interaction.
+  - Do NOT use radio inputs or CSS that hides artifacts by default (no opacity: 0 or visibility: hidden on the main artifact blocks).
+  - The main <section class="artifact"> / <section class="artifact slide"> wrapper MUST have no margin (margin: 0).
 
-PRO DIRECTION:
-- Do not feel constrained by standard flow.
-- Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the “web-page” feel.
-- Negative margins / calc() offsets are allowed on inner elements only, NEVER on the artifact/slide wrapper.
+  - **PRO DIRECTION:**
+    - Do not feel constrained by standard flow.
+    - Use any combination of CSS Grid, Flexbox, and Absolute Positioning to break the "web-page" feel.
+    - Negative margins/calc offsets are allowed on inner elements only, NEVER on the artifact/slide wrapper.
 
 3. **CREATIVE MODE**
 - Bolder is better.
@@ -925,82 +925,7 @@ INTERNAL FINAL LINT (DO NOT OUTPUT):
 
 PHASE 5: GENERATION
 
-Return ONLY raw HTML (complete document). No markdown. No comments. No extra text.
 Generate the final HTML.
-`;
-
-export const MOTION_CACHE_CONTEXT = `
-# AI Motion Cache Pack (HTML/CSS Animated HTML/CSS) v1.0
-
-Primary goal: Given HTML + CSS, return the same HTML + CSS updated with expressive, thoughtful motion.
-
-Service contract:
-- Input: html (string), css (string)
-- Output: updated html + updated css with motion appended
-
-Rules:
-- Do not change copy/text content.
-- Do not alter layout semantics or responsiveness.
-- Prefer transform + opacity for animation.
-- Avoid heavy effects (filters, box-shadow, backdrop-filter, clip-path) unless essential.
-- Add prefers-reduced-motion fallback to minimize motion.
-- Hover effects must also support :focus-visible.
-- Minimal HTML edits (add motion-* classes or data-motion attributes only).
-- No JS by default (CSS-only baseline).
-
-Timing tokens (ms):
-- micro: 120
-- fast: 180
-- ui: 240
-- enter: 225
-- exit: 195
-- base: 300
-- large: 375
-- slow: 600
-- ambient: 3000
-
-Stagger tokens:
-- tight: 25
-- normal: 45
-- loose: 70
-
-Easing set:
-- standard: cubic-bezier(0.4, 0.0, 0.2, 1)
-- deceleration: cubic-bezier(0.0, 0.0, 0.2, 1)
-- acceleration: cubic-bezier(0.4, 0.0, 1, 1)
-- sharp: cubic-bezier(0.4, 0.0, 0.6, 1)
-
-Reduced motion baseline:
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-`;
-
-export const APPLY_MOTION_PROMPT = `
-Role: Motion Designer & Frontend Engineer.
-Task: Add thoughtful motion to the provided HTML/CSS while preserving the original design.
-
-TOPIC: {topic}
-ARTIFACT MODE: {artifact_mode}
-
-INPUT_HTML:
-{html}
-
-INPUT_CSS:
-{css}
-
-OUTPUT:
-- Return a complete HTML document (with <html>, <head>, <body>).
-- Keep the same structure and visual design.
-- Append motion CSS to the existing styles or add a new <style> block.
-- Only minimal HTML edits (add motion-* classes/data-motion attributes if needed).
-- Include prefers-reduced-motion fallback.
-- No markdown, no commentary. Return raw HTML only.
 `;
 
 export const REGENERATE_PROMPT = `
@@ -1120,4 +1045,78 @@ INSTRUCTIONS:
 8. Every element MUST include a semantic, meaningful id. No element may be left without an id.
 
 Return the updated full HTML (or the unchanged CONTEXT_HTML if no confident change is possible).
+`;
+
+export const MOTION_CACHE_CONTEXT = `
+# AI Motion Cache Pack (HTML/CSS Animated HTML/CSS) v1.0
+
+Primary goal: Given HTML + CSS, return the same HTML + CSS updated with expressive, thoughtful motion.
+
+Service contract:
+- Input: html (string), css (string)
+- Output: updated html + updated css with motion appended
+
+Rules:
+- Do not change copy/text content.
+- Do not alter layout semantics or responsiveness.
+- Prefer transform + opacity for animation.
+- Avoid heavy effects (filters, box-shadow, backdrop-filter, clip-path) unless essential.
+- Add prefers-reduced-motion fallback to minimize motion.
+- Hover effects must also support :focus-visible.
+- Minimal HTML edits (add motion-* classes or data-motion attributes only).
+- No JS by default (CSS-only baseline).
+
+Timing tokens (ms):
+- micro: 120
+- fast: 180
+- ui: 240
+- enter: 225
+- exit: 195
+- base: 300
+- large: 375
+- slow: 600
+- ambient: 3000
+
+Stagger tokens:
+- tight: 25
+- normal: 45
+- loose: 70
+
+Easing set:
+- standard: cubic-bezier(0.4, 0.0, 0.2, 1)
+- deceleration: cubic-bezier(0.0, 0.0, 0.2, 1)
+- acceleration: cubic-bezier(0.4, 0.0, 1, 1)
+- sharp: cubic-bezier(0.4, 0.0, 0.6, 1)
+
+Reduced motion baseline:
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+`;
+
+export const APPLY_MOTION_PROMPT = `
+Role: Motion Designer & Frontend Engineer.
+Task: Add thoughtful motion to the provided HTML/CSS while preserving the original design.
+
+TOPIC: {topic}
+ARTIFACT MODE: {artifact_mode}
+
+INPUT_HTML:
+{html}
+
+INPUT_CSS:
+{css}
+
+OUTPUT:
+- Return a complete HTML document (with <html>, <head>, <body>).
+- Keep the same structure and visual design.
+- Append motion CSS to the existing styles or add a new <style> block.
+- Only minimal HTML edits (add motion-* classes/data-motion attributes if needed).
+- Include prefers-reduced-motion fallback.
+- No markdown, no commentary. Return raw HTML only.
 `;

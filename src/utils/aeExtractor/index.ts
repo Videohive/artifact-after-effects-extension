@@ -241,6 +241,70 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
   return clone.outerHTML;
 };
 
+const normalizeTransformOrigin = (
+  origin: string | null | undefined,
+  rawBox: AEBounds,
+  scaledBox: AEBounds
+): string => {
+  if (!origin) return '';
+  const tokens = origin.replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return '';
+
+  const rawW = rawBox.w || 0;
+  const rawH = rawBox.h || 0;
+  const scaledW = scaledBox.w || 0;
+  const scaledH = scaledBox.h || 0;
+
+  const isYKeyword = (value: string) => value === 'top' || value === 'bottom';
+  const isXKeyword = (value: string) => value === 'left' || value === 'right';
+
+  const resolveToken = (value: string, axis: 'x' | 'y'): number | null => {
+    const v = value.toLowerCase();
+    if (v === 'center') return axis === 'x' ? scaledW / 2 : scaledH / 2;
+    if (axis === 'x' && isXKeyword(v)) return v === 'left' ? 0 : scaledW;
+    if (axis === 'y' && isYKeyword(v)) return v === 'top' ? 0 : scaledH;
+    if (v.endsWith('%')) {
+      const pct = parseFloat(v);
+      if (!Number.isFinite(pct)) return null;
+      const size = axis === 'x' ? scaledW : scaledH;
+      return (pct / 100) * size;
+    }
+
+    const num = parseFloat(v);
+    if (!Number.isFinite(num)) return null;
+    const rawSize = axis === 'x' ? rawW : rawH;
+    const scaledSize = axis === 'x' ? scaledW : scaledH;
+    if (rawSize > 0) {
+      return (num / rawSize) * scaledSize;
+    }
+    return num;
+  };
+
+  let xToken = tokens[0];
+  let yToken = tokens.length > 1 ? tokens[1] : null;
+
+  if (yToken && isYKeyword(xToken.toLowerCase()) && !isYKeyword(yToken.toLowerCase())) {
+    const tmp = xToken;
+    xToken = yToken;
+    yToken = tmp;
+  }
+
+  if (tokens.length === 1) {
+    const x = resolveToken(xToken, 'x');
+    const y = resolveToken(xToken, 'y');
+    if (x !== null && y !== null) return `${x}px ${y}px`;
+    if (x !== null) return `${x}px ${scaledH / 2}px`;
+    if (y !== null) return `${scaledW / 2}px ${y}px`;
+    return `${scaledW / 2}px ${scaledH / 2}px`;
+  }
+
+  const x = resolveToken(xToken, 'x');
+  const y = yToken ? resolveToken(yToken, 'y') : null;
+  const finalX = x !== null ? x : scaledW / 2;
+  const finalY = y !== null ? y : scaledH / 2;
+  return `${finalX}px ${finalY}px`;
+};
+
 const parsePseudoContent = (content: string): string | null => {
   const raw = (content || '').trim();
   if (!raw || raw === 'none' || raw === 'normal') return null;
@@ -539,6 +603,8 @@ export const extractSlideLayout = async (
     const style = win.getComputedStyle(el);
     let transformValue = style.transform;
     const isHtmlEl = isHTMLElement(el, win);
+    const overrideOrigin = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-origin') : null;
+    const inlineOrigin = isHtmlEl ? (el as HTMLElement).style.transformOrigin : '';
     const shouldNeutralizeTransform = isHtmlEl && isPureRotationTransform(transformValue);
     let restoreTransform: (() => void) | null = null;
 
@@ -570,6 +636,11 @@ export const extractSlideLayout = async (
     };
 
     const bbox = scaleBounds(rawBBox, scale);
+    let transformOriginValue = normalizeTransformOrigin(
+      overrideOrigin || inlineOrigin || style.transformOrigin,
+      rawBBox,
+      bbox
+    );
 
     const renderHints: AERenderHints = {
       needsPrecomp: false,
@@ -699,6 +770,7 @@ export const extractSlideLayout = async (
           backgroundGradients: extractBackgroundGradients(pseudoStyle.backgroundImage) || undefined,
           opacity: pseudoStyle.opacity,
           transform: pseudoStyle.transform,
+          transformOrigin: normalizeTransformOrigin(pseudoStyle.transformOrigin, rawBox, pseudoBBox),
           zIndex: zValue,
           boxShadow: pseudoShadow || undefined
         },
@@ -929,12 +1001,18 @@ export const extractSlideLayout = async (
         textStyle && textStyle.transform && textStyle.transform !== 'none'
           ? textStyle.transform
           : '';
+      const textTransformOrigin = normalizeTransformOrigin(
+        textStyle && textStyle.transformOrigin ? textStyle.transformOrigin : '',
+        rawBBox,
+        bbox
+      );
 
       if (!paints && !hasPseudo) {
         type = 'text';
         renderHints.isText = true;
         if (textTransformValue) {
           transformValue = textTransformValue;
+          if (textTransformOrigin) transformOriginValue = textTransformOrigin;
         }
 
         extra = {
@@ -949,7 +1027,12 @@ export const extractSlideLayout = async (
           name: `${getName(el)}__text`,
           bbox: { ...bbox },
           bboxSpace: 'global',
-          style: textChildTransform ? { transform: textChildTransform } : {},
+          style: textChildTransform
+            ? {
+                transform: textChildTransform,
+                transformOrigin: textTransformOrigin || undefined
+              }
+            : {},
           renderHints: {
             needsPrecomp: false,
             isMask: false,
@@ -1036,6 +1119,7 @@ export const extractSlideLayout = async (
         backgroundGradients: extractBackgroundGradients(style.backgroundImage) || undefined,
         opacity: style.opacity,
         transform: transformValue,
+        transformOrigin: transformOriginValue,
         zIndex: style.zIndex,
         boxShadow: boxShadow || undefined
       },

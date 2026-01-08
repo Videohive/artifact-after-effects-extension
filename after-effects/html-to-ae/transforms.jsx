@@ -34,11 +34,75 @@
     return { rotation: rotation };
   }
 
-  function normalizeLayerAnchorToCenter(layer, bbox) {
-    if (!layer || !bbox) return;
+  function parseTransformOriginToken(token, size, axis) {
+    if (!token) return null;
+    var t = String(token).toLowerCase();
+    if (t === "center") return size / 2;
+    if (axis === "x") {
+      if (t === "left") return 0;
+      if (t === "right") return size;
+    }
+    if (axis === "y") {
+      if (t === "top") return 0;
+      if (t === "bottom") return size;
+    }
+    if (t.indexOf("%") !== -1) {
+      var pct = parseFloat(t);
+      if (isFinite(pct)) return (size * pct) / 100;
+    }
+    var num = parseFloat(t);
+    return isFinite(num) ? num : null;
+  }
+
+  function resolveTransformOrigin(style, bbox) {
+    var w = bbox && isFinite(bbox.w) ? bbox.w : 0;
+    var h = bbox && isFinite(bbox.h) ? bbox.h : 0;
+    var def = { x: w / 2, y: h / 2 };
+    if (!style || !style.transformOrigin) return def;
+
+    var raw = String(style.transformOrigin || "")
+      .replace(/,/g, " ")
+      .split(/\s+/);
+    var tokens = [];
+    for (var i = 0; i < raw.length; i++) {
+      if (raw[i]) tokens.push(raw[i]);
+    }
+    if (!tokens.length) return def;
+
+    var t0 = String(tokens[0]).toLowerCase();
+    var t1 = tokens.length > 1 ? String(tokens[1]).toLowerCase() : null;
+    var isYKeyword = function (t) {
+      return t === "top" || t === "bottom";
+    };
+
+    if (t1 && isYKeyword(t0) && !isYKeyword(t1)) {
+      var tmp = t0;
+      t0 = t1;
+      t1 = tmp;
+    }
+
+    if (tokens.length === 1) {
+      var xSingle = parseTransformOriginToken(t0, w, "x");
+      var ySingle = parseTransformOriginToken(t0, h, "y");
+      if (xSingle !== null && ySingle !== null) return { x: xSingle, y: ySingle };
+      if (xSingle !== null) return { x: xSingle, y: def.y };
+      if (ySingle !== null) return { x: def.x, y: ySingle };
+      return def;
+    }
+
+    var x = parseTransformOriginToken(t0, w, "x");
+    var y = parseTransformOriginToken(t1, h, "y");
+    if (x === null) x = def.x;
+    if (y === null) y = def.y;
+    return { x: x, y: y };
+  }
+
+  function setLayerAnchorToOrigin(layer, bbox, origin) {
+    if (!layer || !bbox || !origin) return;
     var r = layer.sourceRectAtTime(0, false);
-    var anchorX = r.left + r.width / 2;
-    var anchorY = r.top + r.height / 2;
+    var anchorX = r.left + origin.x;
+    var anchorY = r.top + origin.y;
+    if (!isFinite(anchorX) || !isFinite(anchorY)) return;
     layer
       .property("Transform")
       .property("Anchor Point")
@@ -46,7 +110,7 @@
     layer
       .property("Transform")
       .property("Position")
-      .setValue([bbox.x + bbox.w / 2, bbox.y + bbox.h / 2]);
+      .setValue([bbox.x + origin.x, bbox.y + origin.y]);
   }
 
   function getWritingModeRotation(writingMode) {
@@ -65,8 +129,8 @@
     var tr = hasCssTransform ? parseTransform(style.transform) : null;
     if (!tr && !baseRotation) return;
 
-    // Center anchor to match CSS transform-origin: center (default).
-    normalizeLayerAnchorToCenter(layer, bbox);
+    var origin = resolveTransformOrigin(style, bbox);
+    setLayerAnchorToOrigin(layer, bbox, origin);
 
     var rotation = baseRotation;
     if (tr && typeof tr.rotation !== "undefined" && !isNaN(tr.rotation)) {

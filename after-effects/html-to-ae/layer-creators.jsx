@@ -684,13 +684,14 @@
 
     // 3. ������������� ��� TOP-LEFT (HTML-like)
     var placementBBox = pickTextPlacementBBox(node, localBBox);
+    var textBounds = getLocalTextBounds(node, localBBox);
     var lineHeightPx = null;
     if (node && node.font && isFinite(Number(node.font.lineHeightPx))) {
       lineHeightPx = Number(node.font.lineHeightPx);
     } else if (node && node.textLines && node.textLines.length && isFinite(Number(node.textLines[0].h))) {
       lineHeightPx = Number(node.textLines[0].h);
     }
-    placePointTextTopLeft(layer, placementBBox, lineHeightPx);
+    placePointTextTopLeft(layer, placementBBox, lineHeightPx, textBounds);
 
     return layer;
   }
@@ -731,7 +732,7 @@
     };
   }
 
-  function placePointTextTopLeft(layer, bbox, lineHeightPx) {
+  function placePointTextTopLeft(layer, bbox, lineHeightPx, textBounds) {
     var r = layer.sourceRectAtTime(0, false);
     var doc = layer.property("Text").property("Source Text").value;
 
@@ -740,11 +741,19 @@
     var anchorX = r.left;
     var anchorY = r.top;
 
+    var hasTextBounds =
+      textBounds &&
+      isFinite(textBounds.w) &&
+      isFinite(textBounds.x) &&
+      textBounds.w > 0;
+    var textWidthLarger =
+      hasTextBounds && isFinite(bbox.w) && textBounds.w > bbox.w + Math.max(2, bbox.w * 0.02);
+
     if (doc.justification === ParagraphJustification.CENTER_JUSTIFY) {
-      posX = bbox.x + bbox.w / 2;
+      posX = textWidthLarger ? textBounds.x + textBounds.w / 2 : bbox.x + bbox.w / 2;
       anchorX = r.left + r.width / 2;
     } else if (doc.justification === ParagraphJustification.RIGHT_JUSTIFY) {
-      posX = bbox.x + bbox.w;
+      posX = textWidthLarger ? textBounds.x + textBounds.w : bbox.x + bbox.w;
       anchorX = r.left + r.width;
     }
 

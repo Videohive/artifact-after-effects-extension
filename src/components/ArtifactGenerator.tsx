@@ -92,7 +92,7 @@ const PREVIEW_EDITOR_STYLE = `
     outline-color: transparent;
   }
   .ae2-edit-target.ae2-selected {
-    outline: 2px solid var(--ae2-edit-selected);
+    outline: 0;
   }
   #ae2-selection {
     position: absolute;
@@ -1214,13 +1214,177 @@ const PREVIEW_EDITOR_SCRIPT = `
       }
     }
 
+    function mergeRect(base, next) {
+      if (!next) return base;
+      if (!base) {
+        return {
+          left: next.left,
+          top: next.top,
+          right: next.right,
+          bottom: next.bottom,
+          width: next.width,
+          height: next.height
+        };
+      }
+      base.left = Math.min(base.left, next.left);
+      base.top = Math.min(base.top, next.top);
+      base.right = Math.max(base.right, next.right);
+      base.bottom = Math.max(base.bottom, next.bottom);
+      base.width = base.right - base.left;
+      base.height = base.bottom - base.top;
+      return base;
+    }
+
+    function parseTransformMatrix(value) {
+      if (!value || value === 'none') return null;
+      var match = String(value).match(/matrix\(([^)]+)\)/i);
+      if (!match || !match[1]) return null;
+      var nums = match[1].match(/-?[\d.]+/g);
+      if (!nums || nums.length < 6) return null;
+      return {
+        a: Number(nums[0]),
+        b: Number(nums[1]),
+        c: Number(nums[2]),
+        d: Number(nums[3]),
+        e: Number(nums[4]),
+        f: Number(nums[5])
+      };
+    }
+
+    function parseTransformOriginValue(origin, w, h) {
+      var defX = w / 2;
+      var defY = h / 2;
+      if (!origin) return { x: defX, y: defY };
+      var tokens = String(origin).replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) return { x: defX, y: defY };
+
+      function isXKeyword(v) { return v === 'left' || v === 'right'; }
+      function isYKeyword(v) { return v === 'top' || v === 'bottom'; }
+
+      function resolveToken(value, axis) {
+        var v = String(value).toLowerCase();
+        if (v === 'center') return axis === 'x' ? defX : defY;
+        if (axis === 'x' && isXKeyword(v)) return v === 'left' ? 0 : w;
+        if (axis === 'y' && isYKeyword(v)) return v === 'top' ? 0 : h;
+        if (v.indexOf('%') !== -1) {
+          var pct = parseFloat(v);
+          if (!isFinite(pct)) return null;
+          return axis === 'x' ? (w * pct) / 100 : (h * pct) / 100;
+        }
+        var num = parseFloat(v);
+        return isFinite(num) ? num : null;
+      }
+
+      var xToken = tokens[0];
+      var yToken = tokens.length > 1 ? tokens[1] : null;
+      if (yToken && isYKeyword(xToken) && !isYKeyword(yToken)) {
+        var tmp = xToken;
+        xToken = yToken;
+        yToken = tmp;
+      }
+
+      if (tokens.length === 1) {
+        var xSingle = resolveToken(xToken, 'x');
+        var ySingle = resolveToken(xToken, 'y');
+        return {
+          x: xSingle !== null ? xSingle : defX,
+          y: ySingle !== null ? ySingle : defY
+        };
+      }
+
+      var x = resolveToken(xToken, 'x');
+      var y = resolveToken(yToken, 'y');
+      return {
+        x: x !== null ? x : defX,
+        y: y !== null ? y : defY
+      };
+    }
+
+    function getTransformedRect(el) {
+      if (!el || !el.getBoundingClientRect) return null;
+      var cs = window.getComputedStyle(el);
+      var matrix = parseTransformMatrix(cs.transform);
+      if (!matrix) return el.getBoundingClientRect();
+
+      var prevTransform = el.style.transform;
+      var prevOrigin = el.style.transformOrigin;
+      el.style.transform = 'none';
+      el.style.transformOrigin = '0 0';
+      var rawRect = el.getBoundingClientRect();
+      el.style.transform = prevTransform;
+      el.style.transformOrigin = prevOrigin;
+
+      if (!rawRect) return el.getBoundingClientRect();
+      var w = rawRect.width;
+      var h = rawRect.height;
+      var origin = parseTransformOriginValue(cs.transformOrigin, w, h);
+
+      var corners = [
+        { x: 0, y: 0 },
+        { x: w, y: 0 },
+        { x: w, y: h },
+        { x: 0, y: h }
+      ];
+      var minX = Infinity;
+      var minY = Infinity;
+      var maxX = -Infinity;
+      var maxY = -Infinity;
+
+      for (var i = 0; i < corners.length; i += 1) {
+        var px = corners[i].x - origin.x;
+        var py = corners[i].y - origin.y;
+        var tx = matrix.a * px + matrix.c * py + origin.x + matrix.e;
+        var ty = matrix.b * px + matrix.d * py + origin.y + matrix.f;
+        var gx = rawRect.left + tx;
+        var gy = rawRect.top + ty;
+        minX = Math.min(minX, gx);
+        minY = Math.min(minY, gy);
+        maxX = Math.max(maxX, gx);
+        maxY = Math.max(maxY, gy);
+      }
+
+      if (minX === Infinity) return el.getBoundingClientRect();
+      return {
+        left: minX,
+        top: minY,
+        right: maxX,
+        bottom: maxY,
+        width: Math.max(0, maxX - minX),
+        height: Math.max(0, maxY - minY)
+      };
+    }
+
+    function getVisualRect(el) {
+      if (!el || !el.getBoundingClientRect) return null;
+      var merged = null;
+      var hasChildRect = false;
+      if (el.children && el.children.length) {
+        for (var i = 0; i < el.children.length; i += 1) {
+          var child = el.children[i];
+          if (!child || isUi(child)) continue;
+          var r = getSelectionRect(child);
+          if (!r || (!r.width && !r.height)) continue;
+          merged = mergeRect(merged, r);
+          hasChildRect = true;
+        }
+      }
+      if (!hasChildRect) {
+        merged = mergeRect(merged, getTransformedRect(el));
+      }
+      return merged;
+    }
+
     function getSelectionRect(el) {
       if (!el) return null;
       if (el.tagName && el.tagName.toLowerCase() === 'svg') {
         var svgRect = getSvgContentsRect(el);
         if (svgRect) return svgRect;
       }
-      return el.getBoundingClientRect();
+      if (isHtmlElement(el) && (!el.children || el.children.length === 0)) {
+        var textRect = getTextContentsRect(el);
+        if (textRect) return textRect;
+      }
+      return getVisualRect(el);
     }
 
     function setTransformOrigin(el) {
@@ -1367,6 +1531,41 @@ const PREVIEW_EDITOR_SCRIPT = `
         right: maxRight,
         bottom: maxBottom
       };
+    }
+
+    function getTextContentsRect(el) {
+      if (!el || !el.ownerDocument || !el.getBoundingClientRect) return null;
+      var text = (el.textContent || '').trim();
+      if (!text) return null;
+      try {
+        var range = el.ownerDocument.createRange();
+        range.selectNodeContents(el);
+        var rects = range.getClientRects ? range.getClientRects() : [];
+        if (!rects || !rects.length) return null;
+        var minLeft = Infinity;
+        var minTop = Infinity;
+        var maxRight = -Infinity;
+        var maxBottom = -Infinity;
+        for (var i = 0; i < rects.length; i += 1) {
+          var r = rects[i];
+          if (!r || (!r.width && !r.height)) continue;
+          minLeft = Math.min(minLeft, r.left);
+          minTop = Math.min(minTop, r.top);
+          maxRight = Math.max(maxRight, r.right);
+          maxBottom = Math.max(maxBottom, r.bottom);
+        }
+        if (minLeft === Infinity) return null;
+        return {
+          left: minLeft,
+          top: minTop,
+          width: Math.max(0, maxRight - minLeft),
+          height: Math.max(0, maxBottom - minTop),
+          right: maxRight,
+          bottom: maxBottom
+        };
+      } catch (err) {
+        return null;
+      }
     }
 
     function onDoubleClick(e) {

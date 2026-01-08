@@ -62,6 +62,184 @@ const isPureRotationTransform = (value: string): boolean => {
   return true;
 };
 
+const mergeBoundsRect = (base: AEBounds, next: AEBounds): AEBounds => {
+  const minX = Math.min(base.x, next.x);
+  const minY = Math.min(base.y, next.y);
+  const maxX = Math.max(base.x + base.w, next.x + next.w);
+  const maxY = Math.max(base.y + base.h, next.y + next.h);
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(0, maxX - minX),
+    h: Math.max(0, maxY - minY)
+  };
+};
+
+const parseTransformRotation = (value: string): number | null => {
+  if (!value || value === 'none') return null;
+  let rotation = 0;
+  const matrixMatch = value.match(/matrix\(([^)]+)\)/i);
+  if (matrixMatch && matrixMatch[1]) {
+    const nums = matrixMatch[1].match(/-?[\d.]+/g);
+    if (nums && nums.length >= 6) {
+      const a = Number(nums[0]);
+      const b = Number(nums[1]);
+      if (!isNaN(a) && !isNaN(b)) {
+        rotation += Math.atan2(b, a) * (180 / Math.PI);
+      }
+    }
+  }
+  const rotateMatch = value.match(/rotate\(([-\d.]+)(deg|rad)?\)/i);
+  if (rotateMatch) {
+    const v = Number(rotateMatch[1]);
+    if (!isNaN(v)) {
+      const unit = rotateMatch[2] || 'deg';
+      rotation += unit === 'rad' ? (v * 180) / Math.PI : v;
+    }
+  }
+  if (!rotation) return null;
+  return rotation;
+};
+
+const parseTransformOriginValue = (
+  origin: string | null | undefined,
+  bbox: AEBounds
+): { x: number; y: number } => {
+  const w = bbox.w || 0;
+  const h = bbox.h || 0;
+  const def = { x: w / 2, y: h / 2 };
+  if (!origin) return def;
+  const tokens = origin.replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return def;
+
+  const isXKeyword = (value: string) => value === 'left' || value === 'right';
+  const isYKeyword = (value: string) => value === 'top' || value === 'bottom';
+
+  const resolveToken = (value: string, axis: 'x' | 'y'): number | null => {
+    const v = value.toLowerCase();
+    if (v === 'center') return axis === 'x' ? w / 2 : h / 2;
+    if (axis === 'x' && isXKeyword(v)) return v === 'left' ? 0 : w;
+    if (axis === 'y' && isYKeyword(v)) return v === 'top' ? 0 : h;
+    if (v.endsWith('%')) {
+      const pct = parseFloat(v);
+      if (!Number.isFinite(pct)) return null;
+      const size = axis === 'x' ? w : h;
+      return (pct / 100) * size;
+    }
+    const num = parseFloat(v);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  let xToken = tokens[0];
+  let yToken = tokens.length > 1 ? tokens[1] : null;
+
+  if (yToken && isYKeyword(xToken.toLowerCase()) && !isYKeyword(yToken.toLowerCase())) {
+    const tmp = xToken;
+    xToken = yToken;
+    yToken = tmp;
+  }
+
+  if (tokens.length === 1) {
+    const x = resolveToken(xToken, 'x');
+    const y = resolveToken(xToken, 'y');
+    if (x !== null && y !== null) return { x, y };
+    if (x !== null) return { x, y: def.y };
+    if (y !== null) return { x: def.x, y };
+    return def;
+  }
+
+  const x = resolveToken(xToken, 'x');
+  const y = yToken ? resolveToken(yToken, 'y') : null;
+  return {
+    x: x !== null ? x : def.x,
+    y: y !== null ? y : def.y
+  };
+};
+
+const getTextLinesBounds = (node: AENode): AEBounds | null => {
+  if (!node || !node.textLines || !node.textLines.length) return null;
+  return getTextLinesBoundsFromLines(node.textLines);
+};
+
+const getTextLinesBoundsFromLines = (lines?: AEBounds[]): AEBounds | null => {
+  if (!lines || !lines.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const line of lines) {
+    if (!line || !isFinite(line.w) || !isFinite(line.h)) continue;
+    if (line.w <= 0 || line.h <= 0) continue;
+    minX = Math.min(minX, line.x);
+    minY = Math.min(minY, line.y);
+    maxX = Math.max(maxX, line.x + line.w);
+    maxY = Math.max(maxY, line.y + line.h);
+  }
+  if (minX === Infinity) return null;
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(0, maxX - minX),
+    h: Math.max(0, maxY - minY)
+  };
+};
+
+const getVisualBBox = (node: AENode): AEBounds => {
+  if (!node || !node.bbox) return node.bbox;
+  const transform = node.style && typeof node.style.transform === 'string' ? node.style.transform : '';
+  const hasRotation = !!transform && isPureRotationTransform(transform);
+  if (node.type === 'text' && !hasRotation) {
+    const textBounds = getTextLinesBounds(node);
+    if (textBounds) return mergeBoundsRect(node.bbox, textBounds);
+  }
+  if (!hasRotation) return node.bbox;
+  const rotation = parseTransformRotation(transform);
+  if (!rotation) return node.bbox;
+
+  const origin = parseTransformOriginValue(
+    node.style && node.style.transformOrigin ? String(node.style.transformOrigin) : '',
+    node.bbox
+  );
+  const rad = (rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+
+  const corners = [
+    { x: 0, y: 0 },
+    { x: node.bbox.w, y: 0 },
+    { x: node.bbox.w, y: node.bbox.h },
+    { x: 0, y: node.bbox.h }
+  ];
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const corner of corners) {
+    const dx = corner.x - origin.x;
+    const dy = corner.y - origin.y;
+    const rx = cos * dx - sin * dy + origin.x;
+    const ry = sin * dx + cos * dy + origin.y;
+    const gx = node.bbox.x + rx;
+    const gy = node.bbox.y + ry;
+    minX = Math.min(minX, gx);
+    minY = Math.min(minY, gy);
+    maxX = Math.max(maxX, gx);
+    maxY = Math.max(maxY, gy);
+  }
+
+  if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+    return node.bbox;
+  }
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(0, maxX - minX),
+    h: Math.max(0, maxY - minY)
+  };
+};
+
 const getVideoSrc = (videoEl: HTMLVideoElement): string | null => {
   const direct = videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src');
   if (direct) return direct;
@@ -577,27 +755,6 @@ export const extractSlideLayout = async (
       ? new DOMRect(0, 0, viewportW, viewportH)
       : rootRect;
 
-  const mergeBounds = (base: AEBounds, items: AENode[]): AEBounds => {
-    let minX = base.x;
-    let minY = base.y;
-    let maxX = base.x + base.w;
-    let maxY = base.y + base.h;
-
-    for (const item of items) {
-      const b = item.bbox;
-      minX = Math.min(minX, b.x);
-      minY = Math.min(minY, b.y);
-      maxX = Math.max(maxX, b.x + b.w);
-      maxY = Math.max(maxY, b.y + b.h);
-    }
-
-    return {
-      x: minX,
-      y: minY,
-      w: Math.max(0, maxX - minX),
-      h: Math.max(0, maxY - minY)
-    };
-  };
 
   const process = (el: Element): AENode | null => {
     const style = win.getComputedStyle(el);
@@ -635,7 +792,7 @@ export const extractSlideLayout = async (
       h: rect.height
     };
 
-    const bbox = scaleBounds(rawBBox, scale);
+    let bbox = scaleBounds(rawBBox, scale);
     let transformOriginValue = normalizeTransformOrigin(
       overrideOrigin || inlineOrigin || style.transformOrigin,
       rawBBox,
@@ -1107,7 +1264,19 @@ export const extractSlideLayout = async (
 
     const shouldExpandGroupBounds =
       type === 'group' && children.length > 0 && !clip?.enabled && el !== slide;
-    const finalBBox = shouldExpandGroupBounds ? mergeBounds(bbox, children) : bbox;
+    const hasPaint = type === 'group' && hasVisualPaint(style);
+    const hasDecorations = hasPaint || !!border || !!outline;
+    let finalBBox = bbox;
+    if (shouldExpandGroupBounds) {
+      let childBounds: AEBounds | null = null;
+      for (const child of children) {
+        const b = getVisualBBox(child);
+        childBounds = childBounds ? mergeBoundsRect(childBounds, b) : { ...b };
+      }
+      if (childBounds) {
+        finalBBox = hasDecorations ? mergeBoundsRect({ ...bbox }, childBounds) : childBounds;
+      }
+    }
 
     return finalize({
       type,

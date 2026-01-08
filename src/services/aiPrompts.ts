@@ -8,6 +8,13 @@ Return ONLY strict JSON that matches this shape exactly:
 {
   "mood": "2-6 words",
   "palette": ["#RRGGBB", "#RRGGBB", "#RRGGBB", "#RRGGBB"],
+  "color_roles": {
+    "bg_main": "#RRGGBB",
+    "bg_accent": "#RRGGBB",
+    "text_primary": "#RRGGBB",
+    "text_secondary": "#RRGGBB",
+    "brand_color": "#RRGGBB"
+  },
   "typography": { "heading": "Google Font Name", "body": "Google Font Name" },
   "motifs": ["...", "..."],
   "composition_notes": "1 sentence, max 140 chars"
@@ -15,9 +22,11 @@ Return ONLY strict JSON that matches this shape exactly:
 
 Rules:
 - palette: exactly 4 DISTINCT hex colors; no #000000, no #FFFFFF.
-- palette must include at least 1 clearly dark color and 1 clearly light color (for legibility).
-- typography.heading != typography.body and both must be real Google Fonts names (no weights in the name).
-- motifs: 3-5 items, each 2-6 words, no punctuation-heavy phrases.
+- palette must include 1 near-offwhite (e.g. #F2F3F5..#FAFAFA) AND 1 near-charcoal (e.g. #101114..#1C1D22).
+- color_roles values MUST be chosen ONLY from palette items.
+- Ensure text_primary contrasts bg_main strongly (pick the darkest vs the lightest).
+- typography.heading != typography.body; both real Google Fonts names (no weights).
+- motifs: 3-5 items, each 2-6 words.
 
 No markdown. No commentary. JSON only.
 `;
@@ -614,18 +623,17 @@ PHASE 1: ART DIRECTION (INTERNAL - THINK FIRST)
      - Finance - solid, minimal, structured but premium
 
 2. **COLOR PALETTE**
-   - Apply the provided 4-color palette aligned with the mood.
+   - Apply the provided 5-color palette aligned with the mood.
    - Rules:
-     - Use ONLY the 4 palette hex colors from ART DIRECTION JSON.
-- Do not introduce any additional hex colors.
-- If subtle hierarchy is needed, create tints via opacity (rgba) or by reusing palette colors at low opacity.
-- Map palette to roles by contrast:
-  - choose a dominant base (bg-main),
-  - choose a high-contrast color for text-primary,
-  - reserve one color as brand-color (accent),
-  - use the remaining for bg-accent/text-secondary.
-
-     - Prefer off-whites (#F6F7F8) or deep charcoals (#111111-#1A1A1A).
+     - Use ONLY the 5 palette hex colors from ART DIRECTION JSON.
+     - Do not introduce any additional hex colors.
+     - If subtle hierarchy is needed, create tints via opacity (rgba) or by reusing palette colors at low opacity.
+     - Map palette to roles by contrast:
+       - choose a dominant base (bg-main),
+       - choose a high-contrast color for text-primary,
+       - reserve one color as brand-color (accent),
+       - use the remaining for bg-accent/text-secondary.
+     - Prefer palettes where one of the PROVIDED colors can act as off-white-like and one as deep-charcoal-like (but still use ONLY the 4 provided colors).
      - Avoid generic blue/white corporate palettes unless absolutely required.
    - Colors must feel intentional and emotionally driven.
 
@@ -697,8 +705,7 @@ Interpret "narrative" based on ARTIFACT MODE:
      - Every artifact MUST vary in form while preserving system coherence.
      - Avoid producing the same silhouette or rhythm repeatedly.
 
-
-PHASE 4: TECHNICAL EXECUTION
+PHASE 3: TECHNICAL EXECUTION
 
 1. **OUTPUT**
   - Return a SINGLE HTML block with embedded CSS.
@@ -706,12 +713,13 @@ PHASE 4: TECHNICAL EXECUTION
   - Output ONLY raw HTML (no markdown, no explanations, no comments).
   - NEVER ask questions or request confirmation. Do not add preambles or commentary.
   - Every element MUST include a semantic, meaningful id that reflects its purpose/content.
+
   ID NAMING SCHEME (MANDATORY):
-- Use kebab-case only.
-- Use role-based structure: title-main, type-caption-02, svg-frame, path-contour-03, filter-grain, fe-turbulence-01.
-- Never reuse ids across artifacts. Every artifact must have its own prefix.
-- This includes all HTML tags and all SVG elements (svg, g, path, rect, circle, line, etc.).
-- No element may be left without an id; ids must be unique within the document.
+  - Use kebab-case only.
+  - Use role-based structure: title-main, type-caption-02, svg-frame, path-contour-03, filter-grain, fe-turbulence-01.
+  - Never reuse ids across artifacts. Every artifact must have its own prefix.
+  - This includes all HTML tags and all SVG elements (svg, g, defs, filter nodes, path, rect, circle, line, etc.).
+  - No element may be left without an id; ids must be unique within the document.
 
 - In <head>, include:
   - <title>
@@ -770,7 +778,7 @@ PRO DIRECTION:
 
 Do not fear long HTML files. Complex SVG paths and detailed geometric patterns are encouraged to achieve the visual standards of the referenced agencies.
 
-PHASE 3: VISUAL DESIGN SYSTEM (CRITICAL)
+PHASE 4: VISUAL DESIGN SYSTEM (CRITICAL)
 
 1. **CSS VARIABLES**
    - Define ALL colors and fonts in :root.
@@ -917,6 +925,7 @@ INTERNAL FINAL LINT (DO NOT OUTPUT):
 
 PHASE 5: GENERATION
 
+Return ONLY raw HTML (complete document). No markdown. No comments. No extra text.
 Generate the final HTML.
 `;
 

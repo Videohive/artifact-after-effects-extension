@@ -511,6 +511,269 @@ export const extractBackgroundGradients = (
   return output.length ? output : null;
 };
 
+const isTransparentCss = (color: string): boolean => {
+  if (!color) return true;
+  const s = color.trim().toLowerCase();
+  if (s === 'transparent') return true;
+  const m = s.match(/rgba\(([^)]+)\)/i);
+  if (!m || !m[1]) return false;
+  const parts = m[1].split(',').map(part => parseFloat(part.trim()));
+  if (parts.length < 4) return false;
+  return !Number.isFinite(parts[3]) || parts[3] === 0;
+};
+
+const parseLength = (value: string, reference: number): number | null => {
+  const v = (value || '').trim().toLowerCase();
+  if (!v || v === 'auto') return null;
+  if (v.endsWith('%')) {
+    const pct = parseFloat(v);
+    if (!Number.isFinite(pct)) return null;
+    return (pct / 100) * reference;
+  }
+  const num = parseFloat(v);
+  return Number.isFinite(num) ? num : null;
+};
+
+const parseBackgroundSizeList = (
+  value: string,
+  elementBox: { w: number; h: number },
+  scale: number
+): Array<{ w: number; h: number } | null> | null => {
+  if (!value || value === 'none') return null;
+  const parts = splitTopLevelCommas(value);
+  if (!parts.length) return null;
+
+  return parts.map(part => {
+    const tokens = part
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter(Boolean);
+    if (!tokens.length) return null;
+    if (tokens.length === 1 && tokens[0] === 'auto') return null;
+
+    const w = parseLength(tokens[0], elementBox.w);
+    const h = parseLength(tokens[1] || tokens[0], elementBox.h);
+    if (w === null || h === null) return null;
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return null;
+    return { w: w * scale, h: h * scale };
+  });
+};
+
+const parseBackgroundPositionList = (
+  value: string,
+  elementBox: { w: number; h: number },
+  scale: number
+): Array<{ x: number; y: number }> | null => {
+  if (!value) return null;
+  const parts = splitTopLevelCommas(value);
+  if (!parts.length) return null;
+
+  const resolveToken = (token: string, axis: 'x' | 'y'): number | null => {
+    const t = token.trim().toLowerCase();
+    if (!t) return null;
+    if (t === 'center') return axis === 'x' ? elementBox.w / 2 : elementBox.h / 2;
+    if (axis === 'x' && t === 'left') return 0;
+    if (axis === 'x' && t === 'right') return elementBox.w;
+    if (axis === 'y' && t === 'top') return 0;
+    if (axis === 'y' && t === 'bottom') return elementBox.h;
+    const len = parseLength(t, axis === 'x' ? elementBox.w : elementBox.h);
+    return len === null ? null : len;
+  };
+
+  return parts.map(part => {
+    const tokens = part
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter(Boolean);
+    if (!tokens.length) return { x: 0, y: 0 };
+
+    if (tokens.length === 1) {
+      const x = resolveToken(tokens[0], 'x');
+      const y = resolveToken(tokens[0], 'y');
+      if (x !== null && y !== null) return { x: x * scale, y: y * scale };
+      if (x !== null) return { x: x * scale, y: 0 };
+      if (y !== null) return { x: 0, y: y * scale };
+      return { x: 0, y: 0 };
+    }
+
+    const x = resolveToken(tokens[0], 'x');
+    const y = resolveToken(tokens[1], 'y');
+    return {
+      x: (x !== null ? x : 0) * scale,
+      y: (y !== null ? y : 0) * scale
+    };
+  });
+};
+
+const parseBackgroundRepeatList = (value: string): Array<{ x: boolean; y: boolean }> | null => {
+  if (!value) return null;
+  const parts = splitTopLevelCommas(value);
+  if (!parts.length) return null;
+
+  return parts.map(part => {
+    const tokens = part
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+      .split(' ')
+      .filter(Boolean);
+    if (!tokens.length) return { x: true, y: true };
+    if (tokens.length === 1) {
+      if (tokens[0] === 'repeat-x') return { x: true, y: false };
+      if (tokens[0] === 'repeat-y') return { x: false, y: true };
+      if (tokens[0] === 'no-repeat') return { x: false, y: false };
+      return { x: true, y: true };
+    }
+    return {
+      x: tokens[0] !== 'no-repeat',
+      y: tokens[1] !== 'no-repeat'
+    };
+  });
+};
+
+const parseGradientAxis = (gradientArgs: string): 'x' | 'y' | null => {
+  const parts = splitTopLevelCommas(gradientArgs);
+  const first = parts.length ? parts[0].trim().toLowerCase() : '';
+  if (!first) return 'y';
+
+  if (first.indexOf('to ') === 0) {
+    if (first.indexOf('right') !== -1 || first.indexOf('left') !== -1) return 'x';
+    if (first.indexOf('bottom') !== -1 || first.indexOf('top') !== -1) return 'y';
+  }
+
+  const angleMatch = first.match(/-?[\d.]+(deg|turn|rad|grad)/i);
+  if (angleMatch) {
+    let angle = parseFloat(angleMatch[0]);
+    const unit = angleMatch[1].toLowerCase();
+    if (unit === 'turn') angle *= 360;
+    if (unit === 'rad') angle = (angle * 180) / Math.PI;
+    if (unit === 'grad') angle *= 0.9;
+    const norm = ((angle % 360) + 360) % 360;
+    if (Math.abs(norm - 90) < 10 || Math.abs(norm - 270) < 10) return 'x';
+    if (Math.abs(norm - 0) < 10 || Math.abs(norm - 180) < 10) return 'y';
+  }
+
+  if (
+    /(rgba?\(|hsla?\(|#|var\(|transparent|currentcolor)/i.test(first) ||
+    /(?:^|[\s(])\d/.test(first)
+  ) {
+    return 'y';
+  }
+
+  return null;
+};
+
+const parseStopPositionPx = (position: string, length: number): number | null => {
+  if (!position) return null;
+  const pos = position.trim().toLowerCase();
+  if (pos.endsWith('%')) {
+    const pct = parseFloat(pos);
+    if (!Number.isFinite(pct)) return null;
+    return (pct / 100) * length;
+  }
+  const num = parseFloat(pos);
+  return Number.isFinite(num) ? num : null;
+};
+
+const extractGridLine = (
+  gradient: { stops: { color: string; position?: string }[]; args?: string },
+  axis: 'x' | 'y',
+  elementBox: { w: number; h: number },
+  scale: number
+) => {
+  const length = axis === 'x' ? elementBox.w : elementBox.h;
+  if (!length || !gradient.stops || !gradient.stops.length) return null;
+
+  const stops = gradient.stops;
+  let colorStopIndex = -1;
+  for (let i = 0; i < stops.length; i += 1) {
+    const stop = stops[i];
+    if (!stop || !stop.color || isTransparentCss(stop.color)) continue;
+    if (!stop.position) continue;
+    colorStopIndex = i;
+    break;
+  }
+  if (colorStopIndex < 0) return null;
+
+  const colorStop = stops[colorStopIndex];
+  const posPx = parseStopPositionPx(colorStop.position || '', length);
+  if (posPx === null) return null;
+  if (!Number.isFinite(posPx)) return null;
+
+  const nextStop = stops[colorStopIndex + 1];
+  if (!nextStop || !nextStop.color || !isTransparentCss(nextStop.color)) return null;
+  if (nextStop.position && nextStop.position !== colorStop.position) return null;
+
+  return {
+    color: colorStop.color,
+    lineWidthPx: posPx * scale
+  };
+};
+
+export const extractBackgroundGrid = (
+  style: CSSStyleDeclaration,
+  elementBox: { w: number; h: number },
+  scale: number
+): {
+  x?: { spacingPx: number; lineWidthPx: number; offsetPx: number; color: string };
+  y?: { spacingPx: number; lineWidthPx: number; offsetPx: number; color: string };
+} | null => {
+  const backgroundImage = style.backgroundImage || '';
+  if (!backgroundImage || backgroundImage === 'none') return null;
+
+  const gradients = findGradientFunctions(backgroundImage);
+  if (!gradients.length) return null;
+
+  const sizeList = parseBackgroundSizeList(style.backgroundSize, elementBox, scale);
+  const posList = parseBackgroundPositionList(style.backgroundPosition, elementBox, scale);
+  const repeatList = parseBackgroundRepeatList(style.backgroundRepeat);
+
+  const gradientStops = extractBackgroundGradients(backgroundImage) || [];
+  let gridX: { spacingPx: number; lineWidthPx: number; offsetPx: number; color: string } | null =
+    null;
+  let gridY: { spacingPx: number; lineWidthPx: number; offsetPx: number; color: string } | null =
+    null;
+
+  for (let i = 0; i < gradients.length; i += 1) {
+    const grad = gradients[i];
+    if (!grad || grad.type !== 'linear') continue;
+    const axis = parseGradientAxis(grad.args);
+    if (!axis) continue;
+
+    const stopInfo = extractGridLine(gradientStops[i] || grad, axis, elementBox, scale);
+    if (!stopInfo) continue;
+
+    const size = sizeList && sizeList.length ? sizeList[Math.min(i, sizeList.length - 1)] : null;
+    if (!size) continue;
+    const spacingPx = axis === 'x' ? size.w : size.h;
+    if (!Number.isFinite(spacingPx) || spacingPx <= 0.01) continue;
+
+    const pos = posList && posList.length ? posList[Math.min(i, posList.length - 1)] : null;
+    const offsetPx = pos ? (axis === 'x' ? pos.x : pos.y) : 0;
+
+    const repeat = repeatList && repeatList.length ? repeatList[Math.min(i, repeatList.length - 1)] : null;
+    if (repeat && ((axis === 'x' && !repeat.x) || (axis === 'y' && !repeat.y))) continue;
+
+    const entry = {
+      spacingPx,
+      lineWidthPx: stopInfo.lineWidthPx,
+      offsetPx,
+      color: stopInfo.color
+    };
+
+    if (axis === 'x' && !gridX) gridX = entry;
+    if (axis === 'y' && !gridY) gridY = entry;
+  }
+
+  if (!gridX && !gridY) return null;
+  return {
+    x: gridX || undefined,
+    y: gridY || undefined
+  };
+};
+
 const splitBoxShadow = (value: string): string[] => {
   const parts: string[] = [];
   let depth = 0;

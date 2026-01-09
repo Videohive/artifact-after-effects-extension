@@ -96,7 +96,7 @@
     // ----------------------------
     // ROOT BACKGROUND
     // ----------------------------
-    if (isRoot && CFG.createBackgroundFromRoot) {
+    if (isRoot && CFG.createBackgroundFromRoot && !(node.style && node.style.backgroundGrid)) {
       var bgColor = node.style ? getEffectiveBackgroundColor(node.style) : null;
       var fillsComp =
         node.bbox &&
@@ -149,6 +149,14 @@
           });
           if (bgShape) bgShape.moveToEnd();
         }
+        if (node.style && node.style.backgroundGrid) {
+          createGridLayer(childComp, node, {
+            x: 0,
+            y: 0,
+            w: childComp.width,
+            h: childComp.height,
+          });
+        }
         if (hasBorder(node.border)) {
           var borderShape = createBorderShape(childComp, node, {
             x: 0,
@@ -188,6 +196,11 @@
         // Background is created before children, so it will already sit below them.
         if (parentLayer) bgShape.parent = parentLayer;
         applyDropShadow(bgShape, node.style);
+      }
+      if (node.style && node.style.backgroundGrid) {
+        var gridBBox = getLocalBBox(node, origin);
+        var gridLayer = createGridLayer(comp, node, gridBBox);
+        if (gridLayer && parentLayer) gridLayer.parent = parentLayer;
       }
 
       if (hasBorder(node.border)) {

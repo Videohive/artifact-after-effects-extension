@@ -123,6 +123,98 @@
     return layer;
   }
 
+  function createGridLayer(comp, node, localBBox) {
+    if (!node || !node.style || !node.style.backgroundGrid) return null;
+
+    var grid = node.style.backgroundGrid;
+    var layer = comp.layers.addShape();
+    layer.name = safeName((node.name || "Grid") + "_grid");
+    setLayerTopLeft(layer, localBBox);
+
+    var contents = layer.property("Contents");
+
+    function addAxis(groupName, axis, lineLength, spanLength, thickness, spacing, offset, color) {
+      if (
+        !isFinite(lineLength) ||
+        !isFinite(spanLength) ||
+        !isFinite(thickness) ||
+        !isFinite(spacing)
+      )
+        return;
+      if (thickness <= 0 || spacing <= 0) return;
+
+      var grp = contents.addProperty("ADBE Vector Group");
+      grp.name = groupName;
+      var grpContents = grp.property("Contents");
+
+      var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
+      if (axis === "x") {
+        rect.property("Size").setValue([thickness, lineLength]);
+      } else {
+        rect.property("Size").setValue([lineLength, thickness]);
+      }
+
+      var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
+      applyCssColorProperty(fill.property("Color"), color, comp.name);
+      var fillOpacity = fill.property("Opacity");
+      if (fillOpacity) fillOpacity.setValue(Math.round(parseCssAlpha(color) * 100));
+
+      var tr = grp.property("Transform");
+      var normOffset = offset;
+      if (isFinite(normOffset) && spacing > 0) {
+        normOffset = ((normOffset % spacing) + spacing) % spacing;
+      } else {
+        normOffset = 0;
+      }
+      if (axis === "x") {
+        tr.property("Position").setValue([normOffset + thickness / 2, lineLength / 2]);
+      } else {
+        tr.property("Position").setValue([lineLength / 2, normOffset + thickness / 2]);
+      }
+
+      var copies = Math.floor((spanLength - normOffset) / spacing) + 1;
+      if (!isFinite(copies) || copies < 1) copies = 1;
+      if (copies > 2000) copies = 2000;
+
+      var repeater = grpContents.addProperty("ADBE Vector Filter - Repeater");
+      repeater.property("Copies").setValue(copies);
+      var rtr = repeater.property("Transform");
+      if (axis === "x") {
+        rtr.property("Position").setValue([spacing, 0]);
+      } else {
+        rtr.property("Position").setValue([0, spacing]);
+      }
+    }
+
+    if (grid.x) {
+      addAxis(
+        "Grid X",
+        "x",
+        localBBox.h,
+        localBBox.w,
+        Number(grid.x.lineWidthPx) || 0,
+        Number(grid.x.spacingPx) || 0,
+        Number(grid.x.offsetPx) || 0,
+        grid.x.color
+      );
+    }
+
+    if (grid.y) {
+      addAxis(
+        "Grid Y",
+        "y",
+        localBBox.w,
+        localBBox.h,
+        Number(grid.y.lineWidthPx) || 0,
+        Number(grid.y.spacingPx) || 0,
+        Number(grid.y.offsetPx) || 0,
+        grid.y.color
+      );
+    }
+
+    return layer;
+  }
+
 
   function isVisibleBorderSide(side) {
     if (!side) return false;

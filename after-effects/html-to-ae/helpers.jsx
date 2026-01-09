@@ -218,6 +218,7 @@
 
   function getEffectiveBackgroundColor(style) {
     if (!style) return null;
+    if (style.backgroundGrid) return null;
     var bg = style.backgroundColor;
     if (bg && !isTransparentColor(bg)) return bg;
 

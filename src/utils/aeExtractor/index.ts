@@ -23,6 +23,7 @@ import {
   isVisible,
   extractBoxShadow,
   extractBackgroundGradients,
+  extractBackgroundGrid,
   safeBgUrl,
   scaleBounds,
   urlFromText
@@ -1082,6 +1083,8 @@ export const extractSlideLayout = async (
         style: {
           backgroundColor: pseudoStyle.backgroundColor,
           backgroundGradients: extractBackgroundGradients(pseudoStyle.backgroundImage) || undefined,
+          backgroundGrid:
+            extractBackgroundGrid(pseudoStyle, rawBox, scale) || undefined,
           opacity: pseudoStyle.opacity,
           transform: pseudoStyle.transform,
           transformOrigin: normalizeTransformOrigin(pseudoStyle.transformOrigin, rawBox, pseudoBBox),
@@ -1444,6 +1447,7 @@ export const extractSlideLayout = async (
       style: {
         backgroundColor: style.backgroundColor,
         backgroundGradients: extractBackgroundGradients(style.backgroundImage) || undefined,
+        backgroundGrid: extractBackgroundGrid(style, rawBBox, scale) || undefined,
         opacity: style.opacity,
         transform: transformValue,
         transformOrigin: transformOriginValue,

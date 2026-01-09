@@ -839,15 +839,27 @@
       isFinite(textBounds.w) &&
       isFinite(textBounds.x) &&
       textBounds.w > 0;
+    var hasInsetX =
+      hasTextBounds &&
+      isFinite(bbox.x) &&
+      textBounds.x > bbox.x + Math.max(0.5, bbox.w * 0.002);
+    var hasInsetRight =
+      hasTextBounds &&
+      isFinite(bbox.x) &&
+      isFinite(bbox.w) &&
+      textBounds.x + textBounds.w < bbox.x + bbox.w - Math.max(0.5, bbox.w * 0.002);
+    var hasInset = hasInsetX || hasInsetRight;
     var textWidthLarger =
       hasTextBounds && isFinite(bbox.w) && textBounds.w > bbox.w + Math.max(2, bbox.w * 0.02);
 
     if (doc.justification === ParagraphJustification.CENTER_JUSTIFY) {
-      posX = textWidthLarger ? textBounds.x + textBounds.w / 2 : bbox.x + bbox.w / 2;
+      posX = textWidthLarger || hasInset ? textBounds.x + textBounds.w / 2 : bbox.x + bbox.w / 2;
       anchorX = r.left + r.width / 2;
     } else if (doc.justification === ParagraphJustification.RIGHT_JUSTIFY) {
-      posX = textWidthLarger ? textBounds.x + textBounds.w : bbox.x + bbox.w;
+      posX = textWidthLarger || hasInset ? textBounds.x + textBounds.w : bbox.x + bbox.w;
       anchorX = r.left + r.width;
+    } else if (hasInsetX) {
+      posX = textBounds.x;
     }
 
     if (isFinite(lineHeightPx) && lineHeightPx > 0) {

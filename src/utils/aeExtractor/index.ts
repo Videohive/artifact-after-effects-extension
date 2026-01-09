@@ -789,12 +789,30 @@ export const extractSlideLayout = async (
     const editorTx = hasEditorTransform ? parseEditorNumber(editorTxRaw, 0) : 0;
     const editorTy = hasEditorTransform ? parseEditorNumber(editorTyRaw, 0) : 0;
     const editorRot = hasEditorTransform ? parseEditorNumber(editorRotRaw, 0) : 0;
+    const editorSx = hasEditorTransform ? parseEditorNumber(editorSxRaw, 1) : 1;
+    const editorSy = hasEditorTransform ? parseEditorNumber(editorSyRaw, 1) : 1;
 
     if (hasEditorTransform) {
       const base = editorBaseTransform && editorBaseTransform !== 'none' ? editorBaseTransform : '';
       const parts: string[] = [];
+      const translate =
+        Math.abs(editorTx) > 0.0001 || Math.abs(editorTy) > 0.0001
+          ? `translate(${editorTx}px, ${editorTy}px)`
+          : '';
+      const rotate = Math.abs(editorRot) > 0.0001 ? `rotate(${editorRot}deg)` : '';
+      const scale =
+        Math.abs(editorSx - 1) > 0.0001 || Math.abs(editorSy - 1) > 0.0001
+          ? `scale(${editorSx}, ${editorSy})`
+          : '';
+
       if (base) parts.push(base);
-      if (Math.abs(editorRot) > 0.0001) parts.push(`rotate(${editorRot}deg)`);
+      if (base && base.indexOf('matrix') === 0) {
+        if (translate) parts.unshift(translate);
+      } else if (translate) {
+        parts.push(translate);
+      }
+      if (rotate) parts.push(rotate);
+      if (scale) parts.push(scale);
       transformValue = parts.length ? parts.join(' ') : 'none';
     }
 
@@ -828,11 +846,6 @@ export const extractSlideLayout = async (
       w: rect.width,
       h: rect.height
     };
-    if (hasEditorTransform) {
-      rawBBox.x += editorTx;
-      rawBBox.y += editorTy;
-    }
-
     let bbox = scaleBounds(rawBBox, scale);
     const originSource =
       overrideOrigin ||

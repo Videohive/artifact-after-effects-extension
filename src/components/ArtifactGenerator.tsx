@@ -4660,6 +4660,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   iframeRef={iframeRef}
                   getCurrentFullHtml={getCurrentFullHtml}
                   onCodeChange={handleCodeChange}
+                  activeArtifactIndex={currentArtifactIndex}
                 />
 
                 {viewMode === 'preview' ? (

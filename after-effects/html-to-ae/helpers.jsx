@@ -196,13 +196,13 @@
       var compName = layer.containingComp ? layer.containingComp.name : null;
       applyRgbColorProperty(colorProp, rgb, alpha, compName);
     }
-    var opacityProp = effect.property("Opacity");
-    if (opacityProp) {
-      var a = clamp01(alpha);
-      var maxOpacity = opacityProp.maxValue;
-      if (!isFinite(maxOpacity) || maxOpacity <= 0) maxOpacity = 100;
-      opacityProp.setValue(Math.round(a * maxOpacity));
-    }
+    // var opacityProp = effect.property("Opacity");
+    // if (opacityProp) {
+    //   var a = clamp01(alpha);
+    //   var maxOpacity = opacityProp.maxValue;
+    //   if (!isFinite(maxOpacity) || maxOpacity <= 0) maxOpacity = 100;
+    //   opacityProp.setValue(Math.round(a * maxOpacity));
+    // }
   }
 
   function isTransparentColor(css) {

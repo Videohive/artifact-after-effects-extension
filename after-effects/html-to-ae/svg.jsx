@@ -1849,9 +1849,18 @@
       }
     }
 
-    var sp = subpaths[0];
-    if (!sp || !sp.points || !sp.points.length) return null;
-    if (!allSvgPointsFinite(sp.points)) return null;
+    var sp = null;
+    var bestLen = -1;
+    for (var k = 0; k < subpaths.length; k++) {
+      var cand = subpaths[k];
+      if (!cand || !cand.points || !cand.points.length) continue;
+      if (!allSvgPointsFinite(cand.points)) continue;
+      if (cand.points.length > bestLen) {
+        sp = cand;
+        bestLen = cand.points.length;
+      }
+    }
+    if (!sp) return null;
 
     var scaleData = getSvgScaleData(svgData, localBBox);
     var shape = new Shape();

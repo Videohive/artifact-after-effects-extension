@@ -758,6 +758,7 @@ export const extractSlideLayout = async (
 
   const process = (el: Element): AENode | null => {
     const style = win.getComputedStyle(el);
+    const computedTransformOrigin = style.transformOrigin;
     let transformValue = style.transform;
     const isHtmlEl = isHTMLElement(el, win);
     const overrideOrigin = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-origin') : null;
@@ -793,11 +794,11 @@ export const extractSlideLayout = async (
     };
 
     let bbox = scaleBounds(rawBBox, scale);
-    let transformOriginValue = normalizeTransformOrigin(
-      overrideOrigin || inlineOrigin || style.transformOrigin,
-      rawBBox,
-      bbox
-    );
+    const originSource =
+      overrideOrigin ||
+      inlineOrigin ||
+      (shouldNeutralizeTransform ? computedTransformOrigin : style.transformOrigin);
+    let transformOriginValue = normalizeTransformOrigin(originSource, rawBBox, bbox);
 
     const renderHints: AERenderHints = {
       needsPrecomp: false,

@@ -582,7 +582,7 @@
     return { color: color, hasColor: hasColor, isUniform: hasColor && !multiple, isMultiple: multiple };
   }
 
-  function pickTextPlacementBBox(node, localBBox) {
+  function pickTextPlacementBBox(node, localBBox, writingMode) {
     var textBBox = getLocalTextBounds(node, localBBox);
     if (!textBBox) return localBBox;
     if (!localBBox) return textBBox;
@@ -683,7 +683,8 @@
     }
 
     // 3. ������������� ��� TOP-LEFT (HTML-like)
-    var placementBBox = pickTextPlacementBBox(node, localBBox);
+    var writingMode = node.font && node.font.writingMode ? String(node.font.writingMode) : "";
+    var placementBBox = pickTextPlacementBBox(node, localBBox, writingMode);
     var textBounds = getLocalTextBounds(node, localBBox);
     var lineHeightPx = null;
     if (node && node.font && isFinite(Number(node.font.lineHeightPx))) {

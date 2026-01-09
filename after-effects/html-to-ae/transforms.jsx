@@ -7,31 +7,107 @@
     var t = String(transformStr).trim();
     if (t === "none") return null;
 
-    var matrixMatch = t.match(/matrix\(([^)]+)\)/i);
-    var rotateMatch = t.match(/rotate\(([-\d.]+)(deg|rad)?\)/i);
-    var rotation = 0;
+    var re = /([a-zA-Z]+)\(([^)]+)\)/g;
+    var m = null;
+    var mat = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 
-    if (matrixMatch && matrixMatch[1]) {
-      var nums = matrixMatch[1].match(/-?[\d.]+/g);
-      if (nums && nums.length >= 6) {
-        var a = Number(nums[0]);
-        var b = Number(nums[1]);
-        if (!isNaN(a) && !isNaN(b)) {
-          rotation += Math.atan2(b, a) * (180 / Math.PI);
-        }
+    function multiply(m1, m2) {
+      return {
+        a: m1.a * m2.a + m1.c * m2.b,
+        b: m1.b * m2.a + m1.d * m2.b,
+        c: m1.a * m2.c + m1.c * m2.d,
+        d: m1.b * m2.c + m1.d * m2.d,
+        e: m1.a * m2.e + m1.c * m2.f + m1.e,
+        f: m1.b * m2.e + m1.d * m2.f + m1.f,
+      };
+    }
+
+    function parseNums(str) {
+      var nums = String(str).match(/-?[\d.]+/g);
+      if (!nums || !nums.length) return [];
+      var out = [];
+      for (var i = 0; i < nums.length; i++) {
+        var n = Number(nums[i]);
+        if (!isNaN(n)) out.push(n);
+      }
+      return out;
+    }
+
+    while ((m = re.exec(t)) !== null) {
+      var fn = String(m[1]).toLowerCase();
+      var raw = m[2] || "";
+      var nums = parseNums(raw);
+      if (fn === "matrix" && nums.length >= 6) {
+        mat = multiply(mat, {
+          a: nums[0],
+          b: nums[1],
+          c: nums[2],
+          d: nums[3],
+          e: nums[4],
+          f: nums[5],
+        });
+        continue;
+      }
+      if (fn === "translate") {
+        var tx = nums.length ? nums[0] : 0;
+        var ty = nums.length > 1 ? nums[1] : 0;
+        mat = multiply(mat, { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty });
+        continue;
+      }
+      if (fn === "translatex") {
+        mat = multiply(mat, { a: 1, b: 0, c: 0, d: 1, e: nums[0] || 0, f: 0 });
+        continue;
+      }
+      if (fn === "translatey") {
+        mat = multiply(mat, { a: 1, b: 0, c: 0, d: 1, e: 0, f: nums[0] || 0 });
+        continue;
+      }
+      if (fn === "scale") {
+        var sx = nums.length ? nums[0] : 1;
+        var sy = nums.length > 1 ? nums[1] : sx;
+        mat = multiply(mat, { a: sx, b: 0, c: 0, d: sy, e: 0, f: 0 });
+        continue;
+      }
+      if (fn === "scalex") {
+        mat = multiply(mat, { a: nums[0] || 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+        continue;
+      }
+      if (fn === "scaley") {
+        mat = multiply(mat, { a: 1, b: 0, c: 0, d: nums[0] || 1, e: 0, f: 0 });
+        continue;
+      }
+      if (fn === "rotate") {
+        var v = nums.length ? nums[0] : 0;
+        if (raw && raw.indexOf("rad") !== -1) v = (v * 180) / Math.PI;
+        var rad = (v * Math.PI) / 180;
+        var cos = Math.cos(rad);
+        var sin = Math.sin(rad);
+        mat = multiply(mat, { a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 });
+        continue;
       }
     }
 
-    if (rotateMatch) {
-      var v = Number(rotateMatch[1]);
-      if (!isNaN(v)) {
-        var unit = rotateMatch[2] || "deg";
-        rotation += unit === "rad" ? (v * 180) / Math.PI : v;
-      }
-    }
+    var rotation = Math.atan2(mat.b, mat.a) * (180 / Math.PI);
+    var scaleX = Math.sqrt(mat.a * mat.a + mat.b * mat.b);
+    var scaleY = Math.sqrt(mat.c * mat.c + mat.d * mat.d);
+    var txOut = mat.e;
+    var tyOut = mat.f;
 
-    if (!rotation) return null;
-    return { rotation: rotation };
+    if (!isFinite(rotation)) rotation = 0;
+    if (!isFinite(scaleX) || scaleX === 0) scaleX = 1;
+    if (!isFinite(scaleY) || scaleY === 0) scaleY = 1;
+    if (!isFinite(txOut)) txOut = 0;
+    if (!isFinite(tyOut)) tyOut = 0;
+
+    var hasEffect =
+      Math.abs(rotation) > 0.0001 ||
+      Math.abs(scaleX - 1) > 0.0001 ||
+      Math.abs(scaleY - 1) > 0.0001 ||
+      Math.abs(txOut) > 0.0001 ||
+      Math.abs(tyOut) > 0.0001;
+
+    if (!hasEffect) return null;
+    return { rotation: rotation, scaleX: scaleX, scaleY: scaleY, tx: txOut, ty: tyOut };
   }
 
   function parseTransformOriginToken(token, size, axis) {
@@ -122,12 +198,51 @@
     return 0;
   }
 
+  function alignLayerToBBoxAfterRotation(layer, bbox, rotation) {
+    if (!layer || !bbox || !isFinite(rotation)) return;
+    var r = layer.sourceRectAtTime(0, false);
+    if (!r) return;
+    var tr = layer.property("Transform");
+    var anchor = tr.property("Anchor Point").value;
+    if (!anchor || anchor.length < 2) return;
+
+    var pts = [
+      { x: r.left - anchor[0], y: r.top - anchor[1] },
+      { x: r.left + r.width - anchor[0], y: r.top - anchor[1] },
+      { x: r.left + r.width - anchor[0], y: r.top + r.height - anchor[1] },
+      { x: r.left - anchor[0], y: r.top + r.height - anchor[1] },
+    ];
+
+    var rad = (rotation * Math.PI) / 180;
+    var cos = Math.cos(rad);
+    var sin = Math.sin(rad);
+    var minX = null;
+    var minY = null;
+    for (var i = 0; i < pts.length; i++) {
+      var rx = cos * pts[i].x - sin * pts[i].y;
+      var ry = sin * pts[i].x + cos * pts[i].y;
+      if (minX === null || rx < minX) minX = rx;
+      if (minY === null || ry < minY) minY = ry;
+    }
+    if (minX === null || minY === null) return;
+    tr.property("Position").setValue([bbox.x - minX, bbox.y - minY]);
+  }
+
   function applyTransform(layer, style, bbox, writingMode) {
-    if (!style) return;
+    if (!style) style = {};
     var baseRotation = getWritingModeRotation(writingMode);
     var hasCssTransform = style.transform && style.transform !== "none";
     var tr = hasCssTransform ? parseTransform(style.transform) : null;
     if (!tr && !baseRotation) return;
+
+    if (!tr && baseRotation) {
+      layer
+        .property("Transform")
+        .property("Rotation")
+        .setValue(baseRotation);
+      alignLayerToBBoxAfterRotation(layer, bbox, baseRotation);
+      return;
+    }
 
     var origin = resolveTransformOrigin(style, bbox);
     setLayerAnchorToOrigin(layer, bbox, origin);
@@ -141,6 +256,21 @@
         .property("Transform")
         .property("Rotation")
         .setValue(rotation);
+    }
+
+    if (tr && (Math.abs(tr.tx) > 0.0001 || Math.abs(tr.ty) > 0.0001)) {
+      var posProp = layer.property("Transform").property("Position");
+      var pos = posProp.value;
+      posProp.setValue([pos[0] + tr.tx, pos[1] + tr.ty]);
+    }
+
+    if (
+      tr &&
+      (Math.abs(tr.scaleX - 1) > 0.0001 || Math.abs(tr.scaleY - 1) > 0.0001)
+    ) {
+      var scaleProp = layer.property("Transform").property("Scale");
+      var s = scaleProp.value;
+      scaleProp.setValue([s[0] * tr.scaleX, s[1] * tr.scaleY]);
     }
   }
 

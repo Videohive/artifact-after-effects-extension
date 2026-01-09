@@ -101,6 +101,49 @@ const parseTransformRotation = (value: string): number | null => {
   return rotation;
 };
 
+const scaleTransformValue = (value: string, scale: number): string => {
+  if (!value || value === 'none' || !Number.isFinite(scale) || scale === 1) return value;
+  const re = /([a-zA-Z]+)\(([^)]+)\)/g;
+  let out = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(value)) !== null) {
+    out += value.slice(lastIndex, match.index);
+    const fn = match[1].toLowerCase();
+    const args = match[2];
+    let nextArgs = args;
+
+    if (fn === 'matrix') {
+      const nums = args
+        .split(/[, ]+/)
+        .map(n => parseFloat(n))
+        .filter(n => Number.isFinite(n));
+      if (nums.length >= 6) {
+        nums[4] *= scale;
+        nums[5] *= scale;
+        nextArgs = nums.join(', ');
+      }
+    } else if (fn === 'translate' || fn === 'translatex' || fn === 'translatey') {
+      const parts = args.split(/[, ]+/).filter(Boolean);
+      const scaled = parts.map(part => {
+        const unitMatch = part.match(/^(-?[\d.]+)([a-z%]*)$/i);
+        if (!unitMatch) return part;
+        const num = parseFloat(unitMatch[1]);
+        const unit = unitMatch[2] || '';
+        if (!Number.isFinite(num) || unit === '%') return part;
+        const next = num * scale;
+        return `${next}${unit || 'px'}`;
+      });
+      nextArgs = scaled.join(', ');
+    }
+
+    out += `${match[1]}(${nextArgs})`;
+    lastIndex = match.index + match[0].length;
+  }
+  out += value.slice(lastIndex);
+  return out;
+};
+
 const parseTransformOriginValue = (
   origin: string | null | undefined,
   bbox: AEBounds
@@ -336,6 +379,9 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
   const selector = 'circle, rect, line, path, ellipse, polygon, polyline, text';
   const originals = Array.from(svgEl.querySelectorAll(selector));
   const copies = Array.from(clone.querySelectorAll(selector));
+  const MatrixCtor =
+    (win as unknown as { DOMMatrix?: typeof DOMMatrix }).DOMMatrix ||
+    (win as unknown as { WebKitCSSMatrix?: typeof DOMMatrix }).WebKitCSSMatrix;
 
   const viewport = getSvgViewport(svgEl);
   if (viewport) {
@@ -352,6 +398,61 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
     if (!copy) return;
 
     const style = win.getComputedStyle(original);
+
+    if (MatrixCtor) {
+      const transform = style.getPropertyValue('transform') || style.transform;
+      if (transform && transform !== 'none') {
+        try {
+          const bbox = (original as SVGGraphicsElement).getBBox();
+          const originRaw = style.getPropertyValue('transform-origin') || style.transformOrigin;
+          const tokens = originRaw.replace(/,/g, ' ').trim().split(/\s+/).filter(Boolean);
+          const resolveOrigin = (value: string, axis: 'x' | 'y') => {
+            const v = value.toLowerCase();
+            const size = axis === 'x' ? bbox.width : bbox.height;
+            if (v === 'center') return size / 2;
+            if (axis === 'x' && v === 'left') return 0;
+            if (axis === 'x' && v === 'right') return size;
+            if (axis === 'y' && v === 'top') return 0;
+            if (axis === 'y' && v === 'bottom') return size;
+            if (v.endsWith('%')) {
+              const pct = parseFloat(v);
+              return Number.isFinite(pct) ? (pct / 100) * size : size / 2;
+            }
+            const num = parseFloat(v);
+            return Number.isFinite(num) ? num : size / 2;
+          };
+          const xToken = tokens[0] || '50%';
+          const yToken = tokens[1] || tokens[0] || '50%';
+          const originX = bbox.x + resolveOrigin(xToken, 'x');
+          const originY = bbox.y + resolveOrigin(yToken, 'y');
+          const base = new MatrixCtor(transform);
+          const baked = new MatrixCtor()
+            .translate(originX, originY)
+            .multiply(base)
+            .translate(-originX, -originY);
+
+          copy.setAttribute(
+            'transform',
+            `matrix(${baked.a} ${baked.b} ${baked.c} ${baked.d} ${baked.e} ${baked.f})`
+          );
+
+          const styleText = copy.getAttribute('style');
+          if (styleText) {
+            const next = styleText
+              .split(';')
+              .map(part => part.trim())
+              .filter(part => part && !/^transform(-origin|-box)?\s*:/i.test(part));
+            if (next.length) {
+              copy.setAttribute('style', `${next.join('; ')};`);
+            } else {
+              copy.removeAttribute('style');
+            }
+          }
+        } catch {
+          // Ignore transform baking failures (e.g., detached SVGs without bbox).
+        }
+      }
+    }
 
     const stroke = style.getPropertyValue('stroke') || style.stroke;
     const fill = style.getPropertyValue('fill') || style.fill;
@@ -816,6 +917,8 @@ export const extractSlideLayout = async (
       transformValue = parts.length ? parts.join(' ') : 'none';
     }
 
+    transformValue = scaleTransformValue(transformValue, scale);
+
     const shouldNeutralizeTransform =
       isHtmlEl && (isPureRotationTransform(transformValue) || hasEditorTransform);
     let restoreTransform: (() => void) | null = null;
@@ -1212,6 +1315,7 @@ export const extractSlideLayout = async (
         textStyle && textStyle.transform && textStyle.transform !== 'none'
           ? textStyle.transform
           : '';
+      const scaledTextTransformValue = scaleTransformValue(textTransformValue, scale);
       const textTransformOrigin = normalizeTransformOrigin(
         textStyle && textStyle.transformOrigin ? textStyle.transformOrigin : '',
         rawBBox,
@@ -1221,8 +1325,8 @@ export const extractSlideLayout = async (
       if (!paints && !hasPseudo) {
         type = 'text';
         renderHints.isText = true;
-        if (textTransformValue) {
-          transformValue = textTransformValue;
+        if (scaledTextTransformValue) {
+          transformValue = scaledTextTransformValue;
           if (textTransformOrigin) transformOriginValue = textTransformOrigin;
         }
 
@@ -1231,7 +1335,7 @@ export const extractSlideLayout = async (
           ...buildTextExtra(win, el, textStyle, coordRootRect, scale, bbox)
         };
       } else {
-        const textChildTransform = textTransformValue;
+        const textChildTransform = scaledTextTransformValue;
         pushBefore();
         children.push({
           type: 'text',

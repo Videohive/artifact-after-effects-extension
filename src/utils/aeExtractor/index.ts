@@ -102,6 +102,48 @@ const parseTransformRotation = (value: string): number | null => {
   return rotation;
 };
 
+const parseTranslateOnly = (value: string): { tx: number; ty: number } | null => {
+  if (!value || value === 'none') return null;
+  const lower = value.toLowerCase();
+  if (lower.indexOf('rotate') !== -1 || lower.indexOf('scale') !== -1 || lower.indexOf('skew') !== -1) {
+    return null;
+  }
+  const m = parseMatrixTransform(value);
+  if (m) {
+    const tol = 0.001;
+    if (Math.abs(m.a - 1) > tol || Math.abs(m.b) > tol || Math.abs(m.c) > tol || Math.abs(m.d - 1) > tol) {
+      return null;
+    }
+    return { tx: m.e || 0, ty: m.f || 0 };
+  }
+  let tx = 0;
+  let ty = 0;
+  const translate = value.match(/translate\(([^)]+)\)/i);
+  if (translate && translate[1]) {
+    const parts = translate[1].split(/[, ]+/).filter(Boolean);
+    if (parts.length) {
+      const x = parseFloat(parts[0]);
+      if (Number.isFinite(x)) tx += x;
+      if (parts.length > 1) {
+        const y = parseFloat(parts[1]);
+        if (Number.isFinite(y)) ty += y;
+      }
+    }
+  }
+  const translateX = value.match(/translatex\(([^)]+)\)/i);
+  if (translateX && translateX[1]) {
+    const x = parseFloat(translateX[1]);
+    if (Number.isFinite(x)) tx += x;
+  }
+  const translateY = value.match(/translatey\(([^)]+)\)/i);
+  if (translateY && translateY[1]) {
+    const y = parseFloat(translateY[1]);
+    if (Number.isFinite(y)) ty += y;
+  }
+  if (!tx && !ty) return null;
+  return { tx, ty };
+};
+
 const scaleTransformValue = (value: string, scale: number): string => {
   if (!value || value === 'none' || !Number.isFinite(scale) || scale === 1) return value;
   const re = /([a-zA-Z]+)\(([^)]+)\)/g;
@@ -228,15 +270,30 @@ const getTextLinesBoundsFromLines = (lines?: AEBounds[]): AEBounds | null => {
   };
 };
 
+const shiftBounds = (b: AEBounds, tx: number, ty: number): AEBounds => ({
+  x: b.x + tx,
+  y: b.y + ty,
+  w: b.w,
+  h: b.h
+});
+
 const getVisualBBox = (node: AENode): AEBounds => {
   if (!node || !node.bbox) return node.bbox;
   const transform = node.style && typeof node.style.transform === 'string' ? node.style.transform : '';
+  const translate = parseTranslateOnly(transform);
   const hasRotation = !!transform && isPureRotationTransform(transform);
   if (node.type === 'text' && !hasRotation) {
     const textBounds = getTextLinesBounds(node);
-    if (textBounds) return mergeBoundsRect(node.bbox, textBounds);
+    if (textBounds) {
+      if (translate) {
+        return mergeBoundsRect(shiftBounds(node.bbox, translate.tx, translate.ty), shiftBounds(textBounds, translate.tx, translate.ty));
+      }
+      return mergeBoundsRect(node.bbox, textBounds);
+    }
   }
-  if (!hasRotation) return node.bbox;
+  if (!hasRotation) {
+    return translate ? shiftBounds(node.bbox, translate.tx, translate.ty) : node.bbox;
+  }
   const rotation = parseTransformRotation(transform);
   if (!rotation) return node.bbox;
 

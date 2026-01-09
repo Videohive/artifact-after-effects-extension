@@ -256,7 +256,9 @@
         .property("Transform")
         .property("Rotation")
         .setValue(rotation);
-      alignLayerToBBoxAfterRotation(layer, bbox, rotation);
+      if (!tr) {
+        alignLayerToBBoxAfterRotation(layer, bbox, rotation);
+      }
     }
 
     if (tr && (Math.abs(tr.tx) > 0.0001 || Math.abs(tr.ty) > 0.0001)) {

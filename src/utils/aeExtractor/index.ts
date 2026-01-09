@@ -763,7 +763,43 @@ export const extractSlideLayout = async (
     const isHtmlEl = isHTMLElement(el, win);
     const overrideOrigin = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-origin') : null;
     const inlineOrigin = isHtmlEl ? (el as HTMLElement).style.transformOrigin : '';
-    const shouldNeutralizeTransform = isHtmlEl && isPureRotationTransform(transformValue);
+    const editorBaseTransform = isHtmlEl
+      ? (el as HTMLElement).getAttribute('data-ae2-base-transform')
+      : null;
+    const editorTxRaw = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-tx') : null;
+    const editorTyRaw = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-ty') : null;
+    const editorRotRaw = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-rot') : null;
+    const editorSxRaw = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-sx') : null;
+    const editorSyRaw = isHtmlEl ? (el as HTMLElement).getAttribute('data-ae2-sy') : null;
+    const hasEditorTransform =
+      isHtmlEl &&
+      (editorBaseTransform !== null ||
+        editorTxRaw !== null ||
+        editorTyRaw !== null ||
+        editorRotRaw !== null ||
+        editorSxRaw !== null ||
+        editorSyRaw !== null);
+
+    const parseEditorNumber = (value: string | null, fallback = 0): number => {
+      if (value === null || value === undefined || value === '') return fallback;
+      const num = parseFloat(value);
+      return Number.isFinite(num) ? num : fallback;
+    };
+
+    const editorTx = hasEditorTransform ? parseEditorNumber(editorTxRaw, 0) : 0;
+    const editorTy = hasEditorTransform ? parseEditorNumber(editorTyRaw, 0) : 0;
+    const editorRot = hasEditorTransform ? parseEditorNumber(editorRotRaw, 0) : 0;
+
+    if (hasEditorTransform) {
+      const base = editorBaseTransform && editorBaseTransform !== 'none' ? editorBaseTransform : '';
+      const parts: string[] = [];
+      if (base) parts.push(base);
+      if (Math.abs(editorRot) > 0.0001) parts.push(`rotate(${editorRot}deg)`);
+      transformValue = parts.length ? parts.join(' ') : 'none';
+    }
+
+    const shouldNeutralizeTransform =
+      isHtmlEl && (isPureRotationTransform(transformValue) || hasEditorTransform);
     let restoreTransform: (() => void) | null = null;
 
     if (shouldNeutralizeTransform) {
@@ -792,6 +828,10 @@ export const extractSlideLayout = async (
       w: rect.width,
       h: rect.height
     };
+    if (hasEditorTransform) {
+      rawBBox.x += editorTx;
+      rawBBox.y += editorTy;
+    }
 
     let bbox = scaleBounds(rawBBox, scale);
     const originSource =

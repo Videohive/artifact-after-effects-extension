@@ -92,30 +92,7 @@ const getDivHighlightStyle = (index: number) => {
   return { bg, border };
 };
 
-const buildDivHighlightedHtml = (source: string) => {
-  if (!source) return '';
-  const ranges = findDivRanges(source);
-  if (ranges.length === 0) return escapeHtml(source);
-
-  let result = '';
-  let cursor = 0;
-  ranges.forEach((range, index) => {
-    if (range.start > cursor) {
-      result += escapeHtml(source.slice(cursor, range.start));
-    }
-    const style = getDivHighlightStyle(index);
-    result += `<span style="background:${style.bg};box-shadow:inset 0 0 0 1px ${style.border};border-radius:4px;">${escapeHtml(
-      source.slice(range.start, range.end)
-    )}</span>`;
-    cursor = range.end;
-  });
-
-  if (cursor < source.length) {
-    result += escapeHtml(source.slice(cursor));
-  }
-
-  return result;
-};
+const buildDivHighlightedHtml = (source: string) => escapeHtml(source || '');
 
 const buildCodeBlocks = (source: string): CodeBlock[] => {
   if (!source) {
@@ -212,10 +189,12 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!overlayRef.current || !textareaRef.current) return;
+    if (!textareaRef.current) return;
     const containerHeight = scrollRef.current?.clientHeight || 0;
-    const targetHeight = Math.max(overlayRef.current.scrollHeight, containerHeight);
-    textareaRef.current.style.height = `${targetHeight}px`;
+    const textarea = textareaRef.current;
+    textarea.style.height = '0px';
+    const targetHeight = Math.max(textarea.scrollHeight, containerHeight);
+    textarea.style.height = `${targetHeight}px`;
   }, [highlightedActive]);
   const handleBlockChange = (blockIndex: number, value: string) => {
     const parts = codeBlocks.map((block, index) => (index === blockIndex ? value : block.text));
@@ -277,7 +256,12 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
                             handleBlockChange(openBlockIndex, e.target.value);
                           }}
                           className="col-start-1 row-start-1 w-full bg-transparent text-transparent caret-neutral-200 resize-none focus:outline-none leading-5 whitespace-pre-wrap break-words"
-                          style={{ tabSize: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                          style={{
+                            tabSize: 2,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            overflow: 'hidden'
+                          }}
                           spellCheck={false}
                         />
                         </div>

@@ -1,6 +1,6 @@
 import { INLINE_TEXT_TAGS, NON_TEXT_TAGS } from './constants';
 import { getClampedBorderRadius, parseBorderRadius } from './border';
-import { AEBounds, AEBoxShadow } from './types';
+import { AEBounds, AEBoxShadow, AEClipPath } from './types';
 
 export const clampFinite = (n: number) => (Number.isFinite(n) ? n : 0);
 
@@ -37,12 +37,15 @@ const toFourValues = (values: number[]): [number, number, number, number] => {
   return [values[0], values[1], values[2], values[3]];
 };
 
-const buildPolygonShape = (points: { x: number; y: number }[]) => {
+const buildPointShape = (points: { x: number; y: number }[], closed: boolean) => {
   const vertices = points.map(p => ({ x: p.x, y: p.y }));
   const inTangents = points.map(() => ({ x: 0, y: 0 }));
   const outTangents = points.map(() => ({ x: 0, y: 0 }));
-  return { vertices, inTangents, outTangents, closed: true };
+  return { vertices, inTangents, outTangents, closed };
 };
+
+const buildPolygonShape = (points: { x: number; y: number }[]) =>
+  buildPointShape(points, true);
 
 const buildEllipseShape = (cx: number, cy: number, rx: number, ry: number) => {
   const k = 0.5522847498307936;
@@ -362,6 +365,383 @@ const parseClipPathEllipse = (
   }
 
   return buildEllipseShape(cx * scale, cy * scale, rx * scale, ry * scale);
+};
+
+const parseSvgLength = (
+  value: string | null,
+  reference: number
+): { value: number; isPercent: boolean } | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith('%')) {
+    const pct = parseFloat(trimmed);
+    return Number.isFinite(pct)
+      ? { value: (pct / 100) * reference, isPercent: true }
+      : null;
+  }
+  const num = parseFloat(trimmed);
+  return Number.isFinite(num) ? { value: num, isPercent: false } : null;
+};
+
+const parseSvgPointValue = (
+  token: string,
+  reference: number,
+  units: 'objectBoundingBox' | 'userSpaceOnUse'
+): number | null => {
+  const trimmed = token.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith('%')) {
+    const pct = parseFloat(trimmed);
+    if (!Number.isFinite(pct)) return null;
+    return units === 'objectBoundingBox' ? pct / 100 : (pct / 100) * reference;
+  }
+  const num = parseFloat(trimmed);
+  return Number.isFinite(num) ? num : null;
+};
+
+const parseSvgPoints = (
+  value: string,
+  elementBox: { w: number; h: number },
+  units: 'objectBoundingBox' | 'userSpaceOnUse',
+  userSpaceBox: { w: number; h: number }
+): { x: number; y: number }[] => {
+  if (!value) return [];
+  const parts = value.trim().split(/[\s,]+/).filter(Boolean);
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i < parts.length - 1; i += 2) {
+    const refW = units === 'userSpaceOnUse' ? userSpaceBox.w : elementBox.w;
+    const refH = units === 'userSpaceOnUse' ? userSpaceBox.h : elementBox.h;
+    const x = parseSvgPointValue(parts[i], refW, units);
+    const y = parseSvgPointValue(parts[i + 1], refH, units);
+    if (x === null || y === null) continue;
+    points.push({ x, y });
+  }
+  return points;
+};
+
+const mapClipValue = (
+  value: string | null,
+  reference: number,
+  units: 'objectBoundingBox' | 'userSpaceOnUse',
+  scale: number,
+  userReference: number,
+  userScale: number
+): number | null => {
+  const ref = units === 'userSpaceOnUse' ? userReference : reference;
+  const raw = parseSvgLength(value, ref);
+  if (!raw) return null;
+  let base = raw.value;
+  if (units === 'objectBoundingBox' && !raw.isPercent) {
+    base = raw.value * reference;
+  }
+  const scaleFactor = units === 'userSpaceOnUse' ? userScale : scale;
+  return base * scaleFactor;
+};
+
+const mapClipPoint = (
+  point: { x: number; y: number },
+  elementBox: { w: number; h: number },
+  units: 'objectBoundingBox' | 'userSpaceOnUse',
+  scale: number,
+  userScale: { x: number; y: number }
+) => {
+  if (units === 'objectBoundingBox') {
+    return { x: point.x * elementBox.w * scale, y: point.y * elementBox.h * scale };
+  }
+  return { x: point.x * userScale.x, y: point.y * userScale.y };
+};
+
+const sampleSvgPath = (
+  pathEl: SVGPathElement,
+  elementBox: { w: number; h: number },
+  units: 'objectBoundingBox' | 'userSpaceOnUse',
+  scale: number,
+  userScale: { x: number; y: number }
+) => {
+  let length = 0;
+  try {
+    length = pathEl.getTotalLength();
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(length) || length <= 0) return null;
+
+  const samples = Math.min(64, Math.max(8, Math.round(length / 20)));
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i < samples; i += 1) {
+    const t = samples === 1 ? 0 : (length * i) / (samples - 1);
+    const p = pathEl.getPointAtLength(t);
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    points.push(mapClipPoint({ x: p.x, y: p.y }, elementBox, units, scale, userScale));
+  }
+  if (points.length < 3) return null;
+  const d = pathEl.getAttribute('d') || '';
+  const closed = /[zZ]/.test(d);
+  return buildPointShape(points, closed);
+};
+
+const parseNumericList = (value: string): number[] => {
+  const nums = value.match(/-?[\d.]+/g);
+  if (!nums) return [];
+  return nums.map(n => parseFloat(n)).filter(n => Number.isFinite(n));
+};
+
+const inferClipPathUnits = (clipEl: Element): 'objectBoundingBox' | 'userSpaceOnUse' => {
+  const attr = clipEl.getAttribute('clipPathUnits');
+  if (attr) {
+    return attr.toLowerCase() === 'userspaceonuse' ? 'userSpaceOnUse' : 'objectBoundingBox';
+  }
+
+  const candidates = Array.from(
+    clipEl.querySelectorAll('rect,circle,ellipse,polygon,polyline,path')
+  ) as Element[];
+  for (const child of candidates) {
+    const attrs = ['x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'rx', 'ry'];
+    for (const key of attrs) {
+      const raw = child.getAttribute(key);
+      if (!raw) continue;
+      const nums = parseNumericList(raw);
+      if (nums.some(num => Math.abs(num) > 1.01)) return 'userSpaceOnUse';
+    }
+    const points = child.getAttribute('points');
+    if (points) {
+      const nums = parseNumericList(points);
+      if (nums.some(num => Math.abs(num) > 1.01)) return 'userSpaceOnUse';
+    }
+    const d = child.getAttribute('d');
+    if (d) {
+      const nums = parseNumericList(d);
+      if (nums.some(num => Math.abs(num) > 1.01)) return 'userSpaceOnUse';
+    }
+  }
+
+  return 'objectBoundingBox';
+};
+
+const getSvgUserSpaceBox = (clipEl: Element): { w: number; h: number } | null => {
+  const svg = (clipEl as SVGElement).ownerSVGElement;
+  if (!svg) return null;
+  const viewBox = svg.viewBox?.baseVal;
+  if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+    return { w: viewBox.width, h: viewBox.height };
+  }
+  const widthAttr = svg.getAttribute('width');
+  const heightAttr = svg.getAttribute('height');
+  const w = widthAttr ? parseFloat(widthAttr) : NaN;
+  const h = heightAttr ? parseFloat(heightAttr) : NaN;
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+    return { w, h };
+  }
+  return null;
+};
+
+const resolveSvgClipPath = (
+  clipPathValue: string,
+  element: Element,
+  elementBox: { w: number; h: number },
+  scale: number,
+  win: Window
+) => {
+  const trimmed = (clipPathValue || '').trim();
+  if (!trimmed || trimmed === 'none') return null;
+  if (trimmed.toLowerCase().indexOf('url(') !== 0) return null;
+
+  const urlMatch = trimmed.match(/url\((['"]?)(.*?)\1\)/i);
+  const url = urlMatch?.[2] ? urlMatch[2] : '';
+  if (!url) return null;
+  const hashIndex = url.indexOf('#');
+  const id = hashIndex >= 0 ? url.slice(hashIndex + 1) : url.replace(/^#/, '');
+  if (!id) return null;
+
+  const doc = element.ownerDocument || win.document;
+  const clipEl = doc.getElementById(id);
+  if (!clipEl || clipEl.tagName.toLowerCase() !== 'clippath') return null;
+
+  const units = inferClipPathUnits(clipEl);
+  const userSpace = getSvgUserSpaceBox(clipEl) || { w: elementBox.w, h: elementBox.h };
+  const userScale = {
+    x: userSpace.w > 0 ? (elementBox.w / userSpace.w) * scale : scale,
+    y: userSpace.h > 0 ? (elementBox.h / userSpace.h) * scale : scale
+  };
+
+  const children = Array.from(
+    clipEl.querySelectorAll('rect,circle,ellipse,polygon,polyline,path')
+  ) as Element[];
+  const shapes: Array<{
+    vertices: { x: number; y: number }[];
+    inTangents: { x: number; y: number }[];
+    outTangents: { x: number; y: number }[];
+    closed: boolean;
+  }> = [];
+  for (const child of children) {
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'rect') {
+      const w = mapClipValue(
+        child.getAttribute('width'),
+        elementBox.w,
+        units,
+        scale,
+        userSpace.w,
+        userScale.x
+      );
+      const h = mapClipValue(
+        child.getAttribute('height'),
+        elementBox.h,
+        units,
+        scale,
+        userSpace.h,
+        userScale.y
+      );
+      if (!w || !h) continue;
+      const x =
+        mapClipValue(
+          child.getAttribute('x'),
+          elementBox.w,
+          units,
+          scale,
+          userSpace.w,
+          userScale.x
+        ) || 0;
+      const y =
+        mapClipValue(
+          child.getAttribute('y'),
+          elementBox.h,
+          units,
+          scale,
+          userSpace.h,
+          userScale.y
+        ) || 0;
+      const rx =
+        mapClipValue(
+          child.getAttribute('rx'),
+          elementBox.w,
+          units,
+          scale,
+          userSpace.w,
+          userScale.x
+        ) || 0;
+      const ry =
+        mapClipValue(
+          child.getAttribute('ry'),
+          elementBox.h,
+          units,
+          scale,
+          userSpace.h,
+          userScale.y
+        ) || rx;
+      if (rx > 0 || ry > 0) {
+        shapes.push(
+          buildRoundedRectShape(x, y, w, h, {
+            tl: { rx, ry },
+            tr: { rx, ry },
+            br: { rx, ry },
+            bl: { rx, ry }
+          })
+        );
+        continue;
+      }
+      shapes.push(
+        buildPolygonShape([
+          { x, y },
+          { x: x + w, y },
+          { x: x + w, y: y + h },
+          { x, y: y + h }
+        ])
+      );
+      continue;
+    }
+    if (tag === 'circle') {
+      const cx = mapClipValue(
+        child.getAttribute('cx'),
+        elementBox.w,
+        units,
+        scale,
+        userSpace.w,
+        userScale.x
+      );
+      const cy = mapClipValue(
+        child.getAttribute('cy'),
+        elementBox.h,
+        units,
+        scale,
+        userSpace.h,
+        userScale.y
+      );
+      const r = mapClipValue(
+        child.getAttribute('r'),
+        Math.min(elementBox.w, elementBox.h),
+        units,
+        scale,
+        Math.min(userSpace.w, userSpace.h),
+        Math.min(userScale.x, userScale.y)
+      );
+      if (cx === null || cy === null || r === null) continue;
+      shapes.push(buildEllipseShape(cx, cy, r, r));
+      continue;
+    }
+    if (tag === 'ellipse') {
+      const cx = mapClipValue(
+        child.getAttribute('cx'),
+        elementBox.w,
+        units,
+        scale,
+        userSpace.w,
+        userScale.x
+      );
+      const cy = mapClipValue(
+        child.getAttribute('cy'),
+        elementBox.h,
+        units,
+        scale,
+        userSpace.h,
+        userScale.y
+      );
+      const rx = mapClipValue(
+        child.getAttribute('rx'),
+        elementBox.w,
+        units,
+        scale,
+        userSpace.w,
+        userScale.x
+      );
+      const ry = mapClipValue(
+        child.getAttribute('ry'),
+        elementBox.h,
+        units,
+        scale,
+        userSpace.h,
+        userScale.y
+      );
+      if (cx === null || cy === null || rx === null || ry === null) continue;
+      shapes.push(buildEllipseShape(cx, cy, rx, ry));
+      continue;
+    }
+    if (tag === 'polygon' || tag === 'polyline') {
+      const points = parseSvgPoints(
+        child.getAttribute('points') || '',
+        elementBox,
+        units,
+        userSpace
+      );
+      if (points.length < 3) continue;
+      const mapped = points.map(point =>
+        mapClipPoint(point, elementBox, units, scale, userScale)
+      );
+      shapes.push(tag === 'polyline' ? buildPointShape(mapped, false) : buildPolygonShape(mapped));
+      continue;
+    }
+    if (tag === 'path') {
+      const pathEl = child as SVGPathElement;
+      const sampled = sampleSvgPath(pathEl, elementBox, units, scale, userScale);
+      if (sampled) shapes.push(sampled);
+      continue;
+    }
+  }
+
+  if (!shapes.length) return null;
+  if (shapes.length === 1) return shapes[0];
+  return { paths: shapes };
 };
 
 export const isVisible = (style: CSSStyleDeclaration, rect: DOMRect): boolean => {
@@ -871,11 +1251,13 @@ export const detectPrecomp = (
   el: Element,
   style: CSSStyleDeclaration,
   elementBox: { w: number; h: number },
-  scale: number
+  scale: number,
+  clipPathOverride?: AEClipPath
 ) => {
   const radius = parseBorderRadius(style.borderRadius, elementBox, scale);
   const borderRadiusPx = getClampedBorderRadius(radius, elementBox, scale);
   const clipPath =
+    clipPathOverride ||
     parseClipPathPolygon(style.clipPath, elementBox, scale) ||
     parseClipPathInset(style.clipPath, elementBox, scale) ||
     parseClipPathCircle(style.clipPath, elementBox, scale) ||
@@ -897,6 +1279,8 @@ export const detectPrecomp = (
     }
   };
 };
+
+export { resolveSvgClipPath };
 
 export const hasVisualPaint = (style: CSSStyleDeclaration): boolean => {
   const bgc = style.backgroundColor;

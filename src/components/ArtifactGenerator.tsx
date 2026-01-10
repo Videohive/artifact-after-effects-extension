@@ -74,6 +74,7 @@ const TEXT_PLACEHOLDER_TAGS = [
   'td', 'th'
 ];
 const VIDEO_EXT_RE = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i;
+const BG_URL_RE = /url\(["']?([^"')]+)["']?\)/i;
 const PREVIEW_EDITOR_STYLE = `
   :root {
     --ae2-edit-outline: #4cc9ff;
@@ -1758,23 +1759,102 @@ const fixTextUrlBlocks = (root: ParentNode) => {
   const elements = Array.from(root.querySelectorAll('*'));
   elements.forEach(el => {
     if (!(el instanceof HTMLElement)) return;
-    if (el.children.length > 0) return;
     if (el.tagName.toLowerCase() === 'a') return;
 
-    const text = (el.textContent || '').trim();
+    const textNodes = Array.from(el.childNodes).filter(
+      node => node.nodeType === Node.TEXT_NODE
+    ) as Text[];
+    if (textNodes.length === 0) return;
+
+    const nonEmptyText = textNodes
+      .map(node => (node.textContent || '').trim())
+      .filter(Boolean);
+    if (nonEmptyText.length !== 1) return;
+
+    const text = nonEmptyText[0];
     if (!URL_TEXT_RE.test(text)) return;
 
     const style = el.style;
     const hasBgImage = style.backgroundImage && style.backgroundImage !== 'none';
 
-    if (!hasBgImage) {
+    if (VIDEO_EXT_RE.test(text)) {
+      if (!el.querySelector('video')) {
+        const video = el.ownerDocument.createElement('video');
+        video.setAttribute('src', text);
+        video.setAttribute('autoplay', 'true');
+        video.setAttribute('loop', 'true');
+        video.setAttribute('muted', 'true');
+        video.setAttribute('playsinline', 'true');
+        video.style.position = 'absolute';
+        video.style.inset = '0';
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'cover';
+        video.style.display = 'block';
+        video.style.pointerEvents = 'none';
+        video.style.zIndex = '0';
+        if (!style.position) {
+          style.position = 'relative';
+        }
+        if (!style.overflow) {
+          style.overflow = 'hidden';
+        }
+        el.insertBefore(video, el.firstChild);
+      }
+    } else if (!hasBgImage) {
       style.backgroundImage = `url("${text}")`;
       style.backgroundSize = 'cover';
       style.backgroundPosition = 'center';
       style.backgroundRepeat = 'no-repeat';
     }
 
-    el.textContent = '';
+    textNodes.forEach(node => {
+      if (URL_TEXT_RE.test((node.textContent || '').trim())) {
+        node.textContent = '';
+      }
+    });
+  });
+};
+
+const getInlineBackgroundUrl = (value: string) => {
+  const match = value.match(BG_URL_RE);
+  return match ? match[1] : null;
+};
+
+const convertVideoBackgrounds = (root: ParentNode) => {
+  const elements = root.querySelectorAll('[style*="background-image"]');
+  elements.forEach(el => {
+    if (!(el instanceof HTMLElement)) return;
+    const bg = el.style.backgroundImage || '';
+    if (!bg || bg === 'none') return;
+    const url = getInlineBackgroundUrl(bg);
+    if (!url || !VIDEO_EXT_RE.test(url)) return;
+    if (el.querySelector('video')) return;
+
+    const doc = el.ownerDocument || (root as Document);
+    const video = doc.createElement('video');
+    video.setAttribute('src', url);
+    video.setAttribute('autoplay', 'true');
+    video.setAttribute('loop', 'true');
+    video.setAttribute('muted', 'true');
+    video.setAttribute('playsinline', 'true');
+    video.style.position = 'absolute';
+    video.style.inset = '0';
+    video.style.width = '100%';
+    video.style.height = '100%';
+    video.style.objectFit = 'cover';
+    video.style.display = 'block';
+    video.style.pointerEvents = 'none';
+    video.style.zIndex = '0';
+
+    if (!el.style.position) {
+      el.style.position = 'relative';
+    }
+    if (!el.style.overflow) {
+      el.style.overflow = 'hidden';
+    }
+    el.style.backgroundImage = 'none';
+    el.insertBefore(video, el.firstChild);
   });
 };
 
@@ -2899,6 +2979,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const doc = parser.parseFromString(html, 'text/html');
     
     sanitizeLayout(doc);
+    convertVideoBackgrounds(doc);
     convertVideoImages(doc);
 
     const sections = collectArtifactElements(doc);
@@ -2987,6 +3068,41 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           e.target.alt = '';
         }
       }, true);
+
+      // Track background-image and video load status
+      window.addEventListener('load', function() {
+        var bgEls = document.querySelectorAll('[style*="background-image"]');
+        bgEls.forEach(function(el) {
+          var style = el.style || {};
+          var bg = style.backgroundImage || '';
+          var match = bg.match(/url\\(["']?([^"')]+)["']?\\)/i);
+          if (!match || !match[1]) return;
+          var img = new Image();
+          img.onload = function() {
+            el.setAttribute('data-ae2-bg-status', 'loaded');
+          };
+          img.onerror = function() {
+            el.setAttribute('data-ae2-bg-status', 'error');
+          };
+          img.src = match[1];
+        });
+
+        var videos = document.querySelectorAll('video');
+        videos.forEach(function(video) {
+          var setStatus = function(value) {
+            video.setAttribute('data-ae2-media-status', value);
+          };
+          if (video.readyState >= 2) {
+            setStatus('loaded');
+          }
+          video.addEventListener('loadeddata', function() {
+            setStatus('loaded');
+          }, { once: true });
+          video.addEventListener('error', function() {
+            setStatus('error');
+          }, { once: true });
+        });
+      });
     `;
     doc.head.appendChild(script);
 
@@ -3569,6 +3685,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     sanitizeLayout(doc);
+    convertVideoBackgrounds(doc);
     convertVideoImages(doc);
     const sections = collectArtifactElements(doc);
     if (sections.length > 0) {

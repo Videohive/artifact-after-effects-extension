@@ -178,9 +178,13 @@ const createResponseText = async (
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) throw new Error(getApiError());
     const imagePayload = normalizeImageData(imageData);
+    const token = getAuthToken();
     const response = await fetch(`${apiBaseUrl}/artifact/ai`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {})
+      },
       body: JSON.stringify({
         provider,
         prompt,
@@ -217,9 +221,13 @@ const createStreamedResponseText = async (
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) throw new Error(getApiError());
     const imagePayload = normalizeImageData(imageData);
+    const token = getAuthToken();
     const response = await fetch(`${apiBaseUrl}/artifact/ai/stream`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {})
+      },
       body: JSON.stringify({
         provider,
         prompt,
@@ -496,9 +504,13 @@ const searchMediaProvider = async (
   const apiBaseUrl = getApiBaseUrl();
   if (!apiBaseUrl) return null;
   try {
+    const token = getAuthToken();
     const response = await fetch(`${apiBaseUrl}/artifact/images/search`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {})
+      },
       body: JSON.stringify({
         provider,
         query,

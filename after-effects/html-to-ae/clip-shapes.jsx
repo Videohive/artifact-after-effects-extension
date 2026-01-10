@@ -45,22 +45,41 @@
     grp.name = "ClipGroup";
 
     var grpContents = grp.property("Contents");
-    var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
-    var shape = null;
+    var shapes = [];
     if (clip && clip.path) {
-      if (clip.path.vertices && clip.path.inTangents && clip.path.outTangents) {
-        shape = shapeFromClipPath(clip.path);
+      if (clip.path.paths && clip.path.paths.length) {
+        shapes = clip.path.paths;
+      } else if (clip.path.vertices && clip.path.inTangents && clip.path.outTangents) {
+        shapes = [clip.path];
       } else if (clip.path.type === "polygon" && clip.path.points && clip.path.points.length >= 3) {
-        shape = polygonShape(clip.path.points);
+        shapes = [{ type: "polygon", points: clip.path.points }];
       }
     }
-    if (!shape) {
+    if (!shapes.length) {
       var radii = getClipRadii(clip, w, h);
-      shape = radii.hasAny
-        ? roundedRectShapePerCorner(w, h, radii)
-        : rectShape(w, h);
+      shapes = [
+        radii.hasAny
+          ? roundedRectShapePerCorner(w, h, radii)
+          : rectShape(w, h)
+      ];
     }
-    pathProp.property("Path").setValue(shape);
+
+    for (var si = 0; si < shapes.length; si++) {
+      var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
+      var shape = null;
+      var s = shapes[si];
+      if (s && s.vertices && s.inTangents && s.outTangents) {
+        if (s.vertices.length && s.vertices[0] instanceof Array) {
+          shape = s;
+        } else {
+          shape = shapeFromClipPath(s);
+        }
+      } else if (s && s.type === "polygon" && s.points && s.points.length >= 3) {
+        shape = polygonShape(s.points);
+      }
+      if (!shape) continue;
+      pathProp.property("Path").setValue(shape);
+    }
 
     var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
     fill.property("Color").setValue([1, 1, 1]);

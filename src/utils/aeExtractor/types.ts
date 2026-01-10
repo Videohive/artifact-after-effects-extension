@@ -34,6 +34,23 @@ export interface AEBoxShadow {
   inset: boolean;
 }
 
+export type AEClipPath =
+  | {
+      vertices: { x: number; y: number }[];
+      inTangents: { x: number; y: number }[];
+      outTangents: { x: number; y: number }[];
+      closed: boolean;
+    }
+  | {
+      paths: Array<{
+        vertices: { x: number; y: number }[];
+        inTangents: { x: number; y: number }[];
+        outTangents: { x: number; y: number }[];
+        closed: boolean;
+      }>;
+    }
+  | null;
+
 export interface AEBorder {
   widthPx: number;
   color: string;
@@ -130,12 +147,7 @@ export interface AENode {
     borderRadius: AEBorderRadius;
     borderRadiusPx: number;
     overflow: string;
-    path?: {
-      vertices: { x: number; y: number }[];
-      inTangents: { x: number; y: number }[];
-      outTangents: { x: number; y: number }[];
-      closed: boolean;
-    } | null;
+    path?: AEClipPath;
   };
 }
 

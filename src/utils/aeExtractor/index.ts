@@ -25,6 +25,7 @@ import {
   extractBackgroundGradients,
   extractBackgroundGrid,
   safeBgUrl,
+  resolveSvgClipPath,
   scaleBounds,
   urlFromText
 } from './helpers';
@@ -1050,7 +1051,14 @@ export const extractSlideLayout = async (
       opacity: style.opacity
     } as CSSStyleDeclaration;
 
-    const { needsPrecomp, clip } = detectPrecomp(el, styleForDetect, rawBBox, scale);
+    const svgClipPath = resolveSvgClipPath(style.clipPath, el, rawBBox, scale, win);
+    const { needsPrecomp, clip } = detectPrecomp(
+      el,
+      styleForDetect,
+      rawBBox,
+      scale,
+      svgClipPath
+    );
     if (needsPrecomp) renderHints.needsPrecomp = true;
 
     const border = extractBorder(style, scale, rawBBox);
@@ -1127,7 +1135,8 @@ export const extractSlideLayout = async (
       const pseudoOutline = extractOutline(pseudoStyle, scale, rawBox);
       const pseudoShadow = extractBoxShadow(pseudoStyle, scale);
 
-      const { clip } = detectPrecomp(el, pseudoStyle, rawBox, scale);
+      const pseudoSvgClip = resolveSvgClipPath(pseudoStyle.clipPath, el, rawBox, scale, win);
+      const { clip } = detectPrecomp(el, pseudoStyle, rawBox, scale, pseudoSvgClip);
       const zFallback = which === '::before' ? -1 : 1;
       const zValue = Number.isFinite(parseFloat(pseudoStyle.zIndex))
         ? parseFloat(pseudoStyle.zIndex)

@@ -3453,6 +3453,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (!topic.trim() && chatImages.length === 0) return;
 
     const requestId = ++generateRequestIdRef.current;
+    let streamHistoryId: string | null = null;
     const promptText =
       topic.trim() ||
       (chatImages.length > 1
@@ -3517,6 +3518,19 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           mediaKind,
           (event) => {
             if (requestId !== generateRequestIdRef.current) return;
+            if (event?.historyId && typeof event.historyId === 'string') {
+              const nextId = event.historyId.trim();
+              if (nextId && !streamHistoryId) {
+                streamHistoryId = nextId;
+                if (!currentHistoryId) {
+                  setCurrentHistoryId(nextId);
+                  setArtifactIdInUrl(nextId);
+                  if (typeof window !== 'undefined') {
+                    window.localStorage.setItem(LAST_ARTIFACT_KEY, nextId);
+                  }
+                }
+              }
+            }
             if (event.type === 'base') {
               const total = Number(event.total) || 0;
               setStreamProgress(prev => ({
@@ -3583,7 +3597,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         const name = (title || projectTitle || promptText).trim() || 'Untitled Project';
         const responseHtml = buildPersistedHtml(parsed.headHtml, parsed.artifacts);
         const persistedId = persistedArtifact?._id || persistedArtifact?.id;
-        const resolvedId = persistedId || currentHistoryId;
+        const resolvedId = persistedId || streamHistoryId || currentHistoryId;
 
         if (persistedArtifact?.status === 'pending') {
           const pollTarget = resolvedId || persistedArtifact?._id || persistedArtifact?.id;

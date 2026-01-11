@@ -24,7 +24,7 @@ type CodeBlock = {
   id: string;
   label: string;
   text: string;
-  kind: 'meta' | 'artifact' | 'post';
+  kind: 'all' | 'meta' | 'artifact' | 'post';
   index?: number;
 };
 
@@ -98,6 +98,12 @@ const buildCodeBlocks = (source: string): CodeBlock[] => {
   if (!source) {
     return [
       {
+        id: 'all',
+        label: 'All Code',
+        text: '',
+        kind: 'all'
+      },
+      {
         id: 'meta',
         label: 'Document',
         text: '',
@@ -107,18 +113,24 @@ const buildCodeBlocks = (source: string): CodeBlock[] => {
   }
 
   const ranges = findArtifactRanges(source);
+  const blocks: CodeBlock[] = [
+    {
+      id: 'all',
+      label: 'All Code',
+      text: source,
+      kind: 'all'
+    }
+  ];
   if (ranges.length === 0) {
-    return [
-      {
-        id: 'meta',
-        label: 'Document',
-        text: source,
-        kind: 'meta'
-      }
-    ];
+    blocks.push({
+      id: 'meta',
+      label: 'Document',
+      text: source,
+      kind: 'meta'
+    });
+    return blocks;
   }
 
-  const blocks: CodeBlock[] = [];
   const firstStart = ranges[0].start;
   if (firstStart > 0) {
     blocks.push({
@@ -197,6 +209,11 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
     textarea.style.height = `${targetHeight}px`;
   }, [highlightedActive]);
   const handleBlockChange = (blockIndex: number, value: string) => {
+    const targetBlock = codeBlocks[blockIndex];
+    if (targetBlock?.kind === 'all') {
+      onCodeChange(value);
+      return;
+    }
     const parts = codeBlocks.map((block, index) => (index === blockIndex ? value : block.text));
     onCodeChange(parts.join(''));
   };

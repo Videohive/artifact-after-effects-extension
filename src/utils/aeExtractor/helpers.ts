@@ -1302,7 +1302,7 @@ export const hasVisualPaint = (style: CSSStyleDeclaration): boolean => {
   return !!hasBg || !!hasBgImg || !!hasBorder || !!hasOutline || !!hasShadow;
 };
 
-export const isTextLike = (el: Element, style: CSSStyleDeclaration): boolean => {
+export const isTextLike = (el: Element, style: CSSStyleDeclaration, win: Window): boolean => {
   const txt = (el.textContent ?? '').trim();
   if (!txt) return false;
 
@@ -1313,6 +1313,11 @@ export const isTextLike = (el: Element, style: CSSStyleDeclaration): boolean => 
     const ct = child.tagName.toLowerCase();
     if (NON_TEXT_TAGS.has(ct)) return false;
     if (!INLINE_TEXT_TAGS.has(ct)) return false;
+    if (win) {
+      const cs = win.getComputedStyle(child);
+      if (cs.position && cs.position !== 'static') return false;
+      if (cs.transform && cs.transform !== 'none') return false;
+    }
   }
 
   return true;

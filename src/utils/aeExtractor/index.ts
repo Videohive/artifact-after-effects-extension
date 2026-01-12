@@ -1351,7 +1351,7 @@ export const extractSlideLayout = async (
       : [];
     const hasMultipleTextChildren = textChildElements.length > 1;
     const textLike =
-      canConsiderText && isTextLike(el, style) && !hasPaintedChild && !hasMultipleTextChildren;
+      canConsiderText && isTextLike(el, style, win) && !hasPaintedChild && !hasMultipleTextChildren;
 
     const getDirectTextNodes = (host: HTMLElement): Text[] => {
       const out: Text[] = [];

@@ -2321,6 +2321,58 @@ ${buildRootBlock(null, updates)}`;
   return doc.head.innerHTML;
 };
 
+const stripMotionScriptsFromHead = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const scripts = Array.from(doc.head.querySelectorAll('script'));
+  scripts.forEach(script => {
+    if (script.getAttribute('data-ae2-motion') === 'true') {
+      script.remove();
+    }
+  });
+  return doc.head.innerHTML;
+};
+
+const stripMotionBlocksFromHead = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const scripts = Array.from(doc.head.querySelectorAll('script[data-ae2-motion="true"]'));
+  scripts.forEach(script => script.remove());
+  const styles = Array.from(doc.head.querySelectorAll('style[data-ae2-motion="true"]'));
+  styles.forEach(style => style.remove());
+  return doc.head.innerHTML;
+};
+
+const extractScriptText = (raw: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<html><head>${raw}</head></html>`, 'text/html');
+  const scripts = Array.from(doc.querySelectorAll('script'));
+  if (scripts.length === 0) return raw.trim();
+  return scripts.map(script => script.textContent || '').join('\n').trim();
+};
+
+const looksLikeHtmlDoc = (value: string) =>
+  /<html[\s>]/i.test(value) || /<head[\s>]/i.test(value) || /<body[\s>]/i.test(value);
+
+const tryParseMotionJson = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+  try {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+};
+
 const stripScriptsFromHead = (headHtml: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
@@ -3761,49 +3813,57 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
-  const handleAnimateArtifacts = async (mode: 'slide' | 'project' = 'slide') => {
+  const handleAnimateArtifacts = async () => {
     if (artifacts.length === 0) return;
     const requestId = ++animateRequestIdRef.current;
     setAnimatingArtifact(true);
     try {
       pendingSaveDelayRef.current = 200;
       const cssContext = getCssContext();
+      const contextHtml = buildPersistedHtml(headContent, artifacts);
+      const motionResponse = await applyMotionToHtml(
+        provider,
+        topic,
+        artifactMode,
+        contextHtml,
+        cssContext
+      );
+      if (requestId !== animateRequestIdRef.current) return;
 
-      if (mode === 'project') {
-        const contextHtml = buildPersistedHtml(headContent, artifacts);
-        const animatedHtml = await applyMotionToHtml(
-          provider,
-          topic,
-          artifactMode,
-          contextHtml,
-          cssContext
-        );
-        if (requestId !== animateRequestIdRef.current) return;
-        const parsed = parseAndSetHtml(animatedHtml, true);
+      const parsedJson = tryParseMotionJson(motionResponse);
+      const htmlAnimated =
+        parsedJson?.html_animated || parsedJson?.html || parsedJson?.htmlAnimated || '';
+      const cssAnimated =
+        parsedJson?.css_animated || parsedJson?.css || parsedJson?.cssAnimated || '';
+
+      if (htmlAnimated) {
+        const nextHead = cssAnimated ? applyMotionCssToHead(headContent, cssAnimated) : headContent;
+        const fullHtml = looksLikeHtmlDoc(htmlAnimated)
+          ? htmlAnimated
+          : buildArtifactHtml(nextHead, htmlAnimated);
+        const parsed = parseAndSetHtml(fullHtml, true);
         if (parsed) {
+          historyImmediateNextRef.current = true;
+          setHeadContent(parsed.headHtml);
+          setArtifacts(parsed.artifacts);
           await saveHistorySnapshot(parsed.artifacts, parsed.headHtml);
         }
         return;
       }
 
-      const cleanHead = stripRuntimeHead(headContent);
-      const singleHtml = buildArtifactHtml(cleanHead, artifacts[currentArtifactIndex]);
-      const animatedHtml = await applyMotionToHtml(
-        provider,
-        topic,
-        artifactMode,
-        singleHtml,
-        cssContext
-      );
-      if (requestId !== animateRequestIdRef.current) return;
-      const parsed = extractAnimatedArtifact(animatedHtml, currentArtifactIndex);
-      const nextArtifacts = [...artifacts];
-      nextArtifacts[currentArtifactIndex] = parsed.artifactHtml;
-      const reindexed = reindexArtifactClasses(nextArtifacts, includeSlideClass);
+      if (cssAnimated) {
+        const nextHead = applyMotionCssToHead(headContent, cssAnimated);
+        historyImmediateNextRef.current = true;
+        setHeadContent(nextHead);
+        await saveHistorySnapshot(artifacts, nextHead);
+        return;
+      }
+
+      const nextHeadRaw = applyMotionScriptToHead(headContent, motionResponse);
+      const nextHead = ensureGsapScript(stripInjectedHeadBlocks(nextHeadRaw));
       historyImmediateNextRef.current = true;
-      setHeadContent(parsed.headHtml);
-      setArtifacts(reindexed);
-      await saveHistorySnapshot(reindexed, parsed.headHtml);
+      setHeadContent(nextHead);
+      await saveHistorySnapshot(artifacts, nextHead);
     } catch (error) {
       console.error(error);
     } finally {
@@ -3811,6 +3871,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         setAnimatingArtifact(false);
       }
     }
+  };
+
+  const handleClearAnimation = async () => {
+    if (artifacts.length === 0) return;
+    const cleanedHead = stripMotionBlocksFromHead(headContent);
+    historyImmediateNextRef.current = true;
+    setHeadContent(cleanedHead);
+    await saveHistorySnapshot(artifacts, cleanedHead);
   };
 
   const handleAddArtifact = async () => {
@@ -3898,6 +3966,54 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     return `${base}${forceArtifactMarginReset}`;
   };
 
+  const applyMotionCssToHead = (headHtml: string, cssAnimated: string) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(
+      `<html><head>${stripMotionScriptsFromHead(headHtml)}</head><body></body></html>`,
+      'text/html'
+    );
+    const existing = Array.from(doc.head.querySelectorAll('style[data-ae2-motion="true"]'));
+    existing.forEach(style => style.remove());
+    const style = doc.createElement('style');
+    style.setAttribute('data-ae2-motion', 'true');
+    style.textContent = cssAnimated;
+    doc.head.appendChild(style);
+    return doc.head.innerHTML;
+  };
+
+  const applyMotionScriptToHead = (headHtml: string, scriptRaw: string) => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(
+      `<html><head>${stripMotionScriptsFromHead(headHtml)}</head><body></body></html>`,
+      'text/html'
+    );
+    const scriptText = extractScriptText(scriptRaw);
+    if (!scriptText) return doc.head.innerHTML;
+    const needsWrap = !/addEventListener\(['"]load['"]|DOMContentLoaded/.test(scriptText);
+    const script = doc.createElement('script');
+    script.setAttribute('data-ae2-motion', 'true');
+    if (needsWrap) {
+      script.textContent =
+        `window.addEventListener('load', function () {\n` +
+        `${scriptText}\n` +
+        `window.__ae2MotionReady = true;\n` +
+        `if (document.body) document.body.style.opacity = '1';\n` +
+        `});`;
+    } else {
+      script.textContent = scriptText;
+      const readyScript = doc.createElement('script');
+      readyScript.setAttribute('data-ae2-motion', 'true');
+      readyScript.textContent =
+        `window.addEventListener('load', function () {\n` +
+        `window.__ae2MotionReady = true;\n` +
+        `if (document.body) document.body.style.opacity = '1';\n` +
+        `});`;
+      doc.head.appendChild(readyScript);
+    }
+    doc.head.appendChild(script);
+    return doc.head.innerHTML;
+  };
+
   const buildArtifactHtml = (headHtml: string, artifactHtml: string) => {
     const { headHtml: cleanHeadHtml, bodyScripts } = splitHeadScriptsForBody(headHtml);
     return `
@@ -3914,11 +4030,44 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   const buildPreviewHtml = (headHtml: string, artifactHtml: string, index: number, revision: number) => {
     const { headHtml: cleanHeadHtml, bodyScripts } = splitHeadScriptsForBody(headHtml);
+    const shouldPrehide = cleanHeadHtml.includes('data-ae2-motion="true"');
+    const prehideStyle = shouldPrehide
+      ? '<style data-ae2-runtime="true">body { opacity: 0; }</style>'
+      : '';
+    const prehideScript = shouldPrehide
+      ? `<script data-ae2-runtime="true">
+          (function () {
+            var revealed = false;
+            function reveal() {
+              if (revealed) return;
+              revealed = true;
+              if (document.body) document.body.style.opacity = '1';
+            }
+            window.addEventListener('load', function () {
+              if (window.__ae2MotionReady) {
+                reveal();
+                return;
+              }
+              var tries = 0;
+              var timer = setInterval(function () {
+                tries += 1;
+                if (window.__ae2MotionReady || tries > 20) {
+                  clearInterval(timer);
+                  reveal();
+                }
+              }, 50);
+            });
+            setTimeout(reveal, 1500);
+          })();
+        </script>`
+      : '';
     return `
       <!DOCTYPE html>
       <html>
         <head>
           ${cleanHeadHtml}
+          ${prehideStyle}
+          ${prehideScript}
           <script data-ae2-runtime="true">
             if (window.gsap && typeof window.gsap.config === 'function') {
               window.gsap.config({ nullTargetWarn: false });
@@ -4897,10 +5046,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
               <div className="shrink-0 w-full flex justify-center px-4 pb-4">
                 <div className="flex flex-col gap-3" style={{ width: previewSize.width || '100%' }}>
-                  <ArtifactToolbar
-                    viewMode={viewMode}
-                    onViewModeChange={setViewMode}
-                    onCopyHtml={handleCopyHtml}
+                    <ArtifactToolbar
+                      viewMode={viewMode}
+                      onViewModeChange={setViewMode}
+                      onCopyHtml={handleCopyHtml}
                     copiedHtml={copiedHtml}
                     currentIndex={currentArtifactIndex}
                     totalCount={artifacts.length}
@@ -4908,11 +5057,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                     onNext={handleNextArtifact}
                     onRegenerateCurrent={() => handleRegenerateCurrentArtifact('slide')}
                     onRegenerateAll={() => handleRegenerateCurrentArtifact('project')}
-                    regenerating={regeneratingArtifact}
-                    regeneratingMode={regeneratingArtifactMode}
-                    // onAnimate={handleAnimateArtifacts}
-                    // animating={animatingArtifact}
-                    onAdd={handleAddArtifact}
+                      regenerating={regeneratingArtifact}
+                      regeneratingMode={regeneratingArtifactMode}
+                      onAnimate={handleAnimateArtifacts}
+                      onClearAnimation={handleClearAnimation}
+                      animating={animatingArtifact}
+                      onAdd={handleAddArtifact}
                     adding={addingArtifact}
                     onDelete={handleDeleteArtifact}
                     canDelete={artifacts.length > 1}

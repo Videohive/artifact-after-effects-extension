@@ -67,6 +67,9 @@ const GRID_CELL_COUNT = GRID_DIMENSION * GRID_DIMENSION;
 const GRID_SCALE = 1 / GRID_DIMENSION;
 const HISTORY_PAGE_SIZE = 20;
 const MAX_CHAT_IMAGES = 5;
+const GSAP_SCRIPT_SRC = 'https://unpkg.com/gsap@3/dist/gsap.min.js';
+const ANIMATION_DISABLE_MARKER = '/* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */';
+const ARTIFACT_MARGIN_RESET_CSS = '.artifact, .slide { margin-bottom: 0 !important; }';
 const TEXT_PLACEHOLDER_TAGS = [
   'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'li', 'figcaption', 'label', 'button', 'a',
@@ -163,6 +166,109 @@ const PREVIEW_EDITOR_STYLE = `
     pointer-events: none !important;
   }
 `;
+
+const ensureGsapScript = (headHtml: string) => {
+  const normalized = headHtml.toLowerCase();
+  if (normalized.includes(GSAP_SCRIPT_SRC.toLowerCase())) return headHtml;
+  return `${headHtml}<script src="${GSAP_SCRIPT_SRC}"></script>`;
+};
+
+const ensureGsapInHead = (doc: Document) => {
+  if (!doc.head) return;
+  const existing = doc.head.querySelector(`script[src="${GSAP_SCRIPT_SRC}"]`);
+  if (existing) return;
+  const script = doc.createElement('script');
+  script.setAttribute('src', GSAP_SCRIPT_SRC);
+  doc.head.appendChild(script);
+};
+
+const stripInjectedHeadBlocks = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<html><head>${headHtml}</head><body></body></html>`, 'text/html');
+  const styles = Array.from(doc.head.querySelectorAll('style'));
+  styles.forEach(style => {
+    const text = style.textContent || '';
+    if (text.includes(ANIMATION_DISABLE_MARKER) || text.includes(ARTIFACT_MARGIN_RESET_CSS)) {
+      style.remove();
+    }
+  });
+  return doc.head.innerHTML;
+};
+
+const attachLooseScriptsToArtifacts = (doc: Document, artifacts: HTMLElement[]) => {
+  if (!doc.body || artifacts.length === 0) return;
+  const hoistToHead = (script: HTMLScriptElement) => {
+    if (!doc.head) return;
+    const insert = (node: HTMLScriptElement) => {
+      doc.head.appendChild(node);
+    };
+    if (script.src) {
+      insert(script);
+      return;
+    }
+    const text = script.textContent || '';
+    if (!text.trim()) {
+      insert(script);
+      return;
+    }
+    const needsWrap = !/addEventListener\(['"]load['"]|DOMContentLoaded/.test(text);
+    if (needsWrap) {
+      const wrapper = doc.createElement('script');
+      wrapper.textContent = `window.addEventListener('load', function () {\n${text}\n});`;
+      insert(wrapper);
+      script.remove();
+      return;
+    }
+    insert(script);
+  };
+  const pending: HTMLScriptElement[] = [];
+  let lastArtifact: HTMLElement | null = null;
+  const elements = Array.from(doc.body.querySelectorAll('*'));
+  elements.forEach(el => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.classList.contains('artifact') || el.classList.contains('slide')) {
+      lastArtifact = el;
+      if (pending.length) {
+        pending.forEach(script => {
+          el.insertBefore(script, el.firstChild);
+        });
+        pending.length = 0;
+      }
+      return;
+    }
+    if (el.tagName.toLowerCase() !== 'script') return;
+    if (doc.head && doc.head.contains(el)) return;
+    if (el.closest('.artifact, .slide')) return;
+    if (!(el instanceof HTMLScriptElement)) return;
+    const scope = (el.getAttribute('data-ae2-scope') || '').toLowerCase();
+    const explicitSlide = !!el.getAttribute('data-ae2-slide') || !!el.getAttribute('data-slide');
+    if (scope === 'slide' || explicitSlide) {
+      if (lastArtifact) {
+        lastArtifact.appendChild(el);
+      } else {
+        pending.push(el as HTMLScriptElement);
+      }
+      return;
+    }
+    hoistToHead(el);
+  });
+  if (pending.length) {
+    const first = artifacts[0];
+    pending.forEach(script => {
+      first.insertBefore(script, first.firstChild);
+    });
+  }
+  artifacts.forEach(artifact => {
+    const scripts = Array.from(artifact.querySelectorAll('script'));
+    scripts.forEach(script => {
+      if (!(script instanceof HTMLScriptElement)) return;
+      const scope = (script.getAttribute('data-ae2-scope') || '').toLowerCase();
+      const explicitSlide = !!script.getAttribute('data-ae2-slide') || !!script.getAttribute('data-slide');
+      if (scope === 'slide' || explicitSlide) return;
+      hoistToHead(script);
+    });
+  });
+};
 
 const PREVIEW_EDITOR_SCRIPT = `
   (function () {
@@ -2066,12 +2172,31 @@ const stripRuntimeHead = (headHtml: string) => {
   return head.innerHTML;
 };
 
+const splitHeadScriptsForBody = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const scripts = Array.from(doc.head.querySelectorAll('script'));
+  const bodyScripts: string[] = [];
+  scripts.forEach(script => {
+    if (script.getAttribute('data-ae2-runtime') === 'true') return;
+    if (script.getAttribute('src') === GSAP_SCRIPT_SRC) return;
+    bodyScripts.push(script.outerHTML);
+    script.remove();
+  });
+  return { headHtml: doc.head.innerHTML, bodyScripts: bodyScripts.join('\n') };
+};
+
 const buildPersistedHtml = (headHtml: string, artifactHtmls: string[]) => {
   const cleanHead = stripRuntimeHead(headHtml);
+  const { headHtml: cleanHeadHtml, bodyScripts } = splitHeadScriptsForBody(cleanHead);
   return `<!DOCTYPE html>
       <html>
-        <head>${cleanHead}</head>
+        <head>${cleanHeadHtml}</head>
         <body>
+          ${bodyScripts}
           ${artifactHtmls.join('\n')}
         </body>
       </html>
@@ -2113,7 +2238,7 @@ const updateHeadMetadata = (headHtml: string, title: string, tags: string, descr
   ensureMeta('tags', tagsValue);
   ensureMeta('keywords', tagsValue);
   ensureMeta('description', descriptionValue);
-  return head.innerHTML;
+  return ensureGsapScript(head.innerHTML);
 };
 
 type RootVarEntry = {
@@ -2194,6 +2319,33 @@ ${buildRootBlock(null, updates)}`;
   const updatedRoot = buildRootBlock(rootMatch[1], updates).trim();
   targetStyle.textContent = styleText.replace(/:root\s*{[\s\S]*?}/i, updatedRoot);
   return doc.head.innerHTML;
+};
+
+const stripScriptsFromHead = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const scripts = Array.from(doc.head.querySelectorAll('script'));
+  scripts.forEach(script => {
+    if (script.parentElement) {
+      script.parentElement.removeChild(script);
+    }
+  });
+  return doc.head.innerHTML;
+};
+
+const stripScriptsFromBody = (bodyHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${bodyHtml}</body>`, 'text/html');
+  const scripts = Array.from(doc.body.querySelectorAll('script'));
+  scripts.forEach(script => {
+    if (script.parentElement) {
+      script.parentElement.removeChild(script);
+    }
+  });
+  return doc.body.innerHTML;
 };
 
 const normalizeHex = (value: string) => {
@@ -2476,7 +2628,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [headContent, setHeadContent] = useState<string>('');
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [currentArtifactIndex, setCurrentArtifactIndex] = useState(0);
-  const [animationsEnabled] = useState(false);
+  const [animationsEnabled, setAnimationsEnabled] = useState(true);
+  const animationsEnabledRef = useRef(animationsEnabled);
   const [provider, setProvider] = useState<AiProviderName>('gemini');
   
   const [loading, setLoading] = useState(false);
@@ -2513,6 +2666,15 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [projectTitle, setProjectTitle] = useState('');
   const [projectTags, setProjectTags] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
+
+  useEffect(() => {
+    animationsEnabledRef.current = animationsEnabled;
+  }, [animationsEnabled]);
+
+  const setAnimationsEnabledForExport = (value: boolean) => {
+    animationsEnabledRef.current = value;
+    setAnimationsEnabled(value);
+  };
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingTags, setEditingTags] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
@@ -2988,6 +3150,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       });
     `;
     doc.head.appendChild(script);
+    ensureGsapInHead(doc);
 
     const maxIndex = Math.max(0, sections.length - 1);
     const urlIndex = allowUrlIndex ? getUrlSlideIndexForHistory(currentHistoryId) : null;
@@ -3006,7 +3169,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     desiredArtifactIndexRef.current = null;
 
       if (sections.length > 0) {
-        const nextHead = doc.head.innerHTML;
+        attachLooseScriptsToArtifacts(doc, sections);
+        const nextHead = ensureGsapScript(stripInjectedHeadBlocks(doc.head.innerHTML));
         const artifactHtmls = sections.map((section, i) => {
           normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
           return section.outerHTML;
@@ -3019,7 +3183,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         setArtifactMode(resolvedMode);
         return { headHtml: nextHead, artifacts: artifactHtmls, resolvedMode };
       } else {
-        const nextHead = doc.head.innerHTML;
+        const nextHead = ensureGsapScript(stripInjectedHeadBlocks(doc.head.innerHTML));
         const fallbackHtml = doc.body.innerHTML.trim();
         const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
         historyImmediateNextRef.current = true;
@@ -3515,10 +3679,15 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       undefined,
       contextHtml
     );
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = newArtifactHtml;
-    sanitizeLayout(tempDiv);
-    return tempDiv.innerHTML;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(newArtifactHtml, 'text/html');
+    sanitizeLayout(doc);
+    const sections = collectArtifactElements(doc);
+    if (sections.length > 0) {
+      attachLooseScriptsToArtifacts(doc, sections);
+      return sections[0].outerHTML;
+    }
+    return doc.body.innerHTML;
   };
 
   const extractAnimatedArtifact = (html: string, index: number) => {
@@ -3527,15 +3696,20 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     sanitizeLayout(doc);
     convertVideoBackgrounds(doc);
     convertVideoImages(doc);
+    ensureGsapInHead(doc);
     const sections = collectArtifactElements(doc);
     if (sections.length > 0) {
+      attachLooseScriptsToArtifacts(doc, sections);
       normalizeArtifactClassOrder(sections[0], index + 1, includeSlideClass);
-      return { headHtml: doc.head.innerHTML, artifactHtml: sections[0].outerHTML };
+      return {
+        headHtml: ensureGsapScript(stripInjectedHeadBlocks(doc.head.innerHTML)),
+        artifactHtml: sections[0].outerHTML
+      };
     }
     const fallback = doc.body.innerHTML.trim();
     const wrapperClass = includeSlideClass ? 'artifact slide' : 'artifact';
     return {
-      headHtml: doc.head.innerHTML,
+      headHtml: ensureGsapScript(stripInjectedHeadBlocks(doc.head.innerHTML)),
       artifactHtml: `<section class="${wrapperClass}">${fallback || ''}</section>`
     };
   };
@@ -3707,13 +3881,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   };
 
   const getHeadHtml = (headOverride = headContent) => {
-    const base = headOverride.trim();
+    const cleaned = stripInjectedHeadBlocks(headOverride.trim());
+    const base = ensureGsapScript(cleaned);
     const forceArtifactMarginReset = `<style>
-      .artifact, .slide { margin-bottom: 0 !important; }
+      ${ARTIFACT_MARGIN_RESET_CSS}
     </style>`;
-    if (!animationsEnabled) {
+    if (!animationsEnabledRef.current) {
       return `${base}<style>
-            /* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */
+            ${ANIMATION_DISABLE_MARKER}
             *, *::before, *::after {
               animation: none !important;
               transition: none !important;
@@ -3724,11 +3899,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   };
 
   const buildArtifactHtml = (headHtml: string, artifactHtml: string) => {
+    const { headHtml: cleanHeadHtml, bodyScripts } = splitHeadScriptsForBody(headHtml);
     return `
       <!DOCTYPE html>
       <html>
-        <head>${headHtml}</head>
+        <head>${cleanHeadHtml}</head>
         <body>
+          ${bodyScripts}
           ${artifactHtml}
         </body>
       </html>
@@ -3736,15 +3913,22 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   };
 
   const buildPreviewHtml = (headHtml: string, artifactHtml: string, index: number, revision: number) => {
+    const { headHtml: cleanHeadHtml, bodyScripts } = splitHeadScriptsForBody(headHtml);
     return `
       <!DOCTYPE html>
       <html>
         <head>
-          ${headHtml}
+          ${cleanHeadHtml}
+          <script data-ae2-runtime="true">
+            if (window.gsap && typeof window.gsap.config === 'function') {
+              window.gsap.config({ nullTargetWarn: false });
+            }
+          </script>
           <style>${PREVIEW_EDITOR_STYLE}</style>
           <meta name="ae2-preview-rev" content="${revision}">
         </head>
         <body data-ae2-artifact-index="${index}">
+          ${bodyScripts}
           ${artifactHtml}
           <script>${PREVIEW_EDITOR_SCRIPT}</script>
         </body>
@@ -3857,12 +4041,14 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       };
 
       iframe.addEventListener('load', handleLoad);
+      const exportHeadHtml = stripScriptsFromHead(getHeadHtml());
+      const exportArtifactHtml = stripScriptsFromBody(artifacts[index]);
       const html = `
         <!DOCTYPE html>
         <html>
-          <head>${getHeadHtml()}</head>
+          <head>${exportHeadHtml}</head>
           <body>
-            ${artifacts[index]}
+            ${exportArtifactHtml}
           </body>
         </html>
       `;
@@ -3884,6 +4070,62 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     await new Promise<void>(resolve => win.requestAnimationFrame(() => resolve()));
   };
 
+  const stripAnimationClasses = (root: ParentNode) => {
+    const nodes = Array.from(root.querySelectorAll('[class]'));
+    if (root instanceof HTMLElement && root.getAttribute('class')) {
+      nodes.unshift(root);
+    }
+    nodes.forEach(node => {
+      if (!(node instanceof HTMLElement)) return;
+      const next = node.className
+        .split(/\s+/)
+        .filter(token => token && !token.startsWith('reveal-') && !token.startsWith('delay-'));
+      if (next.length === 0) {
+        node.removeAttribute('class');
+      } else if (next.join(' ') !== node.className) {
+        node.className = next.join(' ');
+      }
+    });
+  };
+
+  const forceVisibleExportState = (win: Window, root: ParentNode) => {
+    const nodes = Array.from(root.querySelectorAll('*'));
+    if (root instanceof HTMLElement) nodes.unshift(root);
+    nodes.forEach(node => {
+      if (!(node instanceof HTMLElement)) return;
+      const style = win.getComputedStyle(node);
+      if (style.display === 'none') {
+        node.style.display = 'block';
+      }
+      if (style.visibility === 'hidden') {
+        node.style.visibility = 'visible';
+      }
+      if (parseFloat(style.opacity) === 0) {
+        node.style.opacity = '1';
+      }
+    });
+  };
+
+  const disableGsapTimelines = async (win: Window) => {
+    const gsap = (win as Window & { gsap?: any }).gsap;
+    if (!gsap || !gsap.globalTimeline) return;
+    await new Promise<void>(resolve => win.requestAnimationFrame(() => resolve()));
+    try {
+      gsap.globalTimeline.clear();
+      gsap.killTweensOf('*');
+      const targets = gsap.utils?.toArray
+        ? gsap.utils.toArray('*')
+        : Array.from(win.document.querySelectorAll('*'));
+      if (targets.length > 0) {
+        gsap.set(targets, {
+          clearProps: 'opacity,transform,transformOrigin,visibility'
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to disable GSAP timelines:', err);
+    }
+  };
+
   const getArtifactElement = (doc: Document) =>
     doc.querySelector('.artifact') || doc.querySelector('.slide') || doc.body;
 
@@ -3896,6 +4138,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
 
     await stabilizeLayout(win);
+    await disableGsapTimelines(win);
+    await new Promise<void>(resolve => win.requestAnimationFrame(() => resolve()));
+    forceVisibleExportState(win, artifactElement);
+    stripAnimationClasses(artifactElement);
     sanitizeLayout(artifactElement);
     return extractArtifactLayout(artifactElement as HTMLElement, win, {
       targetWidth: exportResolution.width,
@@ -3910,6 +4156,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const handleExportArtifactJSON = async () => {
     if (artifacts.length === 0) return;
     
+    setAnimationsEnabledForExport(false);
     try {
       const win = await loadArtifactIntoExportIframe(currentArtifactIndex);
       const artifactElement = getArtifactElement(win.document);
@@ -3930,12 +4177,15 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     } catch (err) {
       console.error("Export failed:", err);
       setErrorMsg("Failed to export JSON structure.");
+    } finally {
+      setAnimationsEnabledForExport(true);
     }
   };
 
   const handleExportProjectJSON = async () => {
     if (artifacts.length === 0) return;
 
+    setAnimationsEnabledForExport(false);
     try {
       const results: Array<{ jsonStructure: any; pallete: ScenePaletteEntry[] }> = [];
       for (let i = 0; i < artifacts.length; i += 1) {
@@ -3994,6 +4244,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     } catch (err) {
       console.error("Export failed:", err);
       setErrorMsg("Failed to export JSON project.");
+    } finally {
+      setAnimationsEnabledForExport(true);
     }
   };
 

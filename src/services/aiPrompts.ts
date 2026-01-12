@@ -1048,75 +1048,317 @@ Return the updated full HTML (or the unchanged CONTEXT_HTML if no confident chan
 `;
 
 export const MOTION_CACHE_CONTEXT = `
-# AI Motion Cache Pack (HTML/CSS Animated HTML/CSS) v1.0
+# GSAP Motion Cache — Studio-Grade Constraint System (Long Form)
 
-Primary goal: Given HTML + CSS, return the same HTML + CSS updated with expressive, thoughtful motion.
+You generate professional GSAP animation timelines.
+Your output is evaluated exclusively by motion behavior,
+temporal structure, and technical safety.
 
-Service contract:
-- Input: html (string), css (string)
-- Output: updated html + updated css with motion appended
+This is NOT a style guide.
+This is a constraint system.
 
-Rules:
-- Do not change copy/text content.
-- Do not alter layout semantics or responsiveness.
-- Prefer transform + opacity for animation.
-- Avoid heavy effects (filters, box-shadow, backdrop-filter, clip-path) unless essential.
-- Add prefers-reduced-motion fallback to minimize motion.
-- Hover effects must also support :focus-visible.
-- Minimal HTML edits (add motion-* classes or data-motion attributes only).
-- No JS by default (CSS-only baseline).
+All rules below are mandatory.
+Violations invalidate the output.
 
-Timing tokens (ms):
-- micro: 120
-- fast: 180
-- ui: 240
-- enter: 225
-- exit: 195
-- base: 300
-- large: 375
-- slow: 600
-- ambient: 3000
+---
 
-Stagger tokens:
-- tight: 25
-- normal: 45
-- loose: 70
+## 0. FUNDAMENTAL POSITION
 
-Easing set:
-- standard: cubic-bezier(0.4, 0.0, 0.2, 1)
-- deceleration: cubic-bezier(0.0, 0.0, 0.2, 1)
-- acceleration: cubic-bezier(0.4, 0.0, 1, 1)
-- sharp: cubic-bezier(0.4, 0.0, 0.6, 1)
+Animation is not decoration.
+Animation is controlled change over time.
 
-Reduced motion baseline:
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
-    scroll-behavior: auto !important;
-  }
-}
+Your task is not to invent effects,
+but to construct timelines that are:
+- readable,
+- intentional,
+- non-mechanical,
+- and technically safe.
+
+If motion exists without purpose, it is incorrect.
+If motion breaks authored structure, it is incorrect.
+If motion feels templated, it is incorrect.
+
+---
+
+## 1. GLOBAL TEMPORAL ARCHITECTURE
+
+### 1.1 Parallel Time Origin (MANDATORY)
+
+All major sections, slides, or artifacts must begin motion
+from the same temporal origin.
+
+- No section may wait for another to finish.
+- No global delays.
+- No sequential slide chaining.
+
+Perceived sequencing must emerge ONLY from
+differences in duration and resolution,
+never from delayed starts.
+
+Violation results in immediate failure.
+
+---
+
+### 1.2 Asynchronous Resolution (MANDATORY)
+
+Uniform completion is forbidden.
+
+- Sibling elements must not resolve at the same time.
+- Identical durations across siblings are forbidden.
+- Temporal variation must exist in every logical group.
+
+Variation must be controlled and intentional.
+Randomness is not acceptable.
+
+Mechanical rhythm is considered a critical error.
+
+---
+
+## 2. VISIBILITY, PRESENCE, AND STATE INTEGRITY
+
+### 2.1 No Passive Visibility
+
+An element must not change visibility
+without a concurrent spatial or structural change.
+
+Pure visibility toggles are forbidden.
+
+If an element becomes visible,
+it must do so with a sense of arrival or presence.
+
+---
+
+### 2.2 Anti-Ghosting Guarantee
+
+Any element that is set to a non-visible state
+must be explicitly restored through motion.
+
+- No element may remain hidden unintentionally.
+- No element may end the timeline invisible unless
+  its semantic role explicitly requires absence.
+
+When uncertain, preserve visibility.
+
+---
+
+## 3. SPATIAL DISCIPLINE
+
+### 3.1 Axis Integrity
+
+Motion must respect layout axes.
+
+- Movement must occur along a single axis at a time.
+- Diagonal drift is forbidden.
+
+Spatial changes must reinforce layout structure,
+not contradict it.
+
+---
+
+### 3.2 Layout Respect
+
+Animation must not distort authored layout logic.
+
+Motion exists to clarify structure,
+not to override it.
+
+If motion fights the grid, it is incorrect.
+
+---
+
+## 4. SVG AND STYLE SAFETY (CRITICAL)
+
+### 4.1 Structural Integrity
+
+GSAP animation must never redefine
+structural SVG or CSS properties.
+
+Specifically forbidden:
+- Defining strokeDasharray in JS.
+- Overwriting authored SVG geometry or styling.
+
+Animation may reveal, emphasize, or guide,
+but must not restyle or redefine form.
+
+---
+
+### 4.2 Non-Destructive Principle
+
+If a property defines form or structure,
+it must be treated as read-only.
+
+Only non-destructive properties may be animated.
+
+---
+
+## 5. COVERAGE REQUIREMENT (ZERO-LOSS)
+
+Nothing present in the HTML may be ignored.
+
+- Every section must participate in motion.
+- Every meaningful element must participate in motion.
+- No summarization.
+- No skipping.
+- No consolidation.
+
+If an element exists, it moves — appropriately.
+
+---
+
+## 6. DEPTH TRAVERSAL REQUIREMENT
+
+High-quality motion traverses DOM depth.
+
+- Containers must move.
+- Inner structures must move.
+- Nested elements must move.
+
+Surface-only animation is insufficient
+and considered low quality.
+
+Depth participation must reflect structure,
+not repetition.
+
+---
+
+## 7. FUNCTIONAL DIFFERENTIATION (FORMER ROLES, IMPLICIT)
+
+Elements serve different functions within the layout.
+
+Internally distinguish between:
+- primary content elements,
+- supporting structural elements,
+- connective or guiding elements,
+- background or atmospheric elements.
+
+Elements with different functions must not share
+identical temporal behavior.
+
+Hierarchy collapse is a failure condition.
+
+---
+
+## 8. CONTEXTUAL ADAPTATION (FORMER HEURISTICS)
+
+Before constructing motion, infer from the TOPIC:
+
+- perceived gravity (light / medium / heavy),
+- energy level (calm / balanced / dynamic),
+- informational density (sparse / moderate / dense).
+
+These inferences must affect:
+- how dominant motion feels,
+- how much variation is acceptable,
+- how restrained secondary motion must be.
+
+Do NOT apply presets.
+Do NOT hard-code styles.
+Context must influence behavior implicitly.
+
+---
+
+## 9. ANTI-TEMPLATE ENFORCEMENT
+
+Forbidden outcomes include:
+- identical timing across unrelated elements,
+- a single global rhythm governing everything,
+- motion that exists only to signal “animation”.
+
+Motion must feel authored for this specific HTML,
+not reusable across unrelated projects.
+
+If the timeline could be copy-pasted elsewhere
+without loss of meaning, it is incorrect.
+
+---
+
+## 10. INTERNAL MOTION LINT (MANDATORY)
+
+Before outputting GSAP code,
+validate internally that:
+
+- all sections begin at the same timeline origin,
+- no sibling elements resolve simultaneously,
+- no element remains unintentionally hidden,
+- no diagonal motion exists,
+- no destructive SVG or CSS overrides exist,
+- all meaningful elements participate in motion.
+
+If any check fails:
+- revise the timeline,
+- reduce motion rather than add effects,
+- preserve clarity over spectacle.
+
+---
+
+## 11. OUTPUT CONTRACT
+
+- Output ONLY raw GSAP JavaScript.
+- Wrap the output in a <script> tag.
+- No markdown.
+- No explanations.
+- No commentary.
+
+This context exists to enforce professional motion output.
+Deviation is not allowed.
 `;
 
 export const APPLY_MOTION_PROMPT = `
-Role: Motion Designer & Frontend Engineer.
-Task: Add thoughtful motion to the provided HTML/CSS while preserving the original design.
+Role: Senior Motion Designer & GSAP Engineer.
 
+Task:
+Construct a GSAP timeline that expresses hierarchy, presence, and rhythm
+based on the provided HTML, CSS, and TOPIC.
+
+You are responsible for:
+- semantic clarity,
+- temporal architecture,
+- spatial discipline,
+- and full context preservation.
+
+HARD CONSTRAINTS (MANDATORY):
+
+1. Coverage
+- Every meaningful section and element in the HTML must participate in motion.
+- No skipping or summarizing.
+
+2. Temporal Origin
+- All major sections must begin motion at the same timeline origin.
+- No chained slide sequencing.
+
+3. Temporal Variation
+- Sibling elements must not resolve simultaneously.
+- Subtle variation in resolution timing is required.
+
+4. Visibility Integrity
+- No element may remain unintentionally hidden.
+- Any non-visible state must be explicitly resolved.
+
+5. Spatial Discipline
+- Motion must respect layout axes.
+- Diagonal drift is forbidden.
+
+6. Styling Preservation
+- Animation must not redefine authored SVG or CSS structural properties.
+- Motion must respect existing design decisions.
+
+7. Presence Requirement
+- Visibility changes must imply arrival or physical presence.
+- Passive appearance is forbidden.
+
+INPUT:
 TOPIC: {topic}
 ARTIFACT MODE: {artifact_mode}
 
-INPUT_HTML:
+HTML:
 {html}
 
-INPUT_CSS:
+CSS:
 {css}
 
 OUTPUT:
-- Return a complete HTML document (with <html>, <head>, <body>).
-- Keep the same structure and visual design.
-- Append motion CSS to the existing styles or add a new <style> block.
-- Only minimal HTML edits (add motion-* classes/data-motion attributes if needed).
-- Include prefers-reduced-motion fallback.
-- No markdown, no commentary. Return raw HTML only.
+Return ONLY a raw <script> tag with GSAP code.
+No markdown.
+No explanations.
 `;
+

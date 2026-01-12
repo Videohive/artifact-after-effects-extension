@@ -245,7 +245,57 @@
     }
 
     var origin = resolveTransformOrigin(style, bbox);
-    setLayerAnchorToOrigin(layer, bbox, origin);
+    var originForPosition = origin;
+    var remappedOrigin = false;
+    if (
+      baseRotation &&
+      style &&
+      style.transformOrigin &&
+      bbox &&
+      bbox.w > 0 &&
+      bbox.h > 0
+    ) {
+      var isTextLayer = false;
+      try {
+        isTextLayer = !!layer.property("Text");
+      } catch (e) {
+        isTextLayer = false;
+      }
+      if (isTextLayer) {
+        var r = layer.sourceRectAtTime(0, false);
+        if (r && isFinite(r.width) && isFinite(r.height) && r.width > 0 && r.height > 0) {
+          var ox = origin.x - bbox.w / 2;
+          var oy = origin.y - bbox.h / 2;
+          var rad = (-baseRotation * Math.PI) / 180;
+          var cos = Math.cos(rad);
+          var sin = Math.sin(rad);
+          var rx = ox * cos - oy * sin;
+          var ry = ox * sin + oy * cos;
+          origin = { x: rx + r.width / 2, y: ry + r.height / 2 };
+          remappedOrigin = true;
+        }
+      }
+    }
+    if (remappedOrigin) {
+      var trRef = layer.property("Transform");
+      var r2 = layer.sourceRectAtTime(0, false);
+      if (r2) {
+        var anchorX = r2.left + origin.x;
+        var anchorY = r2.top + origin.y;
+        if (isFinite(anchorX) && isFinite(anchorY)) {
+          trRef.property("Anchor Point").setValue([anchorX, anchorY]);
+          trRef
+            .property("Position")
+            .setValue([bbox.x + originForPosition.x, bbox.y + originForPosition.y]);
+        } else {
+          setLayerAnchorToOrigin(layer, bbox, originForPosition);
+        }
+      } else {
+        setLayerAnchorToOrigin(layer, bbox, originForPosition);
+      }
+    } else {
+      setLayerAnchorToOrigin(layer, bbox, origin);
+    }
 
     var rotation = baseRotation;
     if (tr && typeof tr.rotation !== "undefined" && !isNaN(tr.rotation)) {

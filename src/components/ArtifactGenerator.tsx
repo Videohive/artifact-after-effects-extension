@@ -3458,7 +3458,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
       if (sections.length > 0) {
         attachLooseScriptsToArtifacts(doc, sections);
-        const nextHead = ensureGsapScript(stripInjectedHeadBlocks(doc.head.innerHTML));
+        const nextHead = ensureGsapScript(stripInjectedHeadBlocks(stripMotionBlocksFromHead(doc.head.innerHTML)));
         const artifactHtmls = sections.map((section, i) => {
           normalizeArtifactClassOrder(section, i + 1, resolvedIncludeSlides);
           return section.outerHTML;
@@ -3471,7 +3471,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         setArtifactMode(resolvedMode);
         return { headHtml: nextHead, artifacts: artifactHtmls, resolvedMode };
       } else {
-        const nextHead = ensureGsapScript(stripInjectedHeadBlocks(doc.head.innerHTML));
+        const nextHead = ensureGsapScript(stripInjectedHeadBlocks(stripMotionBlocksFromHead(doc.head.innerHTML)));
         const fallbackHtml = doc.body.innerHTML.trim();
         const wrapped = `<section class="artifact">${fallbackHtml || ''}</section>`;
         historyImmediateNextRef.current = true;

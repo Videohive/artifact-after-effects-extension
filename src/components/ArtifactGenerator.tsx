@@ -16,6 +16,7 @@ import {
 import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtractor/index';
 import { ArtifactPreview } from './artifact-generator/ArtifactPreview';
 import { ArtifactToolbar } from './artifact-generator/ArtifactToolbar';
+import { AnimationPanel } from './artifact-generator/AnimationPanel';
 import { ArtifactHistoryPanel } from './artifact-generator/ArtifactHistoryPanel';
 import { ExportControls } from './artifact-generator/ExportControls';
 import { GeneratorInput } from './artifact-generator/GeneratorInput';
@@ -76,7 +77,6 @@ const EASE_PACK_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/Ease
 const CUSTOM_EASE_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/CustomEase.min.js';
 const CUSTOM_BOUNCE_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/CustomBounce.min.js';
 const CUSTOM_WIGGLE_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/CustomWiggle.min.js';
-const ANIMATION_DISABLE_MARKER = '/* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */';
 const ARTIFACT_MARGIN_RESET_CSS = '.artifact, .slide { margin-bottom: 0 !important; }';
 const TEXT_PLACEHOLDER_TAGS = [
   'p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -349,9 +349,10 @@ const stripInjectedHeadBlocks = (headHtml: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(`<html><head>${headHtml}</head><body></body></html>`, 'text/html');
   const styles = Array.from(doc.head.querySelectorAll('style'));
+  const legacyDisableMarker = '/* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */';
   styles.forEach(style => {
     const text = style.textContent || '';
-    if (text.includes(ANIMATION_DISABLE_MARKER) || text.includes(ARTIFACT_MARGIN_RESET_CSS)) {
+    if (text.includes(ARTIFACT_MARGIN_RESET_CSS) || text.includes(legacyDisableMarker)) {
       style.remove();
     }
   });
@@ -2484,21 +2485,6 @@ ${buildRootBlock(null, updates)}`;
   return doc.head.innerHTML;
 };
 
-const stripMotionScriptsFromHead = (headHtml: string) => {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(
-    `<html><head>${headHtml}</head><body></body></html>`,
-    'text/html'
-  );
-  const scripts = Array.from(doc.head.querySelectorAll('script'));
-  scripts.forEach(script => {
-    if (script.getAttribute('data-ae2-motion') === 'true') {
-      script.remove();
-    }
-  });
-  return doc.head.innerHTML;
-};
-
 const stripMotionBlocksFromHead = (headHtml: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
@@ -2510,6 +2496,73 @@ const stripMotionBlocksFromHead = (headHtml: string) => {
   const styles = Array.from(doc.head.querySelectorAll('style[data-ae2-motion="true"]'));
   styles.forEach(style => style.remove());
   return doc.head.innerHTML;
+};
+
+const stripMotionBlocksFromArtifact = (artifactHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${artifactHtml}</body>`, 'text/html');
+  const artifactElement = doc.body.querySelector('.artifact') || doc.body.querySelector('.slide');
+  const scope = artifactElement || doc.body;
+  const scripts = Array.from(scope.querySelectorAll('script[data-ae2-motion="true"]'));
+  scripts.forEach(script => script.remove());
+  const styles = Array.from(scope.querySelectorAll('style[data-ae2-motion="true"]'));
+  styles.forEach(style => style.remove());
+  return artifactElement ? artifactElement.outerHTML : doc.body.innerHTML;
+};
+
+const appendMotionStyleToArtifact = (artifactHtml: string, cssAnimated: string) => {
+  if (!cssAnimated.trim()) return artifactHtml;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${artifactHtml}</body>`, 'text/html');
+  const artifactElement = doc.body.querySelector('.artifact') || doc.body.querySelector('.slide');
+  const target = artifactElement || doc.body;
+  const style = doc.createElement('style');
+  style.setAttribute('data-ae2-motion', 'true');
+  style.textContent = cssAnimated;
+  target.appendChild(style);
+  return artifactElement ? artifactElement.outerHTML : doc.body.innerHTML;
+};
+
+const appendMotionScriptToArtifact = (artifactHtml: string, scriptRaw: string) => {
+  const scriptText = extractScriptText(scriptRaw);
+  if (!scriptText.trim()) return artifactHtml;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${artifactHtml}</body>`, 'text/html');
+  const artifactElement = doc.body.querySelector('.artifact') || doc.body.querySelector('.slide');
+  const target = artifactElement || doc.body;
+  const needsWrap = !/addEventListener\(['"]load['"]|DOMContentLoaded/.test(scriptText);
+  const readyText =
+    '\nwindow.__ae2MotionReady = true;\n' +
+    "if (document.body) document.body.style.opacity = '1';\n";
+  const script = doc.createElement('script');
+  script.setAttribute('data-ae2-motion', 'true');
+  script.textContent = needsWrap
+    ? `window.addEventListener('load', function () {\n${scriptText}${readyText}});`
+    : `${scriptText}${readyText}`;
+  target.appendChild(script);
+  return artifactElement ? artifactElement.outerHTML : doc.body.innerHTML;
+};
+
+const mergeMotionHeadToArtifact = (headHtml: string, artifactHtml: string) => {
+  const headParser = new DOMParser();
+  const headDoc = headParser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const motionNodes = Array.from(
+    headDoc.head.querySelectorAll('style[data-ae2-motion="true"], script[data-ae2-motion="true"]')
+  );
+  if (motionNodes.length === 0) return artifactHtml;
+
+  const bodyParser = new DOMParser();
+  const bodyDoc = bodyParser.parseFromString(`<body>${artifactHtml}</body>`, 'text/html');
+  const artifactElement = bodyDoc.body.querySelector('.artifact') || bodyDoc.body.querySelector('.slide');
+  const target = artifactElement || bodyDoc.body;
+  motionNodes.forEach(node => {
+    const clone = bodyDoc.importNode(node, true);
+    target.appendChild(clone);
+  });
+  return artifactElement ? artifactElement.outerHTML : bodyDoc.body.innerHTML;
 };
 
 const extractScriptText = (raw: string) => {
@@ -2856,6 +2909,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [regeneratingArtifact, setRegeneratingArtifact] = useState(false);
   const [regeneratingArtifactMode, setRegeneratingArtifactMode] = useState<'slide' | 'project' | null>(null);
   const [animatingArtifact, setAnimatingArtifact] = useState(false);
+  const [animatingArtifactMode, setAnimatingArtifactMode] = useState<'slide' | 'project' | null>(null);
   const [addingArtifact, setAddingArtifact] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -3938,21 +3992,19 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       pendingSaveDelayRef.current = 200;
       if (mode === 'project') {
         const cssContext = getCssContext();
-        const nextArtifacts = [...artifacts];
-        const used = new Set<string>();
-
-        for (let i = 0; i < artifacts.length; i += 1) {
-          const excluded = Array.from(used);
-          const contextHtml = i > 0 ? buildPersistedHtml(headContent, nextArtifacts.slice(0, i)) : '';
-          const regenerated = await regenerateSingleArtifact(i, excluded, cssContext, contextHtml);
-          if (requestId !== regenerateRequestIdRef.current) return;
-          nextArtifacts[i] = regenerated;
-          extractImageUrlsFromHtml(regenerated).forEach(url => used.add(url));
-        }
-
+        const excluded = getUsedImageUrls();
+        const tasks = artifacts.map((_, index) =>
+          regenerateSingleArtifact(index, excluded, cssContext).catch(error => {
+            console.error(error);
+            return artifacts[index];
+          })
+        );
+        const regenerated = await Promise.all(tasks);
+        if (requestId !== regenerateRequestIdRef.current) return;
+        const reindexed = reindexArtifactClasses(regenerated, includeSlideClass);
         historyImmediateNextRef.current = true;
-        setArtifacts(reindexArtifactClasses(nextArtifacts, includeSlideClass));
-        await saveHistorySnapshot(reindexArtifactClasses(nextArtifacts, includeSlideClass));
+        setArtifacts(reindexed);
+        await saveHistorySnapshot(reindexed);
         return ;
       }
 
@@ -3976,72 +4028,107 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     }
   };
 
-  const handleAnimateArtifacts = async () => {
+  const applyMotionToArtifact = async (artifactHtml: string, index: number) => {
+    const cleanedArtifact = stripMotionBlocksFromArtifact(artifactHtml);
+    const cssContext = getCssContext();
+    const headForMotion = stripMotionBlocksFromHead(headContent);
+    const contextHtml = buildArtifactHtml(headForMotion, cleanedArtifact);
+    const motionResponse = await applyMotionToHtml(
+      provider,
+      topic,
+      artifactMode,
+      contextHtml,
+      cssContext
+    );
+
+    const parsedJson = tryParseMotionJson(motionResponse);
+    const htmlAnimated =
+      parsedJson?.html_animated || parsedJson?.html || parsedJson?.htmlAnimated || '';
+    const cssAnimated =
+      parsedJson?.css_animated || parsedJson?.css || parsedJson?.cssAnimated || '';
+
+    if (htmlAnimated) {
+      const fullHtml = looksLikeHtmlDoc(htmlAnimated)
+        ? htmlAnimated
+        : buildArtifactHtml(headForMotion, htmlAnimated);
+      const extracted = extractAnimatedArtifact(fullHtml, index);
+      const strippedArtifact = stripMotionBlocksFromArtifact(extracted.artifactHtml);
+      return mergeMotionHeadToArtifact(extracted.headHtml, strippedArtifact);
+    }
+
+    if (cssAnimated) {
+      return appendMotionStyleToArtifact(cleanedArtifact, cssAnimated);
+    }
+
+    return appendMotionScriptToArtifact(cleanedArtifact, motionResponse);
+  };
+
+  const handleAnimateArtifacts = async (mode: 'slide' | 'project') => {
     if (artifacts.length === 0) return;
     const requestId = ++animateRequestIdRef.current;
     setAnimatingArtifact(true);
+    setAnimatingArtifactMode(mode);
     try {
       pendingSaveDelayRef.current = 200;
-      const cssContext = getCssContext();
-      const contextHtml = buildPersistedHtml(headContent, artifacts);
-      const motionResponse = await applyMotionToHtml(
-        provider,
-        topic,
-        artifactMode,
-        contextHtml,
-        cssContext
+      if (mode === 'project') {
+        const tasks = artifacts.map((artifact, index) =>
+          applyMotionToArtifact(artifact, index).catch(error => {
+            console.error(error);
+            return artifact;
+          })
+        );
+        const animated = await Promise.all(tasks);
+        if (requestId !== animateRequestIdRef.current) return;
+        const reindexed = reindexArtifactClasses(animated, includeSlideClass);
+        historyImmediateNextRef.current = true;
+        setArtifacts(reindexed);
+        await saveHistorySnapshot(reindexed, headContent);
+        return;
+      }
+
+      const animatedArtifact = await applyMotionToArtifact(
+        artifacts[currentArtifactIndex],
+        currentArtifactIndex
       );
       if (requestId !== animateRequestIdRef.current) return;
-
-      const parsedJson = tryParseMotionJson(motionResponse);
-      const htmlAnimated =
-        parsedJson?.html_animated || parsedJson?.html || parsedJson?.htmlAnimated || '';
-      const cssAnimated =
-        parsedJson?.css_animated || parsedJson?.css || parsedJson?.cssAnimated || '';
-
-      if (htmlAnimated) {
-        const nextHead = cssAnimated ? applyMotionCssToHead(headContent, cssAnimated) : headContent;
-        const fullHtml = looksLikeHtmlDoc(htmlAnimated)
-          ? htmlAnimated
-          : buildArtifactHtml(nextHead, htmlAnimated);
-        const parsed = parseAndSetHtml(fullHtml, true);
-        if (parsed) {
-          historyImmediateNextRef.current = true;
-          setHeadContent(parsed.headHtml);
-          setArtifacts(parsed.artifacts);
-          await saveHistorySnapshot(parsed.artifacts, parsed.headHtml);
-        }
-        return;
-      }
-
-      if (cssAnimated) {
-        const nextHead = applyMotionCssToHead(headContent, cssAnimated);
-        historyImmediateNextRef.current = true;
-        setHeadContent(nextHead);
-        await saveHistorySnapshot(artifacts, nextHead);
-        return;
-      }
-
-      const nextHeadRaw = applyMotionScriptToHead(headContent, motionResponse);
-      const nextHead = ensureGsapScript(stripInjectedHeadBlocks(nextHeadRaw));
+      const nextArtifacts = [...artifacts];
+      nextArtifacts[currentArtifactIndex] = animatedArtifact;
+      const reindexed = reindexArtifactClasses(nextArtifacts, includeSlideClass);
       historyImmediateNextRef.current = true;
-      setHeadContent(nextHead);
-      await saveHistorySnapshot(artifacts, nextHead);
+      setArtifacts(reindexed);
+      await saveHistorySnapshot(reindexed, headContent);
     } catch (error) {
       console.error(error);
     } finally {
       if (requestId === animateRequestIdRef.current) {
         setAnimatingArtifact(false);
+        setAnimatingArtifactMode(null);
       }
     }
   };
 
-  const handleClearAnimation = async () => {
+  const handleClearAnimation = async (mode: 'slide' | 'project') => {
     if (artifacts.length === 0) return;
     const cleanedHead = stripMotionBlocksFromHead(headContent);
+    if (mode === 'project') {
+      const cleanedArtifacts = artifacts.map(artifact => stripMotionBlocksFromArtifact(artifact));
+      historyImmediateNextRef.current = true;
+      setHeadContent(cleanedHead);
+      const reindexed = reindexArtifactClasses(cleanedArtifacts, includeSlideClass);
+      setArtifacts(reindexed);
+      await saveHistorySnapshot(reindexed, cleanedHead);
+      return;
+    }
+
+    const nextArtifacts = [...artifacts];
+    nextArtifacts[currentArtifactIndex] = stripMotionBlocksFromArtifact(
+      nextArtifacts[currentArtifactIndex]
+    );
     historyImmediateNextRef.current = true;
     setHeadContent(cleanedHead);
-    await saveHistorySnapshot(artifacts, cleanedHead);
+    const reindexed = reindexArtifactClasses(nextArtifacts, includeSlideClass);
+    setArtifacts(reindexed);
+    await saveHistorySnapshot(reindexed, cleanedHead);
   };
 
   const handleAddArtifact = async () => {
@@ -4117,64 +4204,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const forceArtifactMarginReset = `<style>
       ${ARTIFACT_MARGIN_RESET_CSS}
     </style>`;
-    if (!animationsEnabledRef.current) {
-      return `${base}<style>
-            ${ANIMATION_DISABLE_MARKER}
-            *, *::before, *::after {
-              animation: none !important;
-              transition: none !important;
-            }
-          </style>${forceArtifactMarginReset}`;
-    }
     return `${base}${forceArtifactMarginReset}`;
-  };
-
-  const applyMotionCssToHead = (headHtml: string, cssAnimated: string) => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(
-      `<html><head>${stripMotionScriptsFromHead(headHtml)}</head><body></body></html>`,
-      'text/html'
-    );
-    const existing = Array.from(doc.head.querySelectorAll('style[data-ae2-motion="true"]'));
-    existing.forEach(style => style.remove());
-    const style = doc.createElement('style');
-    style.setAttribute('data-ae2-motion', 'true');
-    style.textContent = cssAnimated;
-    doc.head.appendChild(style);
-    return doc.head.innerHTML;
-  };
-
-  const applyMotionScriptToHead = (headHtml: string, scriptRaw: string) => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(
-      `<html><head>${stripMotionScriptsFromHead(headHtml)}</head><body></body></html>`,
-      'text/html'
-    );
-    const scriptText = extractScriptText(scriptRaw);
-    if (!scriptText) return doc.head.innerHTML;
-    const needsWrap = !/addEventListener\(['"]load['"]|DOMContentLoaded/.test(scriptText);
-    const script = doc.createElement('script');
-    script.setAttribute('data-ae2-motion', 'true');
-    if (needsWrap) {
-      script.textContent =
-        `window.addEventListener('load', function () {\n` +
-        `${scriptText}\n` +
-        `window.__ae2MotionReady = true;\n` +
-        `if (document.body) document.body.style.opacity = '1';\n` +
-        `});`;
-    } else {
-      script.textContent = scriptText;
-      const readyScript = doc.createElement('script');
-      readyScript.setAttribute('data-ae2-motion', 'true');
-      readyScript.textContent =
-        `window.addEventListener('load', function () {\n` +
-        `window.__ae2MotionReady = true;\n` +
-        `if (document.body) document.body.style.opacity = '1';\n` +
-        `});`;
-      doc.head.appendChild(readyScript);
-    }
-    doc.head.appendChild(script);
-    return doc.head.innerHTML;
   };
 
   const buildArtifactHtml = (headHtml: string, artifactHtml: string) => {
@@ -4193,7 +4223,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
   const buildPreviewHtml = (headHtml: string, artifactHtml: string, index: number, revision: number) => {
     const { headHtml: cleanHeadHtml, bodyScripts } = splitHeadScriptsForBody(headHtml);
-    const shouldPrehide = cleanHeadHtml.includes('data-ae2-motion="true"');
+    const shouldPrehide =
+      cleanHeadHtml.includes('data-ae2-motion="true"') || artifactHtml.includes('data-ae2-motion="true"');
     const prehideStyle = shouldPrehide
       ? '<style data-ae2-runtime="true">body { opacity: 0; }</style>'
       : '';
@@ -5209,10 +5240,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
               <div className="shrink-0 w-full flex justify-center px-4 pb-4">
                 <div className="flex flex-col gap-3" style={{ width: previewSize.width || '100%' }}>
-                    <ArtifactToolbar
-                      viewMode={viewMode}
-                      onViewModeChange={setViewMode}
-                      onCopyHtml={handleCopyHtml}
+                  <ArtifactToolbar
+                    viewMode={viewMode}
+                    onViewModeChange={setViewMode}
+                    onCopyHtml={handleCopyHtml}
                     copiedHtml={copiedHtml}
                     currentIndex={currentArtifactIndex}
                     totalCount={artifacts.length}
@@ -5220,17 +5251,22 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                     onNext={handleNextArtifact}
                     onRegenerateCurrent={() => handleRegenerateCurrentArtifact('slide')}
                     onRegenerateAll={() => handleRegenerateCurrentArtifact('project')}
-                      regenerating={regeneratingArtifact}
-                      regeneratingMode={regeneratingArtifactMode}
-                      onAnimate={handleAnimateArtifacts}
-                      onClearAnimation={handleClearAnimation}
-                      animating={animatingArtifact}
-                      onAdd={handleAddArtifact}
+                    regenerating={regeneratingArtifact}
+                    regeneratingMode={regeneratingArtifactMode}
+                    onAdd={handleAddArtifact}
                     adding={addingArtifact}
                     onDelete={handleDeleteArtifact}
                     canDelete={artifacts.length > 1}
                     paletteEntries={paletteEntries}
                     onPaletteColorChange={handlePaletteColorChange}
+                  />
+                  <AnimationPanel
+                    onAnimateCurrent={() => handleAnimateArtifacts('slide')}
+                    onAnimateAll={() => handleAnimateArtifacts('project')}
+                    onClearCurrent={() => handleClearAnimation('slide')}
+                    onClearAll={() => handleClearAnimation('project')}
+                    animating={animatingArtifact}
+                    animatingMode={animatingArtifactMode}
                   />
 
                   <ExportControls

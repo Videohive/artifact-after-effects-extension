@@ -6,8 +6,6 @@ import {
   Loader2,
   LayoutGrid,
   Play,
-  Ban,
-  Sparkles,
   Plus,
   RefreshCw,
   RefreshCcw,
@@ -38,9 +36,6 @@ type ArtifactToolbarProps = {
   onRegenerateAll: () => void;
   regenerating: boolean;
   regeneratingMode?: 'slide' | 'project' | null;
-  onAnimate?: () => void;
-  onClearAnimation?: () => void;
-  animating?: boolean;
   onAdd: () => void;
   adding: boolean;
   onDelete: () => void;
@@ -62,9 +57,6 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
   onRegenerateAll,
   regenerating,
   regeneratingMode,
-  onAnimate,
-  onClearAnimation,
-  animating,
   onAdd,
   adding,
   onDelete,
@@ -266,22 +258,6 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = ({
             Project
           </button>
         </div>
-        <button
-          onClick={onAnimate}
-          disabled={animating}
-          className="p-2 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
-          title={regeneratingMode === 'project' ? 'Animate all slides' : 'Animate current slide'}
-        >
-          {animating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-        </button>
-        <button
-          onClick={onClearAnimation}
-          className="p-2 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-50"
-          title="Remove animation"
-          type="button"
-        >
-          <Ban className="w-4 h-4" />
-        </button>
         <button
           onClick={onAdd}
           disabled={adding}

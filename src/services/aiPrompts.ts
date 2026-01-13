@@ -1124,6 +1124,17 @@ No element may idle purely to preserve rhythm.
 
 ---
 
+### 1.4 Local Temporal Offsets (CLARIFICATION)
+
+The use of "delay" or temporal pauses is PERMITTED only as an internal
+inertial mechanism within a single element or an already-moving group.
+
+Rules:
+- Motion must have already started.
+- Presence must already be established.
+- The pause must affect resolution, not or
+
+
 ## 2. VISIBILITY, PRESENCE, AND STATE INTEGRITY
 
 ### 2.1 No Passive Visibility
@@ -1519,6 +1530,59 @@ This prevents runtime errors from undefined \`innerText\` or non-text targets.
 
 ---
 
+#### Step 2C — Selector Rules (MANDATORY)
+
+- Use ONLY id-based selectors for targeting elements in motion code.
+- Do NOT use class selectors, tag selectors, or attribute selectors.
+- Always null-check the element returned by \`getElementById\` before calling
+  \`querySelectorAll\` or any property on it.
+- When animating child collections, first verify the parent exists AND that
+  \`children.length\` is non-zero; otherwise skip the animation.
+
+This prevents null reference errors and avoids ambiguous selection.
+
+---
+
+#### Step 2D — Safe Child Animation Pattern (MANDATORY)
+
+When animating child collections, use this exact guard pattern:
+
+const parent = document.getElementById("some-id");
+if (parent && parent.children.length) {
+  gsap.fromTo(Array.from(parent.children), {...}, {...});
+}
+
+Never access \`.children\` directly without the guard.
+
+---
+
+#### Step 2E — Safe Query and SplitText Patterns (MANDATORY)
+
+Use \`getElementById\` and guard before any query or SplitText:
+
+const el = document.getElementById("some-id");
+if (el) {
+  const nodes = el.querySelectorAll(".some-child");
+  if (nodes.length) {
+    gsap.fromTo(nodes, {...}, {...});
+  }
+}
+
+SplitText safety:
+
+const el = document.getElementById("text-id");
+const text = el ? (el.textContent || "").trim() : "";
+if (el && text.length > 0 && typeof SplitText !== "undefined") {
+  const split = new SplitText(el, { type: "lines" });
+  if (split.lines && split.lines.length) {
+    gsap.fromTo(split.lines, {...}, {...});
+  }
+}
+
+Never call \`querySelectorAll\` or SplitText without null checks.
+
+---
+
 #### Step 3 — SplitText Initialization
 
 Before adding any animation to the timeline:
@@ -1552,31 +1616,6 @@ Animating the original node is allowed ONLY for:
 - container-level motion
 - spatial arrival
 - structural positioning
-
----
-
-#### Step 5 — Internal Timing Construction
-
-When animating split units:
-
-- Use stagger to create internal temporal resolution.
-- Stagger MUST follow reading order.
-- Uniform timing across split units is FORBIDDEN.
-
-Timing variation MUST be subtle and authored.
-Random stagger is FORBIDDEN.
-
----
-
-#### Step 6 — Timeline Integration
-
-SplitText-based animations MUST be inserted into the timeline
-at the same temporal origin as other section elements.
-
-- No isolated timelines for text.
-- No delayed text timelines.
-- Text participates in the same temporal field
-  as containers and structural elements.
 
 ---
 

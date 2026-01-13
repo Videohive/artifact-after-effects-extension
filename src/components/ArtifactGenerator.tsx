@@ -67,7 +67,15 @@ const GRID_CELL_COUNT = GRID_DIMENSION * GRID_DIMENSION;
 const GRID_SCALE = 1 / GRID_DIMENSION;
 const HISTORY_PAGE_SIZE = 20;
 const MAX_CHAT_IMAGES = 5;
-const GSAP_SCRIPT_SRC = 'https://unpkg.com/gsap@3/dist/gsap.min.js';
+const GSAP_SCRIPT_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/gsap.min.js';
+const DRAW_SVG_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/DrawSVGPlugin.min.js';
+const MOTION_PATH_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/MotionPathPlugin.min.js';
+const SPLIT_TEXT_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/SplitText.min.js';
+const TEXT_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/TextPlugin.min.js';
+const EASE_PACK_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/EasePack.min.js';
+const CUSTOM_EASE_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/CustomEase.min.js';
+const CUSTOM_BOUNCE_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/CustomBounce.min.js';
+const CUSTOM_WIGGLE_PLUGIN_SRC = 'https://cdn.jsdelivr.net/npm/gsap@3.14.1/dist/CustomWiggle.min.js';
 const ANIMATION_DISABLE_MARKER = '/* FORCE DISABLE ANIMATIONS - STRICT STATIC MODE */';
 const ARTIFACT_MARGIN_RESET_CSS = '.artifact, .slide { margin-bottom: 0 !important; }';
 const TEXT_PLACEHOLDER_TAGS = [
@@ -168,18 +176,173 @@ const PREVIEW_EDITOR_STYLE = `
 `;
 
 const ensureGsapScript = (headHtml: string) => {
-  const normalized = headHtml.toLowerCase();
-  if (normalized.includes(GSAP_SCRIPT_SRC.toLowerCase())) return headHtml;
-  return `${headHtml}<script src="${GSAP_SCRIPT_SRC}"></script>`;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    `<html><head>${headHtml}</head><body></body></html>`,
+    'text/html'
+  );
+  const head = doc.head;
+  if (!head) return headHtml;
+
+  const legacySrcs = [
+    'https://unpkg.com/gsap@3/dist/gsap.min.js',
+    'https://unpkg.com/gsap@3/dist/DrawSVGPlugin.min.js',
+    'https://unpkg.com/gsap@3/dist/MotionPathPlugin.min.js',
+    'https://unpkg.com/gsap@3/dist/TextPlugin.min.js',
+    'https://assets.codepen.io/16327/DrawSVGPlugin3.min.js',
+    'https://assets.codepen.io/16327/SplitText3.min.js'
+  ];
+  legacySrcs.forEach(src => {
+    Array.from(head.querySelectorAll(`script[src="${src}"]`)).forEach(script => script.remove());
+  });
+
+  Array.from(head.querySelectorAll('script')).forEach(script => {
+    if (script.getAttribute('data-ae2-motion') === 'true') return;
+    if (script.getAttribute('data-ae2-gsap-register') === 'true') return;
+    const text = script.textContent || '';
+    if (!/gsap\.registerPlugin/.test(text)) return;
+    if (/(DrawSVGPlugin|MotionPathPlugin|SplitText|TextPlugin|CustomEase|CustomBounce|CustomWiggle)/.test(text)) {
+      script.remove();
+    }
+  });
+
+  const ensureScriptSrc = (src: string) => {
+    const matches = Array.from(head.querySelectorAll(`script[src="${src}"]`));
+    if (matches.length === 0) {
+      const script = doc.createElement('script');
+      script.setAttribute('src', src);
+      head.appendChild(script);
+      return;
+    }
+    matches.slice(1).forEach(script => script.remove());
+  };
+
+  ensureScriptSrc(GSAP_SCRIPT_SRC);
+  ensureScriptSrc(DRAW_SVG_PLUGIN_SRC);
+  ensureScriptSrc(MOTION_PATH_PLUGIN_SRC);
+  ensureScriptSrc(SPLIT_TEXT_PLUGIN_SRC);
+  ensureScriptSrc(TEXT_PLUGIN_SRC);
+  ensureScriptSrc(EASE_PACK_PLUGIN_SRC);
+  ensureScriptSrc(CUSTOM_EASE_PLUGIN_SRC);
+  ensureScriptSrc(CUSTOM_BOUNCE_PLUGIN_SRC);
+  ensureScriptSrc(CUSTOM_WIGGLE_PLUGIN_SRC);
+
+  const existingRegister = head.querySelectorAll('script[data-ae2-gsap-register="true"]');
+  existingRegister.forEach(script => script.remove());
+
+  const register = doc.createElement('script');
+  register.setAttribute('data-ae2-gsap-register', 'true');
+  register.textContent =
+    'if (window.gsap) {' +
+      'var plugins = [];' +
+      'if (window.DrawSVGPlugin) plugins.push(window.DrawSVGPlugin);' +
+      'if (window.MotionPathPlugin) plugins.push(window.MotionPathPlugin);' +
+      'if (window.SplitText) plugins.push(window.SplitText);' +
+      'if (window.TextPlugin) plugins.push(window.TextPlugin);' +
+      'if (window.CustomEase) plugins.push(window.CustomEase);' +
+      'if (window.CustomBounce) plugins.push(window.CustomBounce);' +
+      'if (window.CustomWiggle) plugins.push(window.CustomWiggle);' +
+      'if (plugins.length) window.gsap.registerPlugin.apply(window.gsap, plugins);' +
+    '}';
+  head.appendChild(register);
+
+  return head.innerHTML;
 };
 
 const ensureGsapInHead = (doc: Document) => {
   if (!doc.head) return;
+  const legacySrcs = [
+    'https://unpkg.com/gsap@3/dist/gsap.min.js',
+    'https://unpkg.com/gsap@3/dist/DrawSVGPlugin.min.js',
+    'https://unpkg.com/gsap@3/dist/MotionPathPlugin.min.js',
+    'https://unpkg.com/gsap@3/dist/TextPlugin.min.js',
+    'https://assets.codepen.io/16327/DrawSVGPlugin3.min.js',
+    'https://assets.codepen.io/16327/SplitText3.min.js'
+  ];
+  legacySrcs.forEach(src => {
+    Array.from(doc.head.querySelectorAll(`script[src="${src}"]`)).forEach(script => script.remove());
+  });
+  Array.from(doc.head.querySelectorAll('script')).forEach(script => {
+    if (script.getAttribute('data-ae2-motion') === 'true') return;
+    if (script.getAttribute('data-ae2-gsap-register') === 'true') return;
+    const text = script.textContent || '';
+    if (!/gsap\.registerPlugin/.test(text)) return;
+    if (/(DrawSVGPlugin|MotionPathPlugin|SplitText|TextPlugin|CustomEase|CustomBounce|CustomWiggle)/.test(text)) {
+      script.remove();
+    }
+  });
   const existing = doc.head.querySelector(`script[src="${GSAP_SCRIPT_SRC}"]`);
-  if (existing) return;
-  const script = doc.createElement('script');
-  script.setAttribute('src', GSAP_SCRIPT_SRC);
-  doc.head.appendChild(script);
+  if (!existing) {
+    const script = doc.createElement('script');
+    script.setAttribute('src', GSAP_SCRIPT_SRC);
+    doc.head.appendChild(script);
+  }
+  const existingDraw = doc.head.querySelector(`script[src="${DRAW_SVG_PLUGIN_SRC}"]`);
+  if (!existingDraw) {
+    const draw = doc.createElement('script');
+    draw.setAttribute('src', DRAW_SVG_PLUGIN_SRC);
+    doc.head.appendChild(draw);
+  }
+  const existingMotion = doc.head.querySelector(`script[src="${MOTION_PATH_PLUGIN_SRC}"]`);
+  if (!existingMotion) {
+    const motion = doc.createElement('script');
+    motion.setAttribute('src', MOTION_PATH_PLUGIN_SRC);
+    doc.head.appendChild(motion);
+  }
+  const existingText = doc.head.querySelector(`script[src="${TEXT_PLUGIN_SRC}"]`);
+  if (!existingText) {
+    const text = doc.createElement('script');
+    text.setAttribute('src', TEXT_PLUGIN_SRC);
+    doc.head.appendChild(text);
+  }
+  const existingEasePack = doc.head.querySelector(`script[src="${EASE_PACK_PLUGIN_SRC}"]`);
+  if (!existingEasePack) {
+    const easePack = doc.createElement('script');
+    easePack.setAttribute('src', EASE_PACK_PLUGIN_SRC);
+    doc.head.appendChild(easePack);
+  }
+  const existingCustomEase = doc.head.querySelector(`script[src="${CUSTOM_EASE_PLUGIN_SRC}"]`);
+  if (!existingCustomEase) {
+    const customEase = doc.createElement('script');
+    customEase.setAttribute('src', CUSTOM_EASE_PLUGIN_SRC);
+    doc.head.appendChild(customEase);
+  }
+  const existingCustomBounce = doc.head.querySelector(`script[src="${CUSTOM_BOUNCE_PLUGIN_SRC}"]`);
+  if (!existingCustomBounce) {
+    const customBounce = doc.createElement('script');
+    customBounce.setAttribute('src', CUSTOM_BOUNCE_PLUGIN_SRC);
+    doc.head.appendChild(customBounce);
+  }
+  const existingCustomWiggle = doc.head.querySelector(`script[src="${CUSTOM_WIGGLE_PLUGIN_SRC}"]`);
+  if (!existingCustomWiggle) {
+    const customWiggle = doc.createElement('script');
+    customWiggle.setAttribute('src', CUSTOM_WIGGLE_PLUGIN_SRC);
+    doc.head.appendChild(customWiggle);
+  }
+  const existingSplit = doc.head.querySelector(`script[src="${SPLIT_TEXT_PLUGIN_SRC}"]`);
+  if (!existingSplit) {
+    const split = doc.createElement('script');
+    split.setAttribute('src', SPLIT_TEXT_PLUGIN_SRC);
+    doc.head.appendChild(split);
+  }
+  const existingRegister = doc.head.querySelector('script[data-ae2-gsap-register="true"]');
+  if (!existingRegister) {
+    const register = doc.createElement('script');
+    register.setAttribute('data-ae2-gsap-register', 'true');
+    register.textContent =
+      'if (window.gsap) {' +
+        'var plugins = [];' +
+        'if (window.DrawSVGPlugin) plugins.push(window.DrawSVGPlugin);' +
+        'if (window.MotionPathPlugin) plugins.push(window.MotionPathPlugin);' +
+        'if (window.SplitText) plugins.push(window.SplitText);' +
+        'if (window.TextPlugin) plugins.push(window.TextPlugin);' +
+        'if (window.CustomEase) plugins.push(window.CustomEase);' +
+        'if (window.CustomBounce) plugins.push(window.CustomBounce);' +
+        'if (window.CustomWiggle) plugins.push(window.CustomWiggle);' +
+        'if (plugins.length) window.gsap.registerPlugin.apply(window.gsap, plugins);' +
+      '}';
+    doc.head.appendChild(register);
+  }
 };
 
 const stripInjectedHeadBlocks = (headHtml: string) => {

@@ -160,44 +160,6 @@ export const GeneratorInput: React.FC<GeneratorInputProps> = ({
           />
         </label>
 
-        {/* <div className="flex items-center gap-2">
-          <span className="font-medium">AI</span>
-          <div className="flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 p-0.5">
-            <button
-              type="button"
-              onClick={() => onProviderChange('gemini')}
-              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                provider === 'gemini'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              Gemini
-            </button>
-            <button
-              type="button"
-              onClick={() => onProviderChange('openai')}
-              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                provider === 'openai'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              ChatGPT
-            </button>
-            <button
-              type="button"
-              onClick={() => onProviderChange('claude')}
-              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-                provider === 'claude'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              Claude
-            </button>
-          </div>
-        </div> */}
       </div>
 
       <div

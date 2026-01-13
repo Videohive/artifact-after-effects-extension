@@ -202,8 +202,12 @@ const createResponseText = async (
     const data = await response.json();
     const rawText = data?.text || data?.response || '';
     // console.log('[AI raw response]', { provider, rawText, responseData: data });
-    if (!rawText) {
-      // console.warn('[AI raw response] empty payload', { provider, responseData: data });
+    if (!rawText || !rawText.trim()) {
+      console.warn('[AI raw response] empty payload', {
+        provider,
+        responseData: data,
+        promptLength: prompt.length
+      });
     }
     return cleanResponseText(rawText);
   });
@@ -243,6 +247,12 @@ const createStreamedResponseText = async (
       throw new Error(`AI API error (${response.status}): ${errorText}`);
     }
     const { finalHtml } = await streamSseResponse(response, onEvent);
+    if (!finalHtml || !finalHtml.trim()) {
+      console.warn('[AI stream response] empty payload', {
+        provider,
+        promptLength: prompt.length
+      });
+    }
     return { text: cleanResponseText(finalHtml || '') };
   });
 };
@@ -784,6 +794,27 @@ const replaceImagePlaceholders = async (
   }
 };
 
+const stripScriptsFromHtml = (html: string) => {
+  if (!html || !html.includes('<script')) return html;
+  try {
+    if (typeof DOMParser === 'undefined') {
+      return html.replace(/<script[\s\S]*?<\/script>/gi, '');
+    }
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const scripts = Array.from(doc.querySelectorAll('script'));
+    scripts.forEach(script => script.remove());
+    return doc.documentElement?.outerHTML || doc.body?.innerHTML || html;
+  } catch {
+    return html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  }
+};
+
+const sanitizeContextHtml = (html?: string | null) => {
+  if (!html) return html || '';
+  return stripScriptsFromHtml(html);
+};
+
 export const generateArtifacts = async (
   provider: AiProviderName,
   topic: string,
@@ -803,7 +834,7 @@ export const generateArtifacts = async (
       .replace(/{art_direction_json}/g, artDirectionJson);
     const finalPrompt = `${CACHE_PRIMER_CONTEXT}\n\n${basePrompt}`;
     const promptWithContext = contextHtml
-      ? `${finalPrompt}\n\nCONTEXT_HTML:\n${contextHtml}`
+      ? `${finalPrompt}\n\nCONTEXT_HTML:\n${sanitizeContextHtml(contextHtml)}`
       : finalPrompt;
     const text = await createResponseText(provider, promptWithContext, 1.5, imageData, {
       autoRefine,
@@ -895,7 +926,7 @@ export const generateArtifactsPersisted = async (
       .replace(/{art_direction_json}/g, artDirectionJson);
     const finalPrompt = `${CACHE_PRIMER_CONTEXT}\n\n${basePrompt}`;
     const promptWithContext = options?.contextHtml
-      ? `${finalPrompt}\n\nCONTEXT_HTML:\n${options.contextHtml}`
+      ? `${finalPrompt}\n\nCONTEXT_HTML:\n${sanitizeContextHtml(options.contextHtml)}`
       : finalPrompt;
     const response = await createPersistedResponseText(
       provider,
@@ -937,7 +968,7 @@ export const updateArtifactsFromContext = async (
     const finalPrompt = UPDATE_FROM_CONTEXT_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode)
-      .replace(/{contextHtml}/g, contextHtml);
+      .replace(/{contextHtml}/g, sanitizeContextHtml(contextHtml));
     const text = await createResponseText(provider, finalPrompt, 0.7, imageData);
     const excluded = extractImageUrlsFromHtml(contextHtml);
     return await replaceImagePlaceholders(
@@ -971,7 +1002,7 @@ export const updateArtifactsFromContextPersisted = async (
     const finalPrompt = UPDATE_FROM_CONTEXT_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode)
-      .replace(/{contextHtml}/g, contextHtml);
+      .replace(/{contextHtml}/g, sanitizeContextHtml(contextHtml));
     const response = await createPersistedResponseText(
       provider,
       finalPrompt,
@@ -1013,7 +1044,7 @@ export const regenerateArtifact = async (
       .replace('{topic}', topic)
       .replace('{artifact_mode}', artifactMode)
       .replace('{cssContext}', truncatedCss)
-      .replace('{contextHtml}', contextHtml || '')
+      .replace('{contextHtml}', sanitizeContextHtml(contextHtml || ''))
       .replace('{currentArtifact}', currentArtifact);
 
     const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
@@ -1050,7 +1081,7 @@ export const generateNewArtifact = async (
       .replace('{topic}', topic)
       .replace('{artifact_mode}', artifactMode)
       .replace('{cssContext}', truncatedCss)
-      .replace('{contextHtml}', contextHtml);
+      .replace('{contextHtml}', sanitizeContextHtml(contextHtml));
 
     const text = await createResponseText(provider, filledPrompt, 0.7, imageData);
     const sectionHtml = extractArtifactSection(text, artifactMode);
@@ -1076,10 +1107,11 @@ export const applyMotionToHtml = async (
   css: string
 ): Promise<string> => {
   try {
+    const sanitizedHtml = sanitizeContextHtml(html);
     const prompt = APPLY_MOTION_PROMPT
       .replace(/{topic}/g, topic)
       .replace(/{artifact_mode}/g, artifactMode)
-      .replace(/{html}/g, html)
+      .replace(/{html}/g, sanitizedHtml)
       .replace(/{css}/g, css);
     const finalPrompt = `${MOTION_CACHE_CONTEXT}\n\n${prompt}`;
     return await createResponseText(provider, finalPrompt, 0.6);

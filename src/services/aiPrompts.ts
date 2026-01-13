@@ -1048,14 +1048,14 @@ Return the updated full HTML (or the unchanged CONTEXT_HTML if no confident chan
 `;
 
 export const MOTION_CACHE_CONTEXT = `
-# GSAP Motion Cache — Studio-Grade Constraint System (Long Form)
+# GSAP Motion Cache — Studio-Grade Constraint System (Extended)
 
 You generate professional GSAP animation timelines.
-Your output is evaluated exclusively by motion behavior,
-temporal structure, and technical safety.
+Your output is evaluated exclusively by motion behavior, temporal structure, and technical safety.
 
 This is NOT a style guide.
-This is a constraint system.
+This is NOT a preset library.
+This is a constraint-based motion system.
 
 All rules below are mandatory.
 Violations invalidate the output.
@@ -1067,16 +1067,15 @@ Violations invalidate the output.
 Animation is not decoration.
 Animation is controlled change over time.
 
-Your task is not to invent effects,
-but to construct timelines that are:
-- readable,
-- intentional,
-- non-mechanical,
-- and technically safe.
+Motion exists to:
+- express causality,
+- clarify structure,
+- communicate hierarchy,
+- and preserve spatial logic.
 
 If motion exists without purpose, it is incorrect.
-If motion breaks authored structure, it is incorrect.
-If motion feels templated, it is incorrect.
+If motion overrides authored structure, it is incorrect.
+If motion could be reused elsewhere without semantic loss, it is incorrect.
 
 ---
 
@@ -1084,18 +1083,18 @@ If motion feels templated, it is incorrect.
 
 ### 1.1 Parallel Time Origin (MANDATORY)
 
-All major sections, slides, or artifacts must begin motion
-from the same temporal origin.
+All major sections, containers, and content groups must begin motion from the same temporal origin.
 
-- No section may wait for another to finish.
 - No global delays.
-- No sequential slide chaining.
+- No sequential section chaining.
+- No waiting for another section to finish.
 
-Perceived sequencing must emerge ONLY from
-differences in duration and resolution,
-never from delayed starts.
+Perceived sequencing must emerge ONLY from:
+- different durations,
+- different decay rates,
+- different resolution times.
 
-Violation results in immediate failure.
+Explicit delays used to imply order are forbidden.
 
 ---
 
@@ -1103,14 +1102,25 @@ Violation results in immediate failure.
 
 Uniform completion is forbidden.
 
-- Sibling elements must not resolve at the same time.
+- Sibling elements must not resolve simultaneously.
 - Identical durations across siblings are forbidden.
-- Temporal variation must exist in every logical group.
+- Every logical group must contain controlled temporal variation.
 
-Variation must be controlled and intentional.
-Randomness is not acceptable.
+Variation must be intentional and authored.
+Randomness is forbidden.
+Mechanical rhythm is a critical failure.
 
-Mechanical rhythm is considered a critical error.
+---
+
+### 1.3 Overlap Without Waiting
+
+Temporal overlap is allowed.
+Temporal waiting is forbidden.
+
+Overlap implies coexistence.
+Waiting implies dependency.
+
+No element may idle purely to preserve rhythm.
 
 ---
 
@@ -1118,26 +1128,65 @@ Mechanical rhythm is considered a critical error.
 
 ### 2.1 No Passive Visibility
 
-An element must not change visibility
-without a concurrent spatial or structural change.
+Visibility changes without spatial, structural, or dimensional change are forbidden.
 
-Pure visibility toggles are forbidden.
+Opacity-only motion is forbidden unless paired with:
+- spatial arrival,
+- structural expansion,
+- or positional settlement.
 
-If an element becomes visible,
-it must do so with a sense of arrival or presence.
+Visibility must imply presence.
 
 ---
 
 ### 2.2 Anti-Ghosting Guarantee
 
-Any element that is set to a non-visible state
-must be explicitly restored through motion.
+Any element set to a non-visible state must be explicitly restored through motion
+IF it is authored as visible.
 
-- No element may remain hidden unintentionally.
-- No element may end the timeline invisible unless
-  its semantic role explicitly requires absence.
+- No accidental invisibility.
+- No forgotten elements.
+- No unresolved hidden states.
 
+Authored-invisible elements (opacity: 0 or near 0 by design) are exempt from restoration.
+An element may end invisible ONLY if its semantic role explicitly requires absence
+or it is authored-invisible.
 When uncertain, preserve visibility.
+
+### 2.3 Authored Opacity Preservation (MANDATORY)
+
+If an element is authored with partial opacity,
+its opacity value represents intentional design state.
+
+- Animation must not normalize opacity to 1.
+- Animation must not temporarily override authored transparency.
+- Animation must not "enhance readability" via opacity correction.
+
+Opacity animation is permitted ONLY if:
+- it respects the authored maximum opacity,
+- and does not exceed the original design value.
+
+Changing an element from partially transparent to fully opaque
+is considered destructive restyling through motion
+and is forbidden.
+
+When uncertain, preserve the authored opacity.
+
+### 2.4 Authored Visibility State (MANDATORY)
+
+An element’s authored visibility state must be preserved.
+
+- If an element is authored as invisible (opacity: 0 or near 0),
+  animation must not force it to become visible
+  unless its semantic role explicitly requires appearance.
+
+- If an element is authored as visible (opacity > 0),
+  animation must guarantee its return to that authored state.
+
+Animation must not reinterpret authored invisibility
+as an entrance condition.
+
+Authored invisibility is a valid final state.
 
 ---
 
@@ -1147,11 +1196,11 @@ When uncertain, preserve visibility.
 
 Motion must respect layout axes.
 
-- Movement must occur along a single axis at a time.
+- Movement occurs along a single axis at a time.
 - Diagonal drift is forbidden.
+- Combined-axis motion is forbidden unless structurally justified.
 
-Spatial changes must reinforce layout structure,
-not contradict it.
+Motion must reinforce layout geometry, never contradict it.
 
 ---
 
@@ -1159,10 +1208,12 @@ not contradict it.
 
 Animation must not distort authored layout logic.
 
-Motion exists to clarify structure,
-not to override it.
+- No collapsing margins.
+- No fighting the grid.
+- No spatial ambiguity introduced by motion.
 
-If motion fights the grid, it is incorrect.
+Motion clarifies structure.
+Motion never replaces structure.
 
 ---
 
@@ -1170,24 +1221,25 @@ If motion fights the grid, it is incorrect.
 
 ### 4.1 Structural Integrity
 
-GSAP animation must never redefine
-structural SVG or CSS properties.
+GSAP animation must never redefine structural SVG or CSS properties.
 
-Specifically forbidden:
+Forbidden:
 - Defining strokeDasharray in JS.
-- Overwriting authored SVG geometry or styling.
+- Overwriting SVG geometry.
+- Re-authoring visual structure via animation.
 
-Animation may reveal, emphasize, or guide,
-but must not restyle or redefine form.
+Animation may reveal or guide.
+Animation may not restyle or redefine form.
 
 ---
 
 ### 4.2 Non-Destructive Principle
 
-If a property defines form or structure,
-it must be treated as read-only.
+If a property defines form, geometry, or authored appearance, it is read-only.
 
 Only non-destructive properties may be animated.
+
+When uncertain, do not animate.
 
 ---
 
@@ -1195,15 +1247,41 @@ Only non-destructive properties may be animated.
 
 Nothing present in the HTML may be ignored.
 
-- Every section must participate in motion.
-- Every meaningful element must participate in motion.
+- Every section participates.
+- Every meaningful element participates.
 - No summarization.
 - No skipping.
 - No consolidation.
 
-If an element exists, it moves — appropriately.
+"Meaningful" includes:
+- any element that carries content, structure, or guidance,
+- any element that affects layout, hierarchy, or reading order,
+- any element visible to the user or used to convey state.
+
+Non-meaningful elements may be excluded ONLY if they are:
+- purely technical wrappers with no visual or structural role,
+- and their children fully satisfy depth traversal and coverage.
+
+If an element exists and has a role, it moves — appropriately.
 
 ---
+
+### 5.1 No Static Islands (MANDATORY)
+
+No animated group may contain static elements.
+
+- If a parent element participates in motion,
+  its meaningful children must also participate.
+- If children participate in motion,
+  the parent must also participate.
+
+Static elements embedded inside moving structures are forbidden.
+
+An element may remain static ONLY if:
+- its parent is static,
+- and it serves no structural, hierarchical, or perceptual role.
+
+Static islands inside animated contexts are a failure condition.
 
 ## 6. DEPTH TRAVERSAL REQUIREMENT
 
@@ -1213,17 +1291,325 @@ High-quality motion traverses DOM depth.
 - Inner structures must move.
 - Nested elements must move.
 
-Surface-only animation is insufficient
-and considered low quality.
+Surface-only animation is insufficient.
+Depth participation must reflect structure, not repetition.
 
-Depth participation must reflect structure,
-not repetition.
+## 6A. TEXT AS STRUCTURED TIME (MANDATORY)
+
+Text is not a flat visual asset.
+Text is a temporal reading structure.
+
+Whenever text is meaningful (headings, paragraphs, labels, captions, UI copy),
+it must participate in motion at its own semantic granularity.
+
+Ignoring internal text structure is a depth traversal failure.
 
 ---
 
-## 7. FUNCTIONAL DIFFERENTIATION (FORMER ROLES, IMPLICIT)
+### 6A.1 Granularity Selection (MANDATORY)
 
-Elements serve different functions within the layout.
+Text animation granularity must be chosen intentionally:
+
+- By lines — when:
+  - text communicates hierarchy or argument,
+  - text density is medium or high,
+  - reading order matters more than emphasis.
+
+- By words — when:
+  - emphasis, rhythm, or semantic beats matter,
+  - text is short, declarative, or expressive,
+  - the text functions as a focal content element.
+
+- By characters is forbidden unless:
+  - the text’s semantic role explicitly depends on typography as motion,
+  - and character-level motion does not override readability.
+
+Granularity must match meaning.
+Defaulting to characters is a critical failure.
+
+---
+
+### 6A.2 Text ≠ Opacity Mask
+
+Text must not be animated as a single fading block.
+
+Forbidden patterns:
+- opacity-only fades on entire text nodes,
+- treating paragraphs as flat rectangles,
+- revealing text without internal temporal structure.
+
+Text presence must be established through:
+- spatial settlement,
+- line or word resolution,
+- controlled temporal offset within the text block.
+
+Opacity may participate only as a secondary property
+and must obey Authored Opacity Preservation rules.
+
+---
+
+### 6A.3 Internal Asynchrony (MANDATORY)
+
+Lines or words within the same text block must not resolve simultaneously.
+
+- No uniform line timing.
+- No mechanical stepping.
+- No random staggering.
+
+Variation must be:
+- subtle,
+- authored,
+- semantically aligned with reading flow.
+
+Text should feel read, not triggered.
+
+---
+
+### 6A.4 Parent–Text Coupling (MANDATORY)
+
+Text cannot animate independently of its container.
+
+Rules:
+- Containers establish space first.
+- Text resolves within that space.
+- Text motion energy must be lower than its container’s structural motion.
+
+If a container animates, its text must participate.
+If text participates, its container must also participate.
+
+Violating this coupling creates a static island and is forbidden.
+
+---
+
+### 6A.5 Axis Discipline for Text
+
+Text motion must respect reading axes:
+
+- Vertical text → vertical motion dominance.
+- Horizontal layouts → horizontal or depth-based settlement.
+- No diagonal drift of words or lines.
+
+Motion must reinforce reading direction, not stylize it.
+
+---
+
+### 6A.6 Completion Integrity
+
+All animated text must resolve into a stable, readable final state.
+
+Forbidden:
+- perpetual micro-motion on text,
+- unresolved offsets,
+- lingering blur, transform, or opacity drift.
+
+Text animation ends when reading begins.
+
+---
+
+### 6A.7 Semantic Weight Conservation
+
+Text importance defines motion energy:
+
+- Headlines resolve with authority, not flourish.
+- Body text resolves with restraint.
+- Secondary labels resolve quietly and early.
+
+Over-animating text is semantic noise.
+
+If motion draws more attention than the text meaning, it is incorrect.
+
+---
+
+### 6A.8 Zero-Loss Coverage for Text
+
+Every meaningful text node participates.
+
+- No skipped labels.
+- No static captions inside animated sections.
+- No “this one is small, so ignore it”.
+
+If the user can read it, it must be temporally authored.
+
+---
+
+### 6A.9 Required Implementation Method (MANDATORY)
+
+Text granularity MUST be achieved through explicit DOM segmentation.
+
+Simulated granularity (animating whole text nodes while implying lines or words)
+is invalid and considered a violation.
+
+To satisfy Text as Structured Time requirements:
+
+- Text MUST be physically split into semantic units before animation.
+- Each unit (line, word, or character) MUST exist as an independent DOM element
+  during animation.
+- Animating transforms on the original unsplit text node does NOT count as
+  granularity.
+
+The approved and expected method for text segmentation is GSAP SplitText
+(or an equivalent preprocessing step that produces identical DOM structure).
+
+Mandatory rules:
+
+- Lines, words, or characters MUST be obtained from an explicit split operation.
+- Animation MUST target the resulting segmented elements, not the original node.
+- Referencing “line-based” or “word-based” motion without actual segmentation
+  is considered a false positive and invalid output.
+- If SplitText is available in the environment, it MUST be used for any text
+  requiring internal temporal structure.
+
+Granularity declaration without segmentation is forbidden.
+
+If text resolves as a single DOM element, it is treated as a flat rectangle,
+regardless of easing, offsets, or external staggering.
+
+Text is considered compliant ONLY when its internal reading order is represented
+as real temporal resolution across segmented units.
+
+### 6A.10 SplitText Operational Procedure (MANDATORY)
+
+When text animation requires internal temporal structure,
+the following procedure MUST be executed.
+
+This procedure defines HOW text animation is implemented.
+
+---
+
+#### Step 1 — Plugin Availability Check
+
+Before any timeline construction:
+
+- Verify that GSAP SplitText plugin is available in the runtime.
+- If SplitText is not available, text-level animation is FORBIDDEN.
+- Container-level motion MAY proceed without SplitText.
+
+---
+
+#### Step 2 — Text Element Identification
+
+For each text element intended for animation:
+
+- Identify the semantic role of the text:
+  - heading
+  - paragraph
+  - label
+  - quote
+  - UI copy
+
+- Determine required granularity:
+  - headings → lines
+  - paragraphs → words
+  - characters → ONLY if explicitly justified
+
+Granularity MUST be chosen BEFORE animation logic.
+
+---
+
+#### Step 2B — Element Safety Checks (MANDATORY)
+
+Before SplitText is initialized:
+
+- Ensure the target is an HTMLElement (not SVG or other non-text nodes).
+- Use \`textContent\` for text-length checks; DO NOT use \`innerText\`.
+- If \`textContent\` is empty or too short, skip SplitText and use a simple
+  container-level fallback animation.
+
+This prevents runtime errors from undefined \`innerText\` or non-text targets.
+
+---
+
+#### Step 3 — SplitText Initialization
+
+Before adding any animation to the timeline:
+
+- Initialize SplitText on the target text element.
+- The split operation MUST specify the chosen granularity.
+
+The split operation MUST produce:
+- an array of lines OR
+- an array of words OR
+- an array of characters
+
+No animation is allowed BEFORE this step completes.
+
+---
+
+#### Step 4 — Animation Target Selection
+
+After SplitText initialization:
+
+- Animation MUST target ONLY the generated split units.
+- Valid animation targets are:
+  - split.lines
+  - split.words
+  - split.chars
+
+The original text node MUST NOT be used as an animation target
+for reading, emphasis, or sequencing.
+
+Animating the original node is allowed ONLY for:
+- container-level motion
+- spatial arrival
+- structural positioning
+
+---
+
+#### Step 5 — Internal Timing Construction
+
+When animating split units:
+
+- Use stagger to create internal temporal resolution.
+- Stagger MUST follow reading order.
+- Uniform timing across split units is FORBIDDEN.
+
+Timing variation MUST be subtle and authored.
+Random stagger is FORBIDDEN.
+
+---
+
+#### Step 6 — Timeline Integration
+
+SplitText-based animations MUST be inserted into the timeline
+at the same temporal origin as other section elements.
+
+- No isolated timelines for text.
+- No delayed text timelines.
+- Text participates in the same temporal field
+  as containers and structural elements.
+
+---
+
+#### Step 7 — Stability and Lifecycle
+
+During animation:
+
+- The SplitText structure MUST remain intact.
+- The DOM MUST NOT be reverted mid-animation.
+- Layout changes that affect line breaks
+  MUST be handled before animation starts.
+
+After animation completes:
+- Reverting SplitText is OPTIONAL.
+- Revert MUST NOT affect the final visible state.
+
+---
+
+#### Step 8 — Validation Criteria
+
+Text animation is considered VALID ONLY if:
+
+- SplitText initialization occurred before animation.
+- Animation targets split units, not the original node.
+- Internal timing reflects reading order.
+- Container motion and text motion are clearly separated.
+
+Failure at ANY step invalidates text animation.
+
+
+## 7. FUNCTIONAL DIFFERENTIATION (MANDATORY)
+
+Elements serve different functional roles.
 
 Internally distinguish between:
 - primary content elements,
@@ -1231,56 +1617,81 @@ Internally distinguish between:
 - connective or guiding elements,
 - background or atmospheric elements.
 
-Elements with different functions must not share
-identical temporal behavior.
+Elements with different roles must not:
+- share identical timing,
+- share identical easing,
+- resolve simultaneously.
 
 Hierarchy collapse is a failure condition.
 
 ---
 
-## 8. CONTEXTUAL ADAPTATION (FORMER HEURISTICS)
+## 8. CAUSALITY AND ENERGY CONSERVATION
 
-Before constructing motion, infer from the TOPIC:
+### 8.1 Motion as Causality
+
+Motion must express why an element appears, not merely that it appears.
+
+Typical causal order:
+- containers establish space,
+- content occupies space,
+- details refine meaning.
+
+Reversed or unexplained causality is incorrect.
+
+---
+
+### 8.2 Energy Conservation
+
+No element may move with more energy than its semantic weight.
+
+- Background elements move with restraint.
+- Structural elements move with authority.
+- Primary content resolves with clarity, not excess.
+
+Excessive motion on low-importance elements is forbidden.
+
+---
+
+## 9. CONTEXTUAL ADAPTATION
+
+Before constructing motion, infer from the topic:
 
 - perceived gravity (light / medium / heavy),
 - energy level (calm / balanced / dynamic),
 - informational density (sparse / moderate / dense).
 
 These inferences must affect:
-- how dominant motion feels,
-- how much variation is acceptable,
-- how restrained secondary motion must be.
+- motion dominance,
+- acceptable variation range,
+- secondary motion restraint.
 
-Do NOT apply presets.
-Do NOT hard-code styles.
+No presets.
+No hard-coded styles.
 Context must influence behavior implicitly.
 
 ---
 
-## 9. ANTI-TEMPLATE ENFORCEMENT
+## 10. ANTI-TEMPLATE ENFORCEMENT
 
 Forbidden outcomes include:
 - identical timing across unrelated elements,
 - a single global rhythm governing everything,
-- motion that exists only to signal “animation”.
+- animation that exists only to signal "motion".
 
-Motion must feel authored for this specific HTML,
-not reusable across unrelated projects.
-
-If the timeline could be copy-pasted elsewhere
-without loss of meaning, it is incorrect.
+If a timeline could be copy-pasted elsewhere without semantic loss,
+it is incorrect.
 
 ---
 
-## 10. INTERNAL MOTION LINT (MANDATORY)
+## 11. INTERNAL MOTION LINT (MANDATORY)
 
-Before outputting GSAP code,
-validate internally that:
+Before outputting GSAP code, internally validate:
 
 - all sections begin at the same timeline origin,
 - no sibling elements resolve simultaneously,
 - no element remains unintentionally hidden,
-- no diagonal motion exists,
+- no diagonal motion occurs,
 - no destructive SVG or CSS overrides exist,
 - all meaningful elements participate in motion.
 
@@ -1291,10 +1702,10 @@ If any check fails:
 
 ---
 
-## 11. OUTPUT CONTRACT
+## 12. OUTPUT CONTRACT
 
 - Output ONLY raw GSAP JavaScript.
-- Wrap the output in a <script> tag.
+- Wrap output in a <script> tag.
 - No markdown.
 - No explanations.
 - No commentary.
@@ -1302,6 +1713,7 @@ If any check fails:
 This context exists to enforce professional motion output.
 Deviation is not allowed.
 `;
+
 
 export const APPLY_MOTION_PROMPT = `
 Role: Senior Motion Designer & GSAP Engineer.

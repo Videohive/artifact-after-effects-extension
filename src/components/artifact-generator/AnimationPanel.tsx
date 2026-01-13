@@ -19,7 +19,7 @@ export const AnimationPanel: React.FC<AnimationPanelProps> = ({
   animatingMode
 }) => (
   <div className="w-full flex justify-center">
-    <div className="flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-2">
+    <div className="flex w-full max-w-full flex-wrap items-center justify-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-2">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
         Animation
       </span>

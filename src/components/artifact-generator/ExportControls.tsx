@@ -75,7 +75,7 @@ export const ExportControls: React.FC<ExportControlsProps> = ({
         </label>
         <input
           type="range"
-          min={5}
+          min={3}
           max={15}
           step={1}
           value={exportDuration}
@@ -83,7 +83,7 @@ export const ExportControls: React.FC<ExportControlsProps> = ({
           className="w-full accent-indigo-500"
         />
         <div className="mt-1 flex justify-between text-[11px] text-neutral-500">
-          <span>5s</span>
+          <span>3s</span>
           <span>15s</span>
         </div>
       </div>

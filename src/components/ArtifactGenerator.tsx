@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Pause, Play } from 'lucide-react';
 import {
   generateArtifacts,
   generateArtifactsStream,
@@ -42,6 +43,8 @@ const URL_TEXT_RE = /^https?:\/\/\S+$/i;
 const LAST_ARTIFACT_KEY = 'ae2:lastArtifactId';
 const LAST_ARTIFACT_INDEX_KEY = 'ae2:lastArtifactIndex';
 const AUTO_REFINE_KEY = 'ae2:autoRefine';
+const TIMELINE_PLAY_KEY = 'ae2:timelinePlay';
+const TIMELINE_DURATION_KEY = 'ae2:timelineDuration';
 
 const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: '1080p', label: 'Full HD (1920x1080)', width: 1920, height: 1080 },
@@ -2931,7 +2934,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [isCodeDirty, setIsCodeDirty] = useState(false);
   const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
   const [exportFps, setExportFps] = useState<number>(30);
-  const [exportDuration, setExportDuration] = useState<number>(10);
+  const [exportDuration, setExportDuration] = useState<number>(() => {
+    if (typeof window === 'undefined') return 10;
+    const stored = window.localStorage.getItem(TIMELINE_DURATION_KEY);
+    const value = stored ? Number(stored) : NaN;
+    return Number.isFinite(value) && value >= 3 ? value : 10;
+  });
   const [projectTitle, setProjectTitle] = useState('');
   const [projectTags, setProjectTags] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
@@ -2967,6 +2975,11 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     id: string;
     position: 'before' | 'after' | 'inside';
   } | null>(null);
+  const [timelinePlaying, setTimelinePlaying] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(TIMELINE_PLAY_KEY) === 'true';
+  });
+  const [timelineElapsed, setTimelineElapsed] = useState(0);
   const artifactsRef = useRef<string[]>([]);
   const [historyItems, setHistoryItems] = useState<ArtifactHistoryItem[]>([]);
   const [historyPolling, setHistoryPolling] = useState(false);
@@ -3003,6 +3016,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const regenerateRequestIdRef = useRef(0);
   const animateRequestIdRef = useRef(0);
   const addArtifactRequestIdRef = useRef(0);
+  const timelineLoopActiveRef = useRef(false);
+  const timelineLoopDurationRef = useRef(0);
+  const previewLoopTimerRef = useRef<number | null>(null);
+  const timelineTickTimerRef = useRef<number | null>(null);
+  const timelineStartRef = useRef(0);
+  const timelineElapsedRef = useRef(0);
 
   useEffect(() => {
     const container = previewStageRef.current;
@@ -4267,6 +4286,71 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
               window.gsap.config({ nullTargetWarn: false });
             }
           </script>
+          <script data-ae2-runtime="true">
+            (function () {
+              var loopTimer = null;
+              var loopActive = false;
+              function restart() {
+                if (!window.gsap || !window.gsap.globalTimeline) return false;
+                try {
+                  var tl = window.gsap.globalTimeline;
+                  tl.pause(0);
+                  if (typeof tl.seek === 'function') {
+                    tl.seek(0);
+                  } else if (typeof tl.time === 'function') {
+                    tl.time(0);
+                  }
+                  tl.play(0);
+                  return true;
+                } catch (error) {
+                  console.warn('Failed to restart GSAP timeline:', error);
+                  return false;
+                }
+              }
+              function stop() {
+                loopActive = false;
+                if (loopTimer != null) {
+                  clearTimeout(loopTimer);
+                  loopTimer = null;
+                }
+              }
+              function schedule(durationMs) {
+                if (!loopActive) return;
+                var delay = Math.max(100, Number(durationMs) || 0);
+                var restarted = restart();
+                loopTimer = setTimeout(function () {
+                  schedule(restarted ? delay : 150);
+                }, restarted ? delay : 150);
+              }
+              function play(durationMs) {
+                stop();
+                loopActive = true;
+                schedule(durationMs);
+              }
+              function reset(options) {
+                if (options && options.stopLoop) {
+                  stop();
+                }
+                restart();
+              }
+              window.__ae2TimelineControl = { play: play, reset: reset, stop: stop };
+              window.addEventListener('message', function (event) {
+                var payload = event && event.data;
+                if (!payload || payload.source !== 'ae2-timeline-control') return;
+                if (payload.action === 'reset') {
+                  reset(payload);
+                  return;
+                }
+                if (payload.action === 'stop') {
+                  stop();
+                  return;
+                }
+                if (payload.action === 'play') {
+                  play(payload.durationMs);
+                }
+              });
+            })();
+          </script>
           <style>${PREVIEW_EDITOR_STYLE}</style>
           <meta name="ae2-preview-rev" content="${revision}">
         </head>
@@ -4636,6 +4720,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setPreviewHtml('');
       return ;
     }
+    syncTimelineElapsed(0);
     if (suppressPreviewReloadRef.current) {
       suppressPreviewReloadRef.current = false;
       return ;
@@ -4654,11 +4739,93 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   }, [autoRefine]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(TIMELINE_PLAY_KEY, timelinePlaying ? 'true' : 'false');
+  }, [timelinePlaying]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(TIMELINE_DURATION_KEY, String(exportDuration));
+  }, [exportDuration]);
+
+  useEffect(() => {
     if (viewMode !== 'preview') return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({ source: 'ae2-layer-panel', type: 'request-layers' }, '*');
   }, [viewMode, previewHtml, currentArtifactIndex]);
+
+  const clearPreviewLoop = () => {
+    if (previewLoopTimerRef.current != null) {
+      window.clearInterval(previewLoopTimerRef.current);
+      previewLoopTimerRef.current = null;
+    }
+  };
+
+  const stopTimelineTicker = () => {
+    if (timelineTickTimerRef.current != null) {
+      window.clearInterval(timelineTickTimerRef.current);
+      timelineTickTimerRef.current = null;
+    }
+  };
+
+  const syncTimelineElapsed = (elapsedSeconds: number) => {
+    timelineElapsedRef.current = elapsedSeconds;
+    setTimelineElapsed(elapsedSeconds);
+  };
+
+  const startTimelineTicker = () => {
+    stopTimelineTicker();
+    timelineStartRef.current = Date.now() - timelineElapsedRef.current * 1000;
+    timelineTickTimerRef.current = window.setInterval(() => {
+      const now = Date.now();
+      const raw = Math.max(0, (now - timelineStartRef.current) / 1000);
+      const duration = Math.max(0.1, exportDuration);
+      const value = duration > 0 ? raw % duration : raw;
+      syncTimelineElapsed(value);
+    }, 100);
+  };
+
+  const restartPreview = () => {
+    setPreviewRevision(prev => prev + 1);
+  };
+
+  const resetTimeline = () => {
+    timelineElapsedRef.current = 0;
+    timelineStartRef.current = Date.now();
+    setTimelineElapsed(0);
+    restartPreview();
+  };
+
+  const startPreviewLoop = (durationMs: number) => {
+    clearPreviewLoop();
+    const delay = Math.max(100, durationMs);
+    previewLoopTimerRef.current = window.setInterval(resetTimeline, delay);
+    resetTimeline();
+    startTimelineTicker();
+  };
+
+  const handleTimelinePlayToggle = () => {
+    const durationMs = Math.max(0.1, exportDuration) * 1000;
+    if (timelinePlaying) {
+      timelineLoopActiveRef.current = false;
+      clearPreviewLoop();
+      stopTimelineTicker();
+      setTimelinePlaying(false);
+      return;
+    }
+    timelineLoopActiveRef.current = true;
+    timelineLoopDurationRef.current = durationMs;
+    startPreviewLoop(durationMs);
+    setTimelinePlaying(true);
+  };
+
+  const handleTimelineReset = () => {
+    if (!timelinePlaying) {
+      stopTimelineTicker();
+    }
+    resetTimeline();
+  };
 
   useEffect(() => {
     if (viewMode !== 'preview') return;
@@ -4674,6 +4841,29 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const timer = window.setTimeout(postState, 60);
     return () => window.clearTimeout(timer);
   }, [viewMode, previewHidden, previewLocked, previewHtml, currentArtifactIndex]);
+
+  useEffect(() => {
+    timelineLoopActiveRef.current = timelinePlaying;
+    if (viewMode !== 'preview') {
+      clearPreviewLoop();
+      stopTimelineTicker();
+      return;
+    }
+    if (!timelinePlaying) {
+      clearPreviewLoop();
+      stopTimelineTicker();
+      return;
+    }
+    const durationMs = Math.max(0.1, exportDuration) * 1000;
+    timelineLoopDurationRef.current = durationMs;
+    startPreviewLoop(durationMs);
+  }, [viewMode, exportDuration, timelinePlaying]);
+
+  useEffect(() => {
+    if (viewMode === 'preview') return;
+    clearPreviewLoop();
+    stopTimelineTicker();
+  }, [viewMode]);
 
   useEffect(() => {
     if (prevViewModeRef.current === 'code' && viewMode !== 'code') {
@@ -5219,9 +5409,30 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   <div className="w-full max-w-6xl px-4">
                     <div className="rounded-xl border border-white/10 bg-neutral-950/80">
                       <div className="px-4 py-2 text-[11px] uppercase tracking-[0.12em] text-sky-200 border-b border-white/10 flex items-center justify-between">
-                        <span>Timeline</span>
+                        <div className="flex items-center gap-2">
+                          <span>Timeline</span>
+                          <button
+                            type="button"
+                            onClick={handleTimelinePlayToggle}
+                            className="p-1.5 rounded-md text-white/80 border border-white/10 hover:text-white hover:border-white/30 transition-colors"
+                            title={timelinePlaying ? 'Pause' : 'Play'}
+                          >
+                            {timelinePlaying ? (
+                              <Pause className="h-3.5 w-3.5" />
+                            ) : (
+                              <Play className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleTimelineReset}
+                            className="px-2 py-1 rounded-md text-[10px] font-semibold tracking-wide text-white/80 border border-white/10 hover:text-white hover:border-white/30 transition-colors"
+                          >
+                            Reset
+                          </button>
+                        </div>
                         <span className="text-[10px] text-white/40">
-                          {formatTimecode(0)} / {formatTimecode(exportDuration)}
+                          {formatTimecode(timelineElapsed)} / {formatTimecode(exportDuration)}
                         </span>
                       </div>
                       <div className="h-32 overflow-auto py-1">
@@ -5280,7 +5491,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                     resolutionOptions={RESOLUTION_OPTIONS}
                     onExportResolutionChange={setExportResolution}
                     exportDuration={exportDuration}
-                    onExportDurationChange={setExportDuration}
+                    onExportDurationChange={(value) => setExportDuration(Math.max(3, value))}
                   />
                 </div>
               </div>

@@ -178,6 +178,8 @@
         if (node.clip && node.clip.enabled) {
           var clipLayer = createClipShapeLayer(comp, node, preBBox, node.clip, parentLayer, layer);
           applyTransform(clipLayer, node.style, preBBox, null);
+          applyMotion(clipLayer, node, preBBox);
+          applyClipPathMotion(clipLayer, node, preBBox);
         }
 
         return layer;
@@ -260,6 +262,8 @@
       if (node.clip && node.clip.enabled) {
         var clipLayer = createClipShapeLayer(comp, node, textBBox, node.clip, parentLayer, layer);
         applyTransform(clipLayer, node.style, textBBox, null);
+        applyMotion(clipLayer, node, textBBox);
+        applyClipPathMotion(clipLayer, node, textBBox);
       }
       return layer;
     }
@@ -304,6 +308,8 @@
       if (node.clip && node.clip.enabled) {
         var clipLayer = createClipShapeLayer(comp, node, imgBBox, node.clip, parentLayer, layer);
         applyTransform(clipLayer, node.style, imgBBox, null);
+        applyMotion(clipLayer, node, imgBBox);
+        applyClipPathMotion(clipLayer, node, imgBBox);
       }
       return layer;
     }

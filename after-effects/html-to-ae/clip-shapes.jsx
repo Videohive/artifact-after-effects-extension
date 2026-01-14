@@ -38,7 +38,7 @@
     }
 
     var layer = comp.layers.addShape();
-    layer.name = safeName((node.name || "Clip") + "_clip");
+    layer.name = safeName(node.name || "Clip");
 
     var contents = layer.property("Contents");
     var grp = contents.addProperty("ADBE Vector Group");

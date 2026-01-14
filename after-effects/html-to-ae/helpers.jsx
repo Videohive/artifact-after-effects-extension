@@ -864,6 +864,220 @@
     }
   }
 
+  function collectClipPathSegments(motionList) {
+    var out = [];
+    if (!motionList || !motionList.length) return out;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props.clipPath) continue;
+      out.push(entry);
+    }
+    return out;
+  }
+
+  function parseInsetValues(value, bbox) {
+    if (!value || !bbox) return null;
+    var s = String(value).trim();
+    if (s.indexOf("inset(") !== 0) return null;
+    s = s.substring(6);
+    if (s.charAt(s.length - 1) === ")") s = s.substring(0, s.length - 1);
+    var roundIdx = s.indexOf("round");
+    if (roundIdx !== -1) s = s.substring(0, roundIdx);
+    var slashIdx = s.indexOf("/");
+    if (slashIdx !== -1) s = s.substring(0, slashIdx);
+    var raw = s.replace(/,/g, " ").split(/\s+/);
+    var parts = [];
+    for (var i = 0; i < raw.length; i++) {
+      if (raw[i]) parts.push(raw[i]);
+    }
+    if (!parts.length) return null;
+
+    function parsePart(token, axis) {
+      var t = String(token);
+      if (t.indexOf("%") !== -1) {
+        var pct = parseFloat(t);
+        if (!isFinite(pct)) return 0;
+        return axis * (pct / 100);
+      }
+      var n = parseFloat(t);
+      return isFinite(n) ? n : 0;
+    }
+
+    var top, right, bottom, left;
+    if (parts.length === 1) {
+      top = right = bottom = left = parts[0];
+    } else if (parts.length === 2) {
+      top = bottom = parts[0];
+      right = left = parts[1];
+    } else if (parts.length === 3) {
+      top = parts[0];
+      right = left = parts[1];
+      bottom = parts[2];
+    } else {
+      top = parts[0];
+      right = parts[1];
+      bottom = parts[2];
+      left = parts[3];
+    }
+
+    return {
+      top: parsePart(top, bbox.h),
+      right: parsePart(right, bbox.w),
+      bottom: parsePart(bottom, bbox.h),
+      left: parsePart(left, bbox.w),
+    };
+  }
+
+  function buildInsetShape(inset, bbox) {
+    if (!inset || !bbox) return null;
+    var l = inset.left || 0;
+    var t = inset.top || 0;
+    var r = inset.right || 0;
+    var b = inset.bottom || 0;
+    var w = Math.max(0, bbox.w - l - r);
+    var h = Math.max(0, bbox.h - t - b);
+    var x0 = l;
+    var y0 = t;
+    var x1 = l + w;
+    var y1 = t + h;
+
+    var s = new Shape();
+    s.vertices = [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+    ];
+    s.inTangents = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ];
+    s.outTangents = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ];
+    s.closed = true;
+    return s;
+  }
+
+  function findFirstShapePathProp(layer) {
+    if (!layer) return null;
+    var contents = layer.property("Contents");
+    if (!contents) return null;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var group = contents.property(i);
+      if (!group || group.matchName !== "ADBE Vector Group") continue;
+      var grpContents = group.property("Contents");
+      if (!grpContents) continue;
+      var cCount = grpContents.numProperties || 0;
+      for (var j = 1; j <= cCount; j++) {
+        var item = grpContents.property(j);
+        if (!item || item.matchName !== "ADBE Vector Shape - Group") continue;
+        var pathProp = item.property("Path");
+        if (pathProp) return pathProp;
+      }
+    }
+    return null;
+  }
+
+  function buildClipPathInsetSegments(motionList, bbox) {
+    var out = { top: [], right: [], bottom: [], left: [] };
+    if (!motionList || !motionList.length || !bbox) return out;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props.clipPath) continue;
+      var clip = entry.props.clipPath || {};
+      var fromVal = clip.from && clip.from.value !== undefined ? clip.from.value : null;
+      var toVal = clip.to && clip.to.value !== undefined ? clip.to.value : null;
+      if (fromVal === null && toVal === null) continue;
+      if (fromVal === null) fromVal = toVal;
+      if (toVal === null) toVal = fromVal;
+
+      var insetFrom = parseInsetValues(fromVal, bbox);
+      var insetTo = parseInsetValues(toVal, bbox);
+      if (!insetFrom && !insetTo) continue;
+      if (!insetFrom) insetFrom = insetTo;
+      if (!insetTo) insetTo = insetFrom;
+
+      var t0 = getMotionStart(entry);
+      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+      var ease = entry.time && entry.time.ease ? entry.time.ease : null;
+
+      out.top.push({ t0: t0, t1: t1, v0: insetFrom.top, v1: insetTo.top, ease: ease });
+      out.right.push({ t0: t0, t1: t1, v0: insetFrom.right, v1: insetTo.right, ease: ease });
+      out.bottom.push({ t0: t0, t1: t1, v0: insetFrom.bottom, v1: insetTo.bottom, ease: ease });
+      out.left.push({ t0: t0, t1: t1, v0: insetFrom.left, v1: insetTo.left, ease: ease });
+    }
+
+    function sortSeg(a, b) {
+      if (a.t0 < b.t0) return -1;
+      if (a.t0 > b.t0) return 1;
+      return 0;
+    }
+    out.top.sort(sortSeg);
+    out.right.sort(sortSeg);
+    out.bottom.sort(sortSeg);
+    out.left.sort(sortSeg);
+    return out;
+  }
+
+  function applyClipPathMotion(layer, node, bbox) {
+    if (!layer || !node || !node.motion || !node.motion.length || !bbox) return;
+    var pathProp = findFirstShapePathProp(layer);
+    if (!pathProp) return;
+    var segments = collectClipPathSegments(node.motion);
+    if (!segments.length) return;
+
+    if (pathProp.canSetExpression) {
+      var insetSegs = buildClipPathInsetSegments(node.motion, bbox);
+      var expr =
+        "var t=time;\n" +
+        "var top=0; var right=0; var bottom=0; var left=0;\n" +
+        buildSegmentedVarExpr(insetSegs.top, "top", 0) +
+        buildSegmentedVarExpr(insetSegs.right, "right", 0) +
+        buildSegmentedVarExpr(insetSegs.bottom, "bottom", 0) +
+        buildSegmentedVarExpr(insetSegs.left, "left", 0) +
+        "var w=Math.max(0," + bbox.w + "-left-right);\n" +
+        "var h=Math.max(0," + bbox.h + "-top-bottom);\n" +
+        "var x0=left; var y0=top; var x1=left+w; var y1=top+h;\n" +
+        "createPath([[x0,y0],[x1,y0],[x1,y1],[x0,y1]]," +
+        "[[0,0],[0,0],[0,0],[0,0]],[[0,0],[0,0],[0,0],[0,0]],true);";
+      pathProp.expression = expr;
+      return;
+    }
+
+    for (var i = 0; i < segments.length; i++) {
+      var entry = segments[i];
+      var props = entry.props || {};
+      var clip = props.clipPath || {};
+      var fromVal = clip.from && clip.from.value !== undefined ? clip.from.value : null;
+      var toVal = clip.to && clip.to.value !== undefined ? clip.to.value : null;
+      if (fromVal === null && toVal === null) continue;
+      if (fromVal === null) fromVal = toVal;
+      if (toVal === null) toVal = fromVal;
+
+      var insetFrom = parseInsetValues(fromVal, bbox);
+      var insetTo = parseInsetValues(toVal, bbox);
+      if (!insetFrom && !insetTo) continue;
+      if (!insetFrom) insetFrom = insetTo;
+      if (!insetTo) insetTo = insetFrom;
+
+      var shapeFrom = buildInsetShape(insetFrom, bbox);
+      var shapeTo = buildInsetShape(insetTo, bbox);
+      if (!shapeFrom || !shapeTo) continue;
+
+      var t0 = getMotionStart(entry);
+      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+      pathProp.setValueAtTime(t0, shapeFrom);
+      pathProp.setValueAtTime(t1, shapeTo);
+    }
+  }
+
   function findMotionTransformOrigin(motionList) {
     if (!motionList || !motionList.length) return null;
     for (var i = 0; i < motionList.length; i++) {

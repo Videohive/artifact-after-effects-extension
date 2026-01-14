@@ -379,54 +379,47 @@ const MOTION_CAPTURE_SCRIPT = `
     function normalizeTargets(targets) {
       var list = [];
       var splitText = null;
+      var splitCount = 0;
       function pushKey(key, splitType) {
         if (!key) return;
         if (list.indexOf(key) === -1) list.push(key);
         if (!splitText && splitType) splitText = splitType;
       }
-      if (!targets) return { keys: list, splitText: splitText };
+      function pushTarget(target) {
+        var meta = getSplitMeta(target);
+        if (meta && meta.source) {
+          splitCount += 1;
+          pushKey(meta.source, meta.type);
+          return;
+        }
+        var key = getTargetKey(target);
+        if (key) pushKey(key, null);
+      }
+      if (!targets) return { keys: list, splitText: splitText, splitCount: splitCount };
       if (typeof targets === 'string') {
         try {
           var resolved = document.querySelectorAll(targets);
           if (resolved && resolved.length) {
             for (var r = 0; r < resolved.length; r += 1) {
-              var meta = getSplitMeta(resolved[r]);
-              if (meta && meta.source) {
-                pushKey(meta.source, meta.type);
-              } else {
-                var key = getTargetKey(resolved[r]);
-                if (key) pushKey(key, null);
-              }
+              pushTarget(resolved[r]);
             }
-            if (list.length) return { keys: list, splitText: splitText };
+            if (list.length) return { keys: list, splitText: splitText, splitCount: splitCount };
           }
         } catch (e) {}
         pushKey(targets, null);
-        return { keys: list, splitText: splitText };
+        return { keys: list, splitText: splitText, splitCount: splitCount };
       }
       if (targets.nodeType === 1) {
-        var metaSingle = getSplitMeta(targets);
-        if (metaSingle && metaSingle.source) {
-          pushKey(metaSingle.source, metaSingle.type);
-          return { keys: list, splitText: splitText };
-        }
-        var single = getTargetKey(targets);
-        if (single) pushKey(single, null);
-        return { keys: list, splitText: splitText };
+        pushTarget(targets);
+        return { keys: list, splitText: splitText, splitCount: splitCount };
       }
       if (typeof targets.length === 'number') {
         for (var i = 0; i < targets.length; i += 1) {
-          var metaList = getSplitMeta(targets[i]);
-          if (metaList && metaList.source) {
-            pushKey(metaList.source, metaList.type);
-          } else {
-            var key = getTargetKey(targets[i]);
-            if (key) pushKey(key, null);
-          }
+          pushTarget(targets[i]);
         }
-        return { keys: list, splitText: splitText };
+        return { keys: list, splitText: splitText, splitCount: splitCount };
       }
-      return { keys: list, splitText: splitText };
+      return { keys: list, splitText: splitText, splitCount: splitCount };
     }
 
     function buildProps(fromVars, toVars) {
@@ -457,6 +450,15 @@ const MOTION_CAPTURE_SCRIPT = `
         }
       }
       if (typeof stagger === 'object') {
+        if (stagger.from === 'random' && window.gsap && window.gsap.utils && typeof window.gsap.utils.distribute === 'function') {
+          try {
+            var dist = window.gsap.utils.distribute(stagger);
+            var distValue = dist(index, null, total);
+            return Number(distValue) || 0;
+          } catch (e2) {
+            return 0;
+          }
+        }
         var each = isFinite(stagger.each) ? Number(stagger.each) : null;
         if (each === null && isFinite(stagger.amount)) {
           each = total > 1 ? Number(stagger.amount) / (total - 1) : 0;
@@ -474,10 +476,61 @@ const MOTION_CAPTURE_SCRIPT = `
       return 0;
     }
 
+    function resolveStaggerTargets(targets) {
+      var out = [];
+      if (!targets) return out;
+      if (typeof targets === 'string') {
+        try {
+          var resolved = document.querySelectorAll(targets);
+          if (resolved && resolved.length) return Array.prototype.slice.call(resolved);
+        } catch (e) {}
+        return out;
+      }
+      if (targets.nodeType === 1) return [targets];
+      if (typeof targets.length === 'number') {
+        for (var i = 0; i < targets.length; i += 1) {
+          if (targets[i] && targets[i].nodeType === 1) out.push(targets[i]);
+        }
+      }
+      return out;
+    }
+
+    function getStaggerDelays(stagger, targets) {
+      var count = targets ? targets.length : 0;
+      if (!stagger || count <= 1) return null;
+      var out = [];
+      if (typeof stagger === 'function') {
+        for (var i = 0; i < count; i += 1) {
+          try {
+            out[i] = Number(stagger(i, targets[i], targets)) || 0;
+          } catch (e) {
+            out[i] = 0;
+          }
+        }
+        return out;
+      }
+      if (typeof stagger === 'object' && stagger.from === 'random' && window.gsap && window.gsap.utils && typeof window.gsap.utils.distribute === 'function') {
+        try {
+          var dist = window.gsap.utils.distribute(stagger);
+          for (var d = 0; d < count; d += 1) {
+            out[d] = Number(dist(d, targets[d], targets)) || 0;
+          }
+          return out;
+        } catch (e2) {
+          return null;
+        }
+      }
+      for (var j = 0; j < count; j += 1) {
+        out[j] = getStaggerDelay(stagger, j, count);
+      }
+      return out;
+    }
+
     function recordTween(tween, type, targets, fromVars, toVars) {
       var normalized = normalizeTargets(targets);
       var targetList = normalized.keys;
       if (!targetList.length) return;
+      var splitCount = normalized.splitCount || 0;
       var duration = 0;
       if (tween && typeof tween.duration === 'function') {
         duration = tween.duration();
@@ -494,6 +547,8 @@ const MOTION_CAPTURE_SCRIPT = `
       }
       var ease = (toVars && toVars.ease) || (fromVars && fromVars.ease) || 'none';
       var stagger = (toVars && toVars.stagger) || (fromVars && fromVars.stagger);
+      var staggerTargets = stagger ? resolveStaggerTargets(targets) : null;
+      var staggerDelays = staggerTargets ? getStaggerDelays(stagger, staggerTargets) : null;
       var baseEntry = {
         splitText: normalized.splitText || undefined,
         type: type,
@@ -505,9 +560,14 @@ const MOTION_CAPTURE_SCRIPT = `
         },
         props: buildProps(fromVars, toVars)
       };
+      if (stagger && normalized.splitText && splitCount > 1) {
+        baseEntry.time.stagger = getStaggerDelay(stagger, splitCount - 1, splitCount);
+      }
       if (stagger) {
         for (var i = 0; i < targetList.length; i += 1) {
-          var staggerDelay = getStaggerDelay(stagger, i, targetList.length);
+          var staggerDelay = staggerDelays && typeof staggerDelays[i] === 'number'
+            ? staggerDelays[i]
+            : getStaggerDelay(stagger, i, targetList.length);
           store.tweens.push({
             targets: [targetList[i]],
             splitText: baseEntry.splitText,

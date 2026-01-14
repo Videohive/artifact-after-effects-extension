@@ -91,6 +91,7 @@ export interface AEMotionTime {
   duration: number;
   delay: number;
   ease?: string;
+  stagger?: number;
 }
 
 export interface AEMotionValue {

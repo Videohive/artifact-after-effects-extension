@@ -768,6 +768,13 @@
     doc.justification = mapTextAlign(node.font ? node.font.textAlign : null);
 
     textProp.setValue(doc);
+    try {
+      var moreOptions = layer.property("Text").property("More Options");
+      if (moreOptions) {
+        var anchorAlign = moreOptions.property("ADBE Text Anchor Point Align");
+        if (anchorAlign) anchorAlign.setValue([0, -40]);
+      }
+    } catch (e) {}
 
     addLineStyleAnimators(layer, node);
 

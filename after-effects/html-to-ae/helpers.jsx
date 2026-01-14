@@ -688,6 +688,7 @@
     var hasPosition = false;
     var hasScale = false;
     var hasRotation = false;
+    var hasRotation3d = false;
     var firstSplitProps = null;
     for (var i = 0; i < motionList.length; i++) {
       var entry = motionList[i];
@@ -700,10 +701,24 @@
       if (props.x || props.y || props.xPercent || props.yPercent) hasPosition = true;
       if (props.scale || props.scaleX || props.scaleY) hasScale = true;
       if (props.rotation || props.rotate) hasRotation = true;
+      if (props.rotateX || props.rotateY) hasRotation3d = true;
     }
     if (!splitType) return;
     if (splitType !== "lines" && splitType !== "words" && splitType !== "chars") {
       splitType = "chars";
+    }
+
+    if (hasRotation3d) {
+      try {
+        var moreOptions = textGroup.property("More Options");
+        if (moreOptions) {
+          var perChar3d = moreOptions.property("ADBE Text Enable Per-char 3D");
+          if (!perChar3d) {
+            perChar3d = moreOptions.property("ADBE Text Enable Per-character 3D");
+          }
+          if (perChar3d) perChar3d.setValue(1);
+        }
+      } catch (e) {}
     }
 
     var animators = textGroup.property("Animators");
@@ -754,6 +769,18 @@
           if (rotStart !== null) rotationProp.setValue(rotStart);
         }
       }
+      if (hasRotation3d) {
+        var rotationXProp = animatorProps.addProperty("ADBE Text Rotation X");
+        if (rotationXProp && firstSplitProps) {
+          var rotXStart = getSplitStartValue(firstSplitProps, "rotateX", null);
+          if (rotXStart !== null) rotationXProp.setValue(rotXStart);
+        }
+        var rotationYProp = animatorProps.addProperty("ADBE Text Rotation Y");
+        if (rotationYProp && firstSplitProps) {
+          var rotYStart = getSplitStartValue(firstSplitProps, "rotateY", null);
+          if (rotYStart !== null) rotationYProp.setValue(rotYStart);
+        }
+      }
     }
     var selector = animator.property("Selectors").addProperty("ADBE Text Selector");
     var advanced = selector.property("ADBE Text Range Advanced");
@@ -766,7 +793,9 @@
     var splitTween = findSplitTween(motionList);
     if (offsetProp && splitTween && offsetProp.canSetExpression) {
       var t0 = getMotionStart(splitTween);
-      var t1 = t0 + (splitTween.time && isFinite(splitTween.time.duration) ? splitTween.time.duration : 0);
+      var dur = splitTween.time && isFinite(splitTween.time.duration) ? splitTween.time.duration : 0;
+      var stagger = splitTween.time && isFinite(splitTween.time.stagger) ? splitTween.time.stagger : 0;
+      var t1 = t0 + dur + stagger;
       var ease = splitTween.time && splitTween.time.ease ? splitTween.time.ease : null;
       offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
     }

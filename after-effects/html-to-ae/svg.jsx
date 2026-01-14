@@ -80,6 +80,7 @@
             if (layerMotion.length) {
               applyMotion(layer, { motion: layerMotion }, localBBox);
             }
+            applySvgInternalMotion(layer, svgData, node.motion);
           }
           layers.push(layer);
         }
@@ -1571,6 +1572,206 @@
       if (matched) out.push(entry);
     }
     return out;
+  }
+
+  function findSvgElementById(svgData, id) {
+    if (!svgData || !svgData.elements || !id) return null;
+    for (var i = 0; i < svgData.elements.length; i++) {
+      var el = svgData.elements[i];
+      if (!el || !el.attrs) continue;
+      if (el.attrs.id === id) return el;
+    }
+    return null;
+  }
+
+  function getSvgElementBounds(el, svgData) {
+    if (!el || !el.attrs) return null;
+    var attrs = el.attrs;
+    if (el.tag === "rect") {
+      var rx = parseSvgLength(attrs.x, svgData.width, 0);
+      var ry = parseSvgLength(attrs.y, svgData.height, 0);
+      var rw = parseSvgLength(attrs.width, svgData.width, 0);
+      var rh = parseSvgLength(attrs.height, svgData.height, 0);
+      return { x: rx, y: ry, w: rw, h: rh };
+    }
+    if (el.tag === "circle") {
+      var cx = parseSvgLength(attrs.cx, svgData.width, 0);
+      var cy = parseSvgLength(attrs.cy, svgData.height, 0);
+      var r = parseSvgLength(attrs.r, svgData.width, 0);
+      return { x: cx - r, y: cy - r, w: r * 2, h: r * 2 };
+    }
+    if (el.tag === "ellipse") {
+      var ecx = parseSvgLength(attrs.cx, svgData.width, 0);
+      var ecy = parseSvgLength(attrs.cy, svgData.height, 0);
+      var erx = parseSvgLength(attrs.rx, svgData.width, 0);
+      var ery = parseSvgLength(attrs.ry, svgData.height, 0);
+      return { x: ecx - erx, y: ecy - ery, w: erx * 2, h: ery * 2 };
+    }
+    if (el.tag === "line") {
+      var x1 = parseSvgLength(attrs.x1, svgData.width, 0);
+      var y1 = parseSvgLength(attrs.y1, svgData.height, 0);
+      var x2 = parseSvgLength(attrs.x2, svgData.width, 0);
+      var y2 = parseSvgLength(attrs.y2, svgData.height, 0);
+      var minX = Math.min(x1, x2);
+      var minY = Math.min(y1, y2);
+      var maxX = Math.max(x1, x2);
+      var maxY = Math.max(y1, y2);
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    if (el.tag === "polyline" || el.tag === "polygon") {
+      var points = parseSvgPoints(attrs.points || "", svgData.width, svgData.height);
+      if (!points.length) return null;
+      var minPX = points[0][0];
+      var minPY = points[0][1];
+      var maxPX = points[0][0];
+      var maxPY = points[0][1];
+      for (var i = 1; i < points.length; i++) {
+        var p = points[i];
+        if (p[0] < minPX) minPX = p[0];
+        if (p[1] < minPY) minPY = p[1];
+        if (p[0] > maxPX) maxPX = p[0];
+        if (p[1] > maxPY) maxPY = p[1];
+      }
+      return { x: minPX, y: minPY, w: maxPX - minPX, h: maxPY - minPY };
+    }
+    if (el.tag === "path") {
+      var d = attrs.d;
+      if (!d) return null;
+      var subpaths = parseSvgPathData(d, svgData);
+      if (!subpaths || !subpaths.length) return null;
+      var minX2 = null;
+      var minY2 = null;
+      var maxX2 = null;
+      var maxY2 = null;
+      for (var s = 0; s < subpaths.length; s++) {
+        var sp = subpaths[s];
+        if (!sp || !sp.points) continue;
+        for (var j = 0; j < sp.points.length; j++) {
+          var pt = sp.points[j];
+          if (!pt) continue;
+          if (minX2 === null || pt[0] < minX2) minX2 = pt[0];
+          if (minY2 === null || pt[1] < minY2) minY2 = pt[1];
+          if (maxX2 === null || pt[0] > maxX2) maxX2 = pt[0];
+          if (maxY2 === null || pt[1] > maxY2) maxY2 = pt[1];
+        }
+      }
+      if (minX2 === null || minY2 === null || maxX2 === null || maxY2 === null) return null;
+      return { x: minX2, y: minY2, w: maxX2 - minX2, h: maxY2 - minY2 };
+    }
+    return null;
+  }
+
+  function applyVectorGroupTransformOrigin(group, motionList, bbox) {
+    var originValue = findMotionTransformOrigin(motionList);
+    if (!originValue || !group || !bbox) return;
+    if (typeof resolveTransformOrigin !== "function") return;
+    var origin = resolveTransformOrigin({ transformOrigin: originValue }, bbox);
+    if (!origin) return;
+    var tr = group.property("ADBE Vector Transform Group") || group.property("Transform");
+    if (!tr) return;
+    var anchorProp = tr.property("Anchor Point");
+    var posProp = tr.property("Position");
+    var scaleProp = tr.property("Scale");
+    if (!anchorProp || !posProp || !scaleProp) return;
+    var anchor = anchorProp.value;
+    var pos = posProp.value;
+    if (!anchor || !pos || anchor.length < 2 || pos.length < 2) return;
+    var newAnchor = [bbox.x + origin.x, bbox.y + origin.y];
+    if (!isFinite(newAnchor[0]) || !isFinite(newAnchor[1])) return;
+    var scale = scaleProp.value;
+    var sx = scale && scale.length ? scale[0] / 100 : 1;
+    var sy = scale && scale.length ? scale[1] / 100 : 1;
+    var dx = (newAnchor[0] - anchor[0]) * sx;
+    var dy = (newAnchor[1] - anchor[1]) * sy;
+    anchorProp.setValue(newAnchor);
+    posProp.setValue([pos[0] + dx, pos[1] + dy]);
+  }
+
+  function applyVectorGroupMotion(group, motionList, bbox) {
+    if (!group || !motionList || !motionList.length) return;
+    var tr = group.property("ADBE Vector Transform Group") || group.property("Transform");
+    if (!tr) return;
+    applyVectorGroupTransformOrigin(group, motionList, bbox);
+
+    var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
+    var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
+
+    var opacityProp = tr.property("Opacity");
+    if (opacityProp) {
+      var baseOpacity = opacityProp.value;
+      var opacitySegments = buildMotionSegments(motionList, "opacity", baseOpacity / 100, 100, null);
+      if (opacitySegments.length && opacityProp.canSetExpression) {
+        opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
+      }
+    }
+
+    var posProp = tr.property("Position");
+    if (posProp) {
+      var basePos = posProp.value;
+      var xSegments = buildMotionSegments(motionList, "x", 0, 1, null);
+      var ySegments = buildMotionSegments(motionList, "y", 0, 1, null);
+      var xPercentSegments = buildMotionSegments(motionList, "xPercent", 0, 1, null);
+      var yPercentSegments = buildMotionSegments(motionList, "yPercent", 0, 1, null);
+      if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
+        var expr =
+          "var base=value;\n" +
+          "var t=time;\n" +
+          buildSegmentedVarExpr(xSegments, "tx", 0) +
+          buildSegmentedVarExpr(ySegments, "ty", 0) +
+          buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
+          buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
+          "[base[0]+tx+txp, base[1]+ty+typ];";
+        if (posProp.canSetExpression) posProp.expression = expr;
+      }
+    }
+
+    var scaleProp = tr.property("Scale");
+    if (scaleProp) {
+      var scaleSegments = buildMotionSegments(motionList, "scale", 1, 1, null);
+      var sxSegments = buildMotionSegments(motionList, "scaleX", 1, 1, null);
+      var sySegments = buildMotionSegments(motionList, "scaleY", 1, 1, null);
+      if (scaleSegments.length || sxSegments.length || sySegments.length) {
+        var exprScale =
+          "var base=value;\n" +
+          "var t=time;\n" +
+          "var sx=1; var sy=1;\n" +
+          "var s=1;\n" +
+          (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", 1) + "sx=s; sy=s;\n" : "") +
+          (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", 1) : "") +
+          (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", 1) : "") +
+          "[base[0]*sx, base[1]*sy];";
+        if (scaleProp.canSetExpression) scaleProp.expression = exprScale;
+      }
+    }
+
+    var rotationProp = tr.property("Rotation");
+    if (rotationProp) {
+      var baseRot = rotationProp.value;
+      var rotSegments = buildMotionSegments(motionList, "rotation", baseRot, 1, null);
+      var rotateSegments = buildMotionSegments(motionList, "rotate", baseRot, 1, null);
+      var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
+      if (useRotSegments.length && rotationProp.canSetExpression) {
+        rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
+      }
+    }
+  }
+
+  function applySvgInternalMotion(layer, svgData, motionList) {
+    if (!layer || !svgData || !motionList || !motionList.length) return;
+    var contents = layer.property("Contents");
+    if (!contents) return;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var group = contents.property(i);
+      if (!group || group.matchName !== "ADBE Vector Group") continue;
+      var groupName = group.name;
+      if (!groupName) continue;
+      var groupMotion = filterMotionForLayer(motionList, groupName);
+      if (!groupMotion.length) continue;
+      var svgEl = findSvgElementById(svgData, groupName);
+      var bbox = svgEl ? getSvgElementBounds(svgEl, svgData) : null;
+      applyVectorGroupMotion(group, groupMotion, bbox || null);
+    }
   }
 
   function getDashLengthFromMotion(motionList) {

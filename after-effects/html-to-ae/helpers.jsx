@@ -641,9 +641,141 @@
     );
   }
 
+  function mapSplitBasedOn(type) {
+    if (type === "words") return 3;
+    if (type === "lines") return 4;
+    return 1; // chars
+  }
+
+  function findSplitTween(motionList) {
+    if (!motionList || !motionList.length) return null;
+    var best = null;
+    var bestTime = null;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.splitText) continue;
+      var start = getMotionStart(entry);
+      if (bestTime === null || start < bestTime) {
+        best = entry;
+        bestTime = start;
+      }
+    }
+    return best;
+  }
+
+  function getSplitStartValue(props, key, fallback) {
+    if (!props || !props[key]) return fallback;
+    var entry = props[key];
+    var fromVal = entry && entry.from ? parseMotionNumber(entry.from.value) : null;
+    if (fromVal !== null) return fromVal;
+    var toVal = entry && entry.to ? parseMotionNumber(entry.to.value) : null;
+    if (toVal !== null) return toVal;
+    return fallback;
+  }
+
+  function ensureSplitTextAnimator(layer, motionList, bbox) {
+    if (!layer || !motionList || !motionList.length) return;
+    var textGroup = null;
+    try {
+      textGroup = layer.property("Text");
+    } catch (e) {
+      textGroup = null;
+    }
+    if (!textGroup) return;
+
+    var splitType = null;
+    var hasOpacity = false;
+    var hasPosition = false;
+    var hasScale = false;
+    var hasRotation = false;
+    var firstSplitProps = null;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.splitText) continue;
+      if (!splitType) splitType = String(entry.splitText).toLowerCase();
+      var props = entry.props || null;
+      if (!firstSplitProps && props) firstSplitProps = props;
+      if (!props) continue;
+      if (props.opacity) hasOpacity = true;
+      if (props.x || props.y || props.xPercent || props.yPercent) hasPosition = true;
+      if (props.scale || props.scaleX || props.scaleY) hasScale = true;
+      if (props.rotation || props.rotate) hasRotation = true;
+    }
+    if (!splitType) return;
+    if (splitType !== "lines" && splitType !== "words" && splitType !== "chars") {
+      splitType = "chars";
+    }
+
+    var animators = textGroup.property("Animators");
+    var animator = animators.addProperty("ADBE Text Animator");
+    animator.name = "Split " + splitType;
+    var animatorProps = animator.property("ADBE Text Animator Properties");
+    if (animatorProps) {
+      var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
+      var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
+
+      if (hasOpacity) {
+        var opacityProp = animatorProps.addProperty("ADBE Text Opacity");
+        if (opacityProp && firstSplitProps) {
+          var opacityStart = getSplitStartValue(firstSplitProps, "opacity", 1);
+          if (opacityStart !== null) opacityProp.setValue(opacityStart * 100);
+        }
+      }
+      if (hasPosition) {
+        var positionProp = animatorProps.addProperty("ADBE Text Position 3D");
+        if (positionProp && firstSplitProps) {
+          var xStart = getSplitStartValue(firstSplitProps, "x", 0);
+          var yStart = getSplitStartValue(firstSplitProps, "y", 0);
+          var xPct = getSplitStartValue(firstSplitProps, "xPercent", 0);
+          var yPct = getSplitStartValue(firstSplitProps, "yPercent", 0);
+          var px = (xStart || 0) + (xPct ? (xPct / 100) * axisW : 0);
+          var py = (yStart || 0) + (yPct ? (yPct / 100) * axisH : 0);
+          positionProp.setValue([px, py, 0]);
+        }
+      }
+      if (hasScale) {
+        var scaleProp = animatorProps.addProperty("ADBE Text Scale");
+        if (scaleProp && firstSplitProps) {
+          var scaleStart = getSplitStartValue(firstSplitProps, "scale", null);
+          var scaleXStart = getSplitStartValue(firstSplitProps, "scaleX", null);
+          var scaleYStart = getSplitStartValue(firstSplitProps, "scaleY", null);
+          var sx = scaleXStart !== null ? scaleXStart : scaleStart;
+          var sy = scaleYStart !== null ? scaleYStart : scaleStart;
+          if (sx === null) sx = 1;
+          if (sy === null) sy = 1;
+          scaleProp.setValue([sx * 100, sy * 100]);
+        }
+      }
+      if (hasRotation) {
+        var rotationProp = animatorProps.addProperty("ADBE Text Rotation");
+        if (rotationProp && firstSplitProps) {
+          var rotStart = getSplitStartValue(firstSplitProps, "rotation", null);
+          if (rotStart === null) rotStart = getSplitStartValue(firstSplitProps, "rotate", 0);
+          if (rotStart !== null) rotationProp.setValue(rotStart);
+        }
+      }
+    }
+    var selector = animator.property("Selectors").addProperty("ADBE Text Selector");
+    var advanced = selector.property("ADBE Text Range Advanced");
+    var basedOnValue = mapSplitBasedOn(splitType);
+    if (advanced && advanced.property("ADBE Text Range Type2")) {
+      advanced.property("ADBE Text Range Type2").setValue(basedOnValue);
+    }
+
+    var startProp = selector.property("ADBE Text Percent Start");
+    var splitTween = findSplitTween(motionList);
+    if (startProp && splitTween && startProp.canSetExpression) {
+      var t0 = getMotionStart(splitTween);
+      var t1 = t0 + (splitTween.time && isFinite(splitTween.time.duration) ? splitTween.time.duration : 0);
+      var ease = splitTween.time && splitTween.time.ease ? splitTween.time.ease : null;
+      startProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
+    }
+  }
+
   function applyMotion(layer, node, bbox) {
     if (!layer || !node || !node.motion || !node.motion.length) return;
     var motionList = node.motion;
+    ensureSplitTextAnimator(layer, motionList, bbox);
 
     // Opacity (0..1 -> 0..100)
     var opacityProp = layer.property("Transform").property("Opacity");

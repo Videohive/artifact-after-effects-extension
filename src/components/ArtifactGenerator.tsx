@@ -340,10 +340,10 @@ const MOTION_CAPTURE_SCRIPT = `
       if (!target) return null;
       if (typeof target === 'string') return target;
       if (target.nodeType !== 1) return null;
+      if (target.id) return '#' + target.id;
       if (target.ownerSVGElement && target !== target.ownerSVGElement) {
         if (target.ownerSVGElement.id) return '#' + target.ownerSVGElement.id;
       }
-      if (target.id) return '#' + target.id;
       if (target.closest) {
         var parentWithId = target.closest('[id]');
         if (parentWithId && parentWithId.id) return '#' + parentWithId.id;

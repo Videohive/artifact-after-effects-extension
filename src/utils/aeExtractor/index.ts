@@ -349,6 +349,190 @@ const getVisualBBox = (node: AENode): AEBounds => {
   };
 };
 
+const parseMotionNumber = (value: unknown): number | null => {
+  if (value === null || typeof value === 'undefined') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const s = String(value).trim();
+  if (!s) return null;
+  const clean = s.replace('%', '');
+  const n = parseFloat(clean);
+  if (!Number.isFinite(n)) return null;
+  return s.startsWith('-') ? -Math.abs(n) : n;
+};
+
+const buildMotionRange = (
+  motionList: AEMotionTween[] | undefined,
+  propName: string,
+  baseValue: number
+): { min: number; max: number; has: boolean } => {
+  let min = baseValue;
+  let max = baseValue;
+  let has = false;
+  let prev = baseValue;
+  if (!motionList || motionList.length === 0) return { min, max, has };
+  for (const entry of motionList) {
+    const props = entry && entry.props ? entry.props : null;
+    if (!props || !props[propName]) continue;
+    const prop = props[propName];
+    let fromVal = parseMotionNumber(prop.from ? prop.from.value : null);
+    let toVal = parseMotionNumber(prop.to ? prop.to.value : null);
+    if (fromVal === null) fromVal = prev;
+    if (toVal === null) toVal = fromVal;
+    min = Math.min(min, fromVal, toVal);
+    max = Math.max(max, fromVal, toVal);
+    has = true;
+    prev = toVal;
+  }
+  return { min, max, has };
+};
+
+const collectRotationSamples = (min: number, max: number): number[] => {
+  const samples: number[] = [min, max];
+  const start = Math.floor(min / 90);
+  const end = Math.ceil(max / 90);
+  for (let k = start; k <= end; k += 1) {
+    const angle = k * 90;
+    if (angle > min && angle < max) samples.push(angle);
+  }
+  return Array.from(new Set(samples.map(v => Math.round(v * 1000) / 1000)));
+};
+
+const applyMotionToBounds = (bbox: AEBounds, motionList?: AEMotionTween[]): AEBounds => {
+  if (!motionList || motionList.length === 0) return bbox;
+
+  const xRange = buildMotionRange(motionList, 'x', 0);
+  const yRange = buildMotionRange(motionList, 'y', 0);
+  const xPctRange = buildMotionRange(motionList, 'xPercent', 0);
+  const yPctRange = buildMotionRange(motionList, 'yPercent', 0);
+
+  const scaleRange = buildMotionRange(motionList, 'scale', 1);
+  const scaleXRange = buildMotionRange(motionList, 'scaleX', 1);
+  const scaleYRange = buildMotionRange(motionList, 'scaleY', 1);
+
+  const rotationRange = buildMotionRange(
+    motionList,
+    motionList.some(entry => entry.props && entry.props.rotation) ? 'rotation' : 'rotate',
+    0
+  );
+
+  const hasMotion =
+    xRange.has ||
+    yRange.has ||
+    xPctRange.has ||
+    yPctRange.has ||
+    scaleRange.has ||
+    scaleXRange.has ||
+    scaleYRange.has ||
+    rotationRange.has;
+
+  if (!hasMotion) return bbox;
+
+  const dxMin = xRange.min + (xPctRange.min / 100) * bbox.w;
+  const dxMax = xRange.max + (xPctRange.max / 100) * bbox.w;
+  const dyMin = yRange.min + (yPctRange.min / 100) * bbox.h;
+  const dyMax = yRange.max + (yPctRange.max / 100) * bbox.h;
+
+  const sxMin = scaleXRange.has ? scaleXRange.min : scaleRange.has ? scaleRange.min : 1;
+  const sxMax = scaleXRange.has ? scaleXRange.max : scaleRange.has ? scaleRange.max : 1;
+  const syMin = scaleYRange.has ? scaleYRange.min : scaleRange.has ? scaleRange.min : 1;
+  const syMax = scaleYRange.has ? scaleYRange.max : scaleRange.has ? scaleRange.max : 1;
+
+  const angles = rotationRange.has ? collectRotationSamples(rotationRange.min, rotationRange.max) : [0];
+  const sxCandidates = Array.from(new Set([sxMin, sxMax]));
+  const syCandidates = Array.from(new Set([syMin, syMax]));
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const cx = bbox.x + bbox.w / 2;
+  const cy = bbox.y + bbox.h / 2;
+
+  for (const angle of angles) {
+    const rad = (angle * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    for (const sx of sxCandidates) {
+      for (const sy of syCandidates) {
+        const w = Math.abs(bbox.w * sx);
+        const h = Math.abs(bbox.h * sy);
+        const rw = Math.abs(w * cos) + Math.abs(h * sin);
+        const rh = Math.abs(w * sin) + Math.abs(h * cos);
+        const x = cx - rw / 2;
+        const y = cy - rh / 2;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + rw);
+        maxY = Math.max(maxY, y + rh);
+      }
+    }
+  }
+
+  if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return bbox;
+
+  return {
+    x: minX + dxMin,
+    y: minY + dyMin,
+    w: Math.max(0, maxX + dxMax - (minX + dxMin)),
+    h: Math.max(0, maxY + dyMax - (minY + dyMin))
+  };
+};
+
+const clampBoundsTo = (bbox: AEBounds, limits: AEBounds): AEBounds => {
+  const minX = Math.max(bbox.x, limits.x);
+  const minY = Math.max(bbox.y, limits.y);
+  const maxX = Math.min(bbox.x + bbox.w, limits.x + limits.w);
+  const maxY = Math.min(bbox.y + bbox.h, limits.y + limits.h);
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(0, maxX - minX),
+    h: Math.max(0, maxY - minY)
+  };
+};
+
+const hasNodePaint = (style?: Record<string, any> | null): boolean => {
+  if (!style) return false;
+  const bg = style.backgroundColor;
+  const hasBg = !!bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)';
+  const hasGradients = Array.isArray(style.backgroundGradients) && style.backgroundGradients.length > 0;
+  const hasGrid = !!style.backgroundGrid;
+  const hasShadow = Array.isArray(style.boxShadow) ? style.boxShadow.length > 0 : !!style.boxShadow;
+  return hasBg || hasGradients || hasGrid || hasShadow;
+};
+
+const expandGroupBoundsWithMotion = (root: AENode) => {
+  const rootBounds = { ...root.bbox };
+  const visit = (node: AENode, isRoot: boolean): AEBounds => {
+    if (node.children && node.children.length) {
+      let childBounds: AEBounds | null = null;
+      for (const child of node.children) {
+        const b = visit(child, false);
+        childBounds = childBounds ? mergeBoundsRect(childBounds, b) : { ...b };
+      }
+      const shouldExpandGroupBounds =
+        node.type === 'group' && node.children.length > 0 && !node.clip?.enabled && !isRoot;
+      const hasPaint = node.type === 'group' && hasNodePaint(node.style);
+      const hasDecorations = hasPaint || !!node.border || !!node.outline;
+      if (shouldExpandGroupBounds && childBounds) {
+        node.bbox = hasDecorations ? mergeBoundsRect({ ...node.bbox }, childBounds) : childBounds;
+      }
+      if (node.type === 'group' && !isRoot) {
+        node.bbox = clampBoundsTo(node.bbox, rootBounds);
+      }
+    }
+
+    const visual = getVisualBBox(node);
+    const motionBounds = applyMotionToBounds(visual, node.motion);
+    if (node.type === 'group' && !isRoot) {
+      return clampBoundsTo(motionBounds, rootBounds);
+    }
+    return motionBounds;
+  };
+
+  visit(root, true);
+};
+
 const normalizeMotionTarget = (target: string): string | null => {
   if (!target) return null;
   const trimmed = target.trim();
@@ -1616,6 +1800,7 @@ export const extractSlideLayout = async (
   if (!root) throw new Error('extractSlideLayout: slide root is not visible or has zero size.');
 
   attachMotionToNodes(root, options?.motionCapture);
+  expandGroupBoundsWithMotion(root);
 
   return {
     artifactId: slide.id,

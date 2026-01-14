@@ -749,7 +749,7 @@
         }
       }
       if (hasScale) {
-        var scaleProp = animatorProps.addProperty("ADBE Text Scale");
+        var scaleProp = animatorProps.addProperty("ADBE Text Scale 3D");
         if (scaleProp && firstSplitProps) {
           var scaleStart = getSplitStartValue(firstSplitProps, "scale", null);
           var scaleXStart = getSplitStartValue(firstSplitProps, "scaleX", null);

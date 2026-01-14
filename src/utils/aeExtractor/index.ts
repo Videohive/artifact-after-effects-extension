@@ -372,6 +372,14 @@ const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
   visit(root);
 
   const unmatched: AEMotionTween[] = [];
+  const findTextChild = (node: AENode): AENode | null => {
+    if (!node.children || !node.children.length) return null;
+    for (const child of node.children) {
+      if (child.type === 'text') return child;
+    }
+    return null;
+  };
+
   tweens.forEach(tween => {
     if (!tween || !tween.targets || tween.targets.length === 0) return;
     tween.targets.forEach(target => {
@@ -380,8 +388,12 @@ const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
       const node = nodeMap.get(key);
       const entry = { ...tween, targets: [target] };
       if (node) {
-        if (!node.motion) node.motion = [];
-        node.motion.push(entry);
+        const shouldRedirectSplitText =
+          !!entry.splitText && node.type === 'group' && node.children && node.children.length;
+        const targetNode = shouldRedirectSplitText ? findTextChild(node) : null;
+        const attachNode = targetNode || node;
+        if (!attachNode.motion) attachNode.motion = [];
+        attachNode.motion.push(entry);
       } else {
         unmatched.push(entry);
       }

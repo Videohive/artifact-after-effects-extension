@@ -1244,9 +1244,14 @@ export const extractSlideLayout = async (
     }
 
     transformValue = scaleTransformValue(transformValue, scale);
+    const translateOnly = parseTranslateOnly(transformValue);
 
     const shouldNeutralizeTransform =
       isHtmlEl && (isPureRotationTransform(transformValue) || hasEditorTransform);
+    if (translateOnly && !shouldNeutralizeTransform) {
+      // bbox already includes translate; avoid double offset in AE.
+      transformValue = 'none';
+    }
     let restoreTransform: (() => void) | null = null;
 
     if (shouldNeutralizeTransform) {

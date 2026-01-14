@@ -347,6 +347,18 @@
     return n * sign;
   }
 
+  function hasPercentValue(value) {
+    return typeof value === "string" && value.indexOf("%") !== -1;
+  }
+
+  function isPercentMotionEntry(entry, propName) {
+    if (!entry || !entry.props || !entry.props[propName]) return false;
+    var prop = entry.props[propName];
+    var fromVal = prop.from ? prop.from.value : null;
+    var toVal = prop.to ? prop.to.value : null;
+    return hasPercentValue(fromVal) || hasPercentValue(toVal);
+  }
+
   function ensureSliderControl(layer, name, value) {
     if (!layer || !name) return null;
     var effects = layer.property("Effects");
@@ -397,12 +409,13 @@
     return null;
   }
 
-  function collectMotionSegments(motionList, propName) {
+  function collectMotionSegments(motionList, propName, filterFn) {
     var out = [];
     if (!motionList || !motionList.length || !propName) return out;
     for (var i = 0; i < motionList.length; i++) {
       var entry = motionList[i];
       if (!entry || !entry.props || !entry.props[propName]) continue;
+      if (filterFn && !filterFn(entry, propName)) continue;
       out.push({ prop: propName, tween: entry, index: i });
     }
     return out;
@@ -415,8 +428,8 @@
     return start + delay;
   }
 
-  function buildMotionSegments(motionList, propName, baseValue, scale, convertFn) {
-    var entries = collectMotionSegments(motionList, propName);
+  function buildMotionSegments(motionList, propName, baseValue, scale, convertFn, filterFn) {
+    var entries = collectMotionSegments(motionList, propName, filterFn);
     if (!entries.length) return [];
     entries.sort(function (a, b) {
       var ta = getMotionStart(a.tween);
@@ -462,6 +475,19 @@
       prev = toVal;
     }
     return segments;
+  }
+
+  function mergeMotionSegments(a, b) {
+    var out = [];
+    if (a && a.length) out = out.concat(a);
+    if (b && b.length) out = out.concat(b);
+    if (!out.length) return out;
+    out.sort(function (x, y) {
+      if (x.t0 < y.t0) return -1;
+      if (x.t0 > y.t0) return 1;
+      return 0;
+    });
+    return out;
   }
 
   function formatExprValue(value) {
@@ -823,10 +849,22 @@
     var basePos = layer.property("Transform").property("Position").value;
     var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
     var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
-    var xSegments = buildMotionSegments(motionList, "x", 0, 1, null);
-    var ySegments = buildMotionSegments(motionList, "y", 0, 1, null);
+    var xSegments = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
+      return !isPercentMotionEntry(entry, "x");
+    });
+    var ySegments = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
+      return !isPercentMotionEntry(entry, "y");
+    });
     var xPercentSegments = buildMotionSegments(motionList, "xPercent", 0, 1, null);
     var yPercentSegments = buildMotionSegments(motionList, "yPercent", 0, 1, null);
+    var xPercentFromX = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
+      return isPercentMotionEntry(entry, "x");
+    });
+    var yPercentFromY = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
+      return isPercentMotionEntry(entry, "y");
+    });
+    xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
+    yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
     attachMotionControls(xSegments, layer, "Position X", null);
     attachMotionControls(ySegments, layer, "Position Y", null);
     attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {

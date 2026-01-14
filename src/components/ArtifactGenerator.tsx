@@ -549,6 +549,22 @@ const MOTION_CAPTURE_SCRIPT = `
       var stagger = (toVars && toVars.stagger) || (fromVars && fromVars.stagger);
       var staggerTargets = stagger ? resolveStaggerTargets(targets) : null;
       var staggerDelays = staggerTargets ? getStaggerDelays(stagger, staggerTargets) : null;
+      var props = buildProps(fromVars, toVars);
+      var propKeys = [];
+      for (var k in props) {
+        if (Object.prototype.hasOwnProperty.call(props, k)) propKeys.push(k);
+      }
+      var isZeroOpacitySet =
+        type === 'to' &&
+        !fromVars &&
+        Number(duration) === 0 &&
+        Number(delay) === 0 &&
+        propKeys.length === 1 &&
+        propKeys[0] === 'opacity';
+      if (isZeroOpacitySet) {
+        var opVal = props.opacity && props.opacity.to ? props.opacity.to.value : null;
+        if (Number(opVal) === 0) return;
+      }
       var baseEntry = {
         splitText: normalized.splitText || undefined,
         type: type,
@@ -558,7 +574,7 @@ const MOTION_CAPTURE_SCRIPT = `
           delay: Number(delay) || 0,
           ease: String(ease || 'none')
         },
-        props: buildProps(fromVars, toVars)
+        props: props
       };
       if (stagger && normalized.splitText && splitCount > 1) {
         baseEntry.time.stagger = getStaggerDelay(stagger, splitCount - 1, splitCount);

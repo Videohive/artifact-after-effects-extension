@@ -1708,10 +1708,22 @@
     var posProp = tr.property("Position");
     if (posProp) {
       var basePos = posProp.value;
-      var xSegments = buildMotionSegments(motionList, "x", 0, 1, null);
-      var ySegments = buildMotionSegments(motionList, "y", 0, 1, null);
+      var xSegments = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
+        return !isPercentMotionEntry(entry, "x");
+      });
+      var ySegments = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
+        return !isPercentMotionEntry(entry, "y");
+      });
       var xPercentSegments = buildMotionSegments(motionList, "xPercent", 0, 1, null);
       var yPercentSegments = buildMotionSegments(motionList, "yPercent", 0, 1, null);
+      var xPercentFromX = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
+        return isPercentMotionEntry(entry, "x");
+      });
+      var yPercentFromY = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
+        return isPercentMotionEntry(entry, "y");
+      });
+      xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
+      yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
       if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
         var expr =
           "var base=value;\n" +

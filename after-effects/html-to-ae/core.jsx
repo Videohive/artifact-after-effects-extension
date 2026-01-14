@@ -197,6 +197,10 @@
         // Background is created before children, so it will already sit below them.
         if (parentLayer) bgShape.parent = parentLayer;
         applyDropShadow(bgShape, node.style);
+        applyOpacity(bgShape, node.style);
+        applyBlendMode(bgShape, node.style);
+        applyTransform(bgShape, node.style, bgBBox, null);
+        applyMotion(bgShape, node, bgBBox);
       }
       if (node.style && node.style.backgroundGrid) {
         var gridBBox = getLocalBBox(node, origin);
@@ -209,6 +213,12 @@
         var borderShape = createBorderShape(comp, node, borderBBox);
         if (borderShape && parentLayer) borderShape.parent = parentLayer;
         if (!bgShape) applyDropShadow(borderShape, node.style);
+        if (!bgShape) {
+          applyOpacity(borderShape, node.style);
+          applyBlendMode(borderShape, node.style);
+          applyTransform(borderShape, node.style, borderBBox, null);
+          applyMotion(borderShape, node, borderBBox);
+        }
       }
       // ����
       if (node.children && node.children.length) {
@@ -309,7 +319,24 @@
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, svgBBox, null);
       applyDropShadow(layer, node.style);
-      applyMotion(layer, node, svgBBox);
+      if (node.motion && node.motion.length) {
+        var svgMotion = [];
+        for (var m = 0; m < node.motion.length; m++) {
+          var entry = node.motion[m];
+          if (!entry || !entry.targets || !entry.targets.length) continue;
+          for (var t = 0; t < entry.targets.length; t++) {
+            var key = String(entry.targets[t] || "").replace(/^\s+|\s+$/g, "");
+            if (key.indexOf("#") === 0) key = key.substring(1);
+            if (key === node.name || safeName(key) === layer.name) {
+              svgMotion.push(entry);
+              break;
+            }
+          }
+        }
+        if (svgMotion.length) {
+          applyMotion(layer, { motion: svgMotion }, svgBBox);
+        }
+      }
 
       var childComp = layer.source;
       var childBBox = {

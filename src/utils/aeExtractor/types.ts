@@ -86,6 +86,25 @@ export interface AERenderHints {
   semanticZ?: SemanticZ;
 }
 
+export interface AEMotionTime {
+  start: number;
+  duration: number;
+  delay: number;
+  ease?: string;
+}
+
+export interface AEMotionValue {
+  type?: 'function';
+  value: any;
+}
+
+export interface AEMotionTween {
+  targets: string[];
+  type: 'to' | 'from' | 'fromTo';
+  time: AEMotionTime;
+  props: Record<string, { from?: AEMotionValue; to?: AEMotionValue }>;
+}
+
 export interface AEExportSettings {
   fps: number;
   duration: number;
@@ -103,6 +122,7 @@ export interface AEExportOptions {
   duration?: number;
   resolutionLabel?: string;
   useViewportScale?: boolean;
+  motionCapture?: AEMotionTween[];
 }
 
 export interface AENode {
@@ -149,6 +169,10 @@ export interface AENode {
     overflow: string;
     path?: AEClipPath;
   };
+
+  // motion
+  motion?: AEMotionTween[];
+  motionUnmapped?: AEMotionTween[];
 }
 
 export interface AEArtifactExport {

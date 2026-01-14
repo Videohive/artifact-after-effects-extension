@@ -31,7 +31,14 @@ import {
 } from './helpers';
 import { buildTextExtra } from './text';
 import { extractBorder, extractOutline } from './border';
-import { AEBounds, AENode, AERenderHints, AEExportOptions, AEArtifactExport } from './types';
+import {
+  AEBounds,
+  AENode,
+  AERenderHints,
+  AEExportOptions,
+  AEArtifactExport,
+  AEMotionTween
+} from './types';
 
 const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
   el instanceof (win as Window & typeof globalThis).HTMLElement;
@@ -340,6 +347,51 @@ const getVisualBBox = (node: AENode): AEBounds => {
     w: Math.max(0, maxX - minX),
     h: Math.max(0, maxY - minY)
   };
+};
+
+const normalizeMotionTarget = (target: string): string | null => {
+  if (!target) return null;
+  const trimmed = target.trim();
+  if (!trimmed) return null;
+  if (trimmed[0] === '#' || trimmed[0] === '.') return trimmed.slice(1);
+  return trimmed;
+};
+
+const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
+  if (!root || !tweens || tweens.length === 0) return;
+  const nodeMap = new Map<string, AENode>();
+
+  const visit = (node: AENode | undefined) => {
+    if (!node) return;
+    if (node.name && !nodeMap.has(node.name)) nodeMap.set(node.name, node);
+    if (node.children && node.children.length) {
+      node.children.forEach(child => visit(child));
+    }
+  };
+
+  visit(root);
+
+  const unmatched: AEMotionTween[] = [];
+  tweens.forEach(tween => {
+    if (!tween || !tween.targets || tween.targets.length === 0) return;
+    tween.targets.forEach(target => {
+      const key = normalizeMotionTarget(target);
+      if (!key) return;
+      const node = nodeMap.get(key);
+      const entry = { ...tween, targets: [target] };
+      if (node) {
+        if (!node.motion) node.motion = [];
+        node.motion.push(entry);
+      } else {
+        unmatched.push(entry);
+      }
+    });
+  });
+
+  if (unmatched.length) {
+    if (!root.motionUnmapped) root.motionUnmapped = [];
+    root.motionUnmapped.push(...unmatched);
+  }
 };
 
 const getVideoSrc = (videoEl: HTMLVideoElement): string | null => {
@@ -1350,8 +1402,19 @@ export const extractSlideLayout = async (
         })
       : [];
     const hasMultipleTextChildren = textChildElements.length > 1;
+    const collectSvgDescendants = (host: HTMLElement): SVGElement[] => {
+      if (!host.querySelectorAll) return [];
+      const nodes = Array.from(host.querySelectorAll('svg')) as SVGElement[];
+      return nodes.filter(node => node && node.closest('svg') === node);
+    };
+    const svgDescendants =
+      canConsiderText && isHtmlEl ? collectSvgDescendants(el as HTMLElement) : [];
+    const hasSvgDescendants = svgDescendants.length > 0;
     const textLike =
-      canConsiderText && isTextLike(el, style, win) && !hasPaintedChild && !hasMultipleTextChildren;
+      canConsiderText &&
+      isTextLike(el, style, win) &&
+      !hasPaintedChild &&
+      !hasMultipleTextChildren;
 
     const getDirectTextNodes = (host: HTMLElement): Text[] => {
       const out: Text[] = [];
@@ -1391,7 +1454,14 @@ export const extractSlideLayout = async (
         bbox
       );
 
-      if (!paints && !hasPseudo) {
+      const addSvgChildren = () => {
+        if (!hasSvgDescendants) return;
+        for (const svgEl of svgDescendants) {
+          const svgNode = process(svgEl);
+          if (svgNode) children.push(svgNode);
+        }
+      };
+      if (!paints && !hasPseudo && !hasSvgDescendants) {
         type = 'text';
         renderHints.isText = true;
         if (scaledTextTransformValue) {
@@ -1439,6 +1509,7 @@ export const extractSlideLayout = async (
             overflow: 'visible'
           }
         });
+        addSvgChildren();
         pushAfter();
         skipChildTraversal = true;
       }
@@ -1531,6 +1602,8 @@ export const extractSlideLayout = async (
 
   const root = process(slide);
   if (!root) throw new Error('extractSlideLayout: slide root is not visible or has zero size.');
+
+  attachMotionToNodes(root, options?.motionCapture);
 
   return {
     artifactId: slide.id,

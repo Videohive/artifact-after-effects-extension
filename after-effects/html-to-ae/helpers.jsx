@@ -323,3 +323,311 @@
     for (var j = 0; j < list.length; j++) ordered.push(list[j].node);
     return ordered;
   }
+
+  // -----------------------
+  // MOTION -> EXPRESSIONS
+  // -----------------------
+
+  function parseMotionNumber(value) {
+    if (value === null || typeof value === "undefined") return null;
+    if (typeof value === "number") return isFinite(value) ? value : null;
+    var s = String(value).trim();
+    if (!s) return null;
+    var sign = 1;
+    if (s.indexOf("-") === 0) {
+      sign = -1;
+      s = s.slice(1);
+    }
+    if (s.charAt(0) === "+") s = s.slice(1);
+    if (s.indexOf("%") !== -1) {
+      s = s.replace("%", "");
+    }
+    var n = parseFloat(s);
+    if (!isFinite(n)) return null;
+    return n * sign;
+  }
+
+  function pickMotionProp(motionList, propNames) {
+    if (!motionList || !motionList.length) return null;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props) continue;
+      for (var j = 0; j < propNames.length; j++) {
+        var name = propNames[j];
+        if (entry.props[name]) {
+          return { prop: name, tween: entry };
+        }
+      }
+    }
+    return null;
+  }
+
+  function buildEaseFunctionSource(easeStr) {
+    if (!easeStr) return "function(t){return t;}";
+    var raw = String(easeStr).trim();
+    if (!raw) return "function(t){return t;}";
+    if (raw.indexOf("function") === 0) return raw;
+
+    var s = raw.toLowerCase();
+    if (s === "linear" || s === "none") return "function(t){return t;}";
+
+    var m = s.match(/^([a-z]+)(\d+)?\.(inout|in|out)(?:\(([^)]+)\))?$/);
+    if (!m) return "function(t){return t;}";
+
+    var base = m[1];
+    var num = m[2] ? parseFloat(m[2]) : null;
+    var mode = m[3];
+    var param = m[4] ? parseFloat(m[4]) : null;
+
+    if (base === "quad") num = 2;
+    if (base === "cubic") num = 3;
+    if (base === "quart") num = 4;
+    if (base === "quint") num = 5;
+
+    if (base === "power") {
+      if (!num || !isFinite(num)) num = 2;
+      if (mode === "in") {
+        return "function(t){return Math.pow(t," + num + ");}";
+      }
+      if (mode === "out") {
+        return "function(t){return 1-Math.pow(1-t," + num + ");}";
+      }
+      return (
+        "function(t){return t<0.5?Math.pow(2*t," +
+        num +
+        ")/2:1-Math.pow(-2*t+2," +
+        num +
+        ")/2;}"
+      );
+    }
+
+    if (base === "sine") {
+      if (mode === "in") return "function(t){return 1-Math.cos((t*Math.PI)/2);}";
+      if (mode === "out") return "function(t){return Math.sin((t*Math.PI)/2);}";
+      return "function(t){return -(Math.cos(Math.PI*t)-1)/2;}";
+    }
+
+    if (base === "expo") {
+      if (mode === "in") {
+        return "function(t){return t===0?0:Math.pow(2,10*t-10);}";
+      }
+      if (mode === "out") {
+        return "function(t){return t===1?1:1-Math.pow(2,-10*t);}";
+      }
+      return "function(t){if(t===0)return 0; if(t===1)return 1; return t<0.5?Math.pow(2,20*t-10)/2:(2-Math.pow(2,-20*t+10))/2;}";
+    }
+
+    if (base === "back") {
+      var sVal = isFinite(param) ? param : 1.70158;
+      if (mode === "in") {
+        return (
+          "function(t){var s=" +
+          sVal +
+          ";return t*t*((s+1)*t-s);}"
+        );
+      }
+      if (mode === "out") {
+        return (
+          "function(t){var s=" +
+          sVal +
+          ";var u=t-1;return 1+u*u*((s+1)*u+s);}"
+        );
+      }
+      return (
+        "function(t){var s=" +
+        sVal +
+        "*1.525;var u=t*2;return u<1?(u*u*((s+1)*u-s))/2:((u-2)*(u-2)*((s+1)*(u-2)+s)+2)/2;}"
+      );
+    }
+
+    if (base === "circ") {
+      if (mode === "in") return "function(t){return 1-Math.sqrt(1-t*t);}";
+      if (mode === "out") return "function(t){return Math.sqrt(1-Math.pow(t-1,2));}";
+      return "function(t){return t<0.5?(1-Math.sqrt(1-Math.pow(2*t,2)))/2:(Math.sqrt(1-Math.pow(-2*t+2,2))+1)/2;}";
+    }
+
+    return "function(t){return t;}";
+  }
+
+  function buildTweenExpression(t0, t1, v0, v1, easeStr, suffix) {
+    var easeFn = buildEaseFunctionSource(easeStr);
+    var expr =
+      "var t=time;\n" +
+      "var t0=" + t0 + ";\n" +
+      "var t1=" + t1 + ";\n" +
+      "var v0=" + v0 + ";\n" +
+      "var v1=" + v1 + ";\n" +
+      "var v;\n" +
+      "var easeFn=" + easeFn + ";\n" +
+      "if (t1<=t0) { v=(t<=t0)?v0:v1; }\n" +
+      "else if (t<=t0) v=v0; else if (t>=t1) v=v1; else { var p=(t-t0)/(t1-t0); var e=easeFn(p); v=v0+(v1-v0)*e; }\n" +
+      suffix + ";\n";
+    return expr;
+  }
+
+  function buildTweenValueExpr(t0, t1, v0, v1, easeStr, varName) {
+    var easeFn = buildEaseFunctionSource(easeStr);
+    return (
+      "var t=time; var t0=" +
+      t0 +
+      "; var t1=" +
+      t1 +
+      "; var v0=" +
+      v0 +
+      "; var v1=" +
+      v1 +
+      "; var easeFn=" +
+      easeFn +
+      "; if (t1<=t0) " +
+      varName +
+      "=(t<=t0)?v0:v1; else if (t<=t0) " +
+      varName +
+      "=v0; else if (t>=t1) " +
+      varName +
+      "=v1; else { var p=(t-t0)/(t1-t0); var e=easeFn(p); " +
+      varName +
+      "=v0+(v1-v0)*e; }\n"
+    );
+  }
+
+  function applyMotion(layer, node, bbox) {
+    if (!layer || !node || !node.motion || !node.motion.length) return;
+    var motionList = node.motion;
+
+    // Opacity (0..1 -> 0..100)
+    var opacityEntry = pickMotionProp(motionList, ["opacity"]);
+    if (opacityEntry) {
+      var o = opacityEntry.tween;
+      var of = o.props.opacity && o.props.opacity.from ? parseMotionNumber(o.props.opacity.from.value) : null;
+      var ot = o.props.opacity && o.props.opacity.to ? parseMotionNumber(o.props.opacity.to.value) : null;
+      if (of !== null || ot !== null) {
+        var baseOpacity = layer.property("Transform").property("Opacity").value;
+        if (of === null) of = baseOpacity / 100;
+        if (ot === null) ot = baseOpacity / 100;
+        var t0 = (o.time && isFinite(o.time.start) ? o.time.start : 0) + (o.time && isFinite(o.time.delay) ? o.time.delay : 0);
+        var t1 = t0 + (o.time && isFinite(o.time.duration) ? o.time.duration : 0);
+        var easeStr = o.time && o.time.ease ? o.time.ease : null;
+        var expr = buildTweenExpression(t0, t1, of * 100, ot * 100, easeStr, "v");
+        var prop = layer.property("Transform").property("Opacity");
+        if (prop.canSetExpression) prop.expression = expr;
+      }
+    }
+
+    // Position (x/y offsets)
+    var xEntry = pickMotionProp(motionList, ["x"]);
+    var yEntry = pickMotionProp(motionList, ["y"]);
+    if (xEntry || yEntry) {
+      var basePos = layer.property("Transform").property("Position").value;
+      var xt = xEntry ? xEntry.tween : null;
+      var yt = yEntry ? yEntry.tween : null;
+      var xf = xt && xt.props.x && xt.props.x.from ? parseMotionNumber(xt.props.x.from.value) : 0;
+      var xto = xt && xt.props.x && xt.props.x.to ? parseMotionNumber(xt.props.x.to.value) : 0;
+      var yf = yt && yt.props.y && yt.props.y.from ? parseMotionNumber(yt.props.y.from.value) : 0;
+      var yto = yt && yt.props.y && yt.props.y.to ? parseMotionNumber(yt.props.y.to.value) : 0;
+      if (xf === null) xf = 0;
+      if (xto === null) xto = 0;
+      if (yf === null) yf = 0;
+      if (yto === null) yto = 0;
+      var t0x = xt ? (xt.time.start || 0) + (xt.time.delay || 0) : 0;
+      var t1x = xt ? t0x + (xt.time.duration || 0) : 0;
+      var t0y = yt ? (yt.time.start || 0) + (yt.time.delay || 0) : 0;
+      var t1y = yt ? t0y + (yt.time.duration || 0) : 0;
+
+      var xEase = xt && xt.time && xt.time.ease ? xt.time.ease : null;
+      var yEase = yt && yt.time && yt.time.ease ? yt.time.ease : null;
+      var expr =
+        "var base=value;\n" +
+        "var tx=0; var ty=0;\n" +
+        (xEntry ? buildTweenValueExpr(t0x, t1x, xf, xto, xEase, "tx") : "") +
+        (yEntry ? buildTweenValueExpr(t0y, t1y, yf, yto, yEase, "ty") : "") +
+        "[base[0]+tx, base[1]+ty];";
+      var posProp = layer.property("Transform").property("Position");
+      if (posProp.canSetExpression) posProp.expression = expr;
+    }
+
+    // Scale
+    var scaleEntry = pickMotionProp(motionList, ["scale"]);
+    var sxEntry = pickMotionProp(motionList, ["scaleX"]);
+    var syEntry = pickMotionProp(motionList, ["scaleY"]);
+    if (scaleEntry || sxEntry || syEntry) {
+      var scaleProp = layer.property("Transform").property("Scale");
+      var baseScale = scaleProp.value;
+      var tScale = scaleEntry ? scaleEntry.tween : null;
+      var tSx = sxEntry ? sxEntry.tween : null;
+      var tSy = syEntry ? syEntry.tween : null;
+
+      var sFrom = tScale && tScale.props.scale && tScale.props.scale.from ? parseMotionNumber(tScale.props.scale.from.value) : null;
+      var sTo = tScale && tScale.props.scale && tScale.props.scale.to ? parseMotionNumber(tScale.props.scale.to.value) : null;
+      var sxFrom = tSx && tSx.props.scaleX && tSx.props.scaleX.from ? parseMotionNumber(tSx.props.scaleX.from.value) : null;
+      var sxTo = tSx && tSx.props.scaleX && tSx.props.scaleX.to ? parseMotionNumber(tSx.props.scaleX.to.value) : null;
+      var syFrom = tSy && tSy.props.scaleY && tSy.props.scaleY.from ? parseMotionNumber(tSy.props.scaleY.from.value) : null;
+      var syTo = tSy && tSy.props.scaleY && tSy.props.scaleY.to ? parseMotionNumber(tSy.props.scaleY.to.value) : null;
+
+      var t0s = tScale ? (tScale.time.start || 0) + (tScale.time.delay || 0) : null;
+      var t1s = tScale ? t0s + (tScale.time.duration || 0) : null;
+      var t0sx = tSx ? (tSx.time.start || 0) + (tSx.time.delay || 0) : null;
+      var t1sx = tSx ? t0sx + (tSx.time.duration || 0) : null;
+      var t0sy = tSy ? (tSy.time.start || 0) + (tSy.time.delay || 0) : null;
+      var t1sy = tSy ? t0sy + (tSy.time.duration || 0) : null;
+
+      var scaleEase = tScale && tScale.time && tScale.time.ease ? tScale.time.ease : null;
+      var sxEase = tSx && tSx.time && tSx.time.ease ? tSx.time.ease : null;
+      var syEase = tSy && tSy.time && tSy.time.ease ? tSy.time.ease : null;
+      var expr =
+        "var base=value;\n" +
+        "var sx=base[0]; var sy=base[1];\n" +
+        "var s=0;\n" +
+        (tScale
+          ? buildTweenValueExpr(
+              t0s,
+              t1s,
+              sFrom !== null ? sFrom * 100 : baseScale[0],
+              sTo !== null ? sTo * 100 : baseScale[0],
+              scaleEase,
+              "s"
+            ) + "sx=s; sy=s;\n"
+          : "") +
+        (tSx
+          ? buildTweenValueExpr(
+              t0sx,
+              t1sx,
+              sxFrom !== null ? sxFrom * 100 : baseScale[0],
+              sxTo !== null ? sxTo * 100 : baseScale[0],
+              sxEase,
+              "sx"
+            )
+          : "") +
+        (tSy
+          ? buildTweenValueExpr(
+              t0sy,
+              t1sy,
+              syFrom !== null ? syFrom * 100 : baseScale[1],
+              syTo !== null ? syTo * 100 : baseScale[1],
+              syEase,
+              "sy"
+            )
+          : "") +
+        "[sx, sy];";
+      if (scaleProp.canSetExpression) scaleProp.expression = expr;
+    }
+
+    // Rotation
+    var rotEntry = pickMotionProp(motionList, ["rotation", "rotate"]);
+    if (rotEntry) {
+      var r = rotEntry.tween;
+      var rk = rotEntry.prop === "rotate" ? "rotate" : "rotation";
+      var rf = r.props[rk] && r.props[rk].from ? parseMotionNumber(r.props[rk].from.value) : null;
+      var rt = r.props[rk] && r.props[rk].to ? parseMotionNumber(r.props[rk].to.value) : null;
+      if (rf !== null || rt !== null) {
+        var baseRot = layer.property("Transform").property("Rotation").value;
+        if (rf === null) rf = baseRot;
+        if (rt === null) rt = baseRot;
+        var t0r = (r.time && isFinite(r.time.start) ? r.time.start : 0) + (r.time && isFinite(r.time.delay) ? r.time.delay : 0);
+        var t1r = t0r + (r.time && isFinite(r.time.duration) ? r.time.duration : 0);
+        var rEase = r.time && r.time.ease ? r.time.ease : null;
+        var rexpr = buildTweenExpression(t0r, t1r, rf, rt, rEase, "v");
+        var rotProp = layer.property("Transform").property("Rotation");
+        if (rotProp.canSetExpression) rotProp.expression = rexpr;
+      }
+    }
+  }

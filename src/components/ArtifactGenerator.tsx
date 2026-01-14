@@ -178,6 +178,302 @@ const PREVIEW_EDITOR_STYLE = `
   }
 `;
 
+const MOTION_CAPTURE_SCRIPT = `
+  (function () {
+    if (window.__ae2MotionCaptureInstalled) return;
+    window.__ae2MotionCaptureInstalled = true;
+
+    var store = window.__ae2MotionCapture = { tweens: [], ready: false };
+    function markReady() {
+      if (store.ready) return;
+      store.ready = true;
+    }
+    function scheduleReady() {
+      setTimeout(markReady, 50);
+    }
+    if (document.readyState === 'complete') {
+      scheduleReady();
+    } else {
+      window.addEventListener('load', scheduleReady);
+    }
+
+    var RESERVED = {
+      duration: true,
+      delay: true,
+      ease: true,
+      paused: true,
+      repeat: true,
+      repeatDelay: true,
+      yoyo: true,
+      stagger: true,
+      overwrite: true,
+      immediateRender: true,
+      lazy: true,
+      id: true,
+      data: true,
+      keyframes: true,
+      scrollTrigger: true,
+      modifiers: true,
+      parent: true,
+      startAt: true,
+      clearProps: true
+    };
+
+    function isReservedKey(key) {
+      if (!key) return true;
+      if (key.charAt(0) === '_') return true;
+      if (key.indexOf('on') === 0) return true;
+      return !!RESERVED[key];
+    }
+
+    function safeValue(value) {
+      if (typeof value === 'function') {
+        return { type: 'function', value: String(value) };
+      }
+      if (value && value.nodeType === 1) {
+        return { value: '[Element]' };
+      }
+      if (value === window) {
+        return { value: '[Window]' };
+      }
+      if (value === document) {
+        return { value: '[Document]' };
+      }
+      if (value && typeof value === 'object') {
+        try {
+          JSON.stringify(value);
+          return { value: value };
+        } catch (err) {
+          return { value: String(value) };
+        }
+      }
+      return { value: value };
+    }
+
+    function getTargetKey(target) {
+      if (!target) return null;
+      if (typeof target === 'string') return target;
+      if (target.nodeType !== 1) return null;
+      if (target.ownerSVGElement && target !== target.ownerSVGElement) {
+        if (target.ownerSVGElement.id) return '#' + target.ownerSVGElement.id;
+      }
+      if (target.id) return '#' + target.id;
+      if (target.closest) {
+        var parentWithId = target.closest('[id]');
+        if (parentWithId && parentWithId.id) return '#' + parentWithId.id;
+      }
+      var cls = target.className;
+      if (cls && typeof cls === 'string') {
+        var parts = cls.split(/\\s+/).filter(Boolean);
+        if (parts.length === 1) return '.' + parts[0];
+      }
+      var path = [];
+      var node = target;
+      while (node && node.parentElement) {
+        var parent = node.parentElement;
+        var index = 1;
+        var sib = node;
+        while ((sib = sib.previousElementSibling)) index += 1;
+        path.unshift(node.tagName.toLowerCase() + ':nth-child(' + index + ')');
+        node = parent;
+        if (node === document.body) break;
+      }
+      return path.join('>');
+    }
+
+    function normalizeTargets(targets) {
+      if (!targets) return [];
+      if (typeof targets === 'string') {
+        try {
+          var resolved = document.querySelectorAll(targets);
+          if (resolved && resolved.length) {
+            var resolvedList = [];
+            for (var r = 0; r < resolved.length; r += 1) {
+              var key = getTargetKey(resolved[r]);
+              if (key) resolvedList.push(key);
+            }
+            if (resolvedList.length) return resolvedList;
+          }
+        } catch (e) {}
+        return [targets];
+      }
+      if (targets.nodeType === 1) {
+        var single = getTargetKey(targets);
+        return single ? [single] : [];
+      }
+      var list = [];
+      if (typeof targets.length === 'number') {
+        for (var i = 0; i < targets.length; i += 1) {
+          var key = getTargetKey(targets[i]);
+          if (key) list.push(key);
+        }
+        return list;
+      }
+      return list;
+    }
+
+    function buildProps(fromVars, toVars) {
+      var props = {};
+      function add(vars, field) {
+        if (!vars) return;
+        for (var key in vars) {
+          if (!Object.prototype.hasOwnProperty.call(vars, key)) continue;
+          if (isReservedKey(key)) continue;
+          if (!props[key]) props[key] = {};
+          props[key][field] = safeValue(vars[key]);
+        }
+      }
+      add(fromVars, 'from');
+      add(toVars, 'to');
+      return props;
+    }
+
+    function recordTween(tween, type, targets, fromVars, toVars) {
+      var targetList = normalizeTargets(targets);
+      if (!targetList.length) return;
+      var duration = 0;
+      if (tween && typeof tween.duration === 'function') {
+        duration = tween.duration();
+      } else if (toVars && typeof toVars.duration === 'number') {
+        duration = toVars.duration;
+      }
+      var start = 0;
+      if (tween && typeof tween.startTime === 'function') {
+        start = tween.startTime();
+      }
+      var delay = 0;
+      if (toVars && typeof toVars.delay === 'number') {
+        delay = toVars.delay;
+      }
+      var ease = (toVars && toVars.ease) || (fromVars && fromVars.ease) || 'none';
+      store.tweens.push({
+        targets: targetList,
+        type: type,
+        time: {
+          start: Number(start) || 0,
+          duration: Number(duration) || 0,
+          delay: Number(delay) || 0,
+          ease: String(ease || 'none')
+        },
+        props: buildProps(fromVars, toVars)
+      });
+    }
+
+    function install(gsap) {
+      if (!gsap || gsap.__ae2CaptureInstalled) return;
+      gsap.__ae2CaptureInstalled = true;
+      if (typeof gsap.defaults === 'function') {
+        gsap.defaults({ immediateRender: false });
+      }
+      if (gsap.globalTimeline && typeof gsap.globalTimeline.pause === 'function') {
+        gsap.globalTimeline.pause(0);
+      }
+      var origTo = gsap.to;
+      var origFrom = gsap.from;
+      var origFromTo = gsap.fromTo;
+      var origSet = gsap.set;
+      gsap.to = function (targets, vars) {
+        var tween = origTo.apply(this, arguments);
+        recordTween(tween, 'to', targets, null, vars);
+        return tween;
+      };
+      gsap.from = function (targets, vars) {
+        var tween = origFrom.apply(this, arguments);
+        recordTween(tween, 'from', targets, vars, null);
+        return tween;
+      };
+      gsap.fromTo = function (targets, fromVars, toVars) {
+        var tween = origFromTo.apply(this, arguments);
+        recordTween(tween, 'fromTo', targets, fromVars, toVars);
+        return tween;
+      };
+      if (typeof origSet === 'function') {
+        gsap.set = function (targets, vars) {
+          var tween = origSet.apply(this, arguments);
+          recordTween(tween, 'to', targets, null, vars);
+          return tween;
+        };
+      }
+      var origTimeline = gsap.timeline;
+      gsap.timeline = function () {
+        var tl = origTimeline.apply(gsap, arguments);
+        if (!tl) return tl;
+        function resolveTween() {
+          if (!tl.getChildren) return null;
+          var children = tl.getChildren(true, true, true);
+          return children && children.length ? children[children.length - 1] : null;
+        }
+        ['to', 'from', 'fromTo'].forEach(function (method) {
+          var orig = tl[method];
+          if (typeof orig !== 'function') return;
+          tl[method] = function (targets, vars, position) {
+            var tween;
+            if (method === 'fromTo') {
+              tween = orig.apply(tl, arguments);
+              recordTween(resolveTween() || tween, method, targets, arguments[1], arguments[2]);
+              return tween;
+            }
+            tween = orig.apply(tl, arguments);
+            recordTween(
+              resolveTween() || tween,
+              method,
+              targets,
+              method === 'from' ? vars : null,
+              method === 'to' ? vars : null
+            );
+            return tween;
+          };
+        });
+        if (typeof tl.set === 'function') {
+          var origTlSet = tl.set;
+          tl.set = function (targets, vars, position) {
+            var tween = origTlSet.apply(tl, arguments);
+            recordTween(resolveTween() || tween, 'to', targets, null, vars);
+            return tween;
+          };
+        }
+        return tl;
+      };
+    }
+
+    function waitForGsap() {
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries += 1;
+        if (window.gsap) {
+          clearInterval(timer);
+          install(window.gsap);
+        } else if (tries > 60) {
+          clearInterval(timer);
+        }
+      }, 50);
+    }
+
+    if (window.gsap) {
+      install(window.gsap);
+    } else {
+      try {
+        Object.defineProperty(window, 'gsap', {
+          configurable: true,
+          enumerable: true,
+          get: function () { return undefined; },
+          set: function (value) {
+            Object.defineProperty(window, 'gsap', {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: value
+            });
+            install(value);
+          }
+        });
+      } catch (e) {
+        waitForGsap();
+      }
+    }
+  })();
+`;
+
 const ensureGsapScript = (headHtml: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
@@ -2629,6 +2925,22 @@ const stripScriptsFromBody = (bodyHtml: string) => {
   return doc.body.innerHTML;
 };
 
+const injectMotionCaptureIntoHead = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<html><head>${headHtml}</head><body></body></html>`, 'text/html');
+  const capture = doc.createElement('script');
+  capture.setAttribute('data-ae2-runtime', 'true');
+  capture.textContent = MOTION_CAPTURE_SCRIPT;
+  if (doc.head.firstChild) {
+    doc.head.insertBefore(capture, doc.head.firstChild);
+  } else {
+    doc.head.appendChild(capture);
+  }
+  return doc.head.innerHTML;
+};
+
+const keepBodyScripts = (bodyHtml: string) => bodyHtml;
+
 const normalizeHex = (value: string) => {
   const match = value.match(/#([0-9a-f]{6}|[0-9a-f]{3})/i);
   if (!match) return null;
@@ -4457,7 +4769,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     return buildArtifactHtml(getHeadHtml(), artifacts[index]);
   };
 
-  const loadArtifactIntoExportIframe = (index: number) => {
+  const loadArtifactIntoExportIframe = (
+    index: number,
+    options?: { capture?: boolean }
+  ) => {
     return new Promise<Window>((resolve, reject) => {
       const iframe = exportIframeRef.current;
       if (!iframe) {
@@ -4478,8 +4793,13 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       };
 
       iframe.addEventListener('load', handleLoad);
-      const exportHeadHtml = stripScriptsFromHead(getHeadHtml());
-      const exportArtifactHtml = stripScriptsFromBody(artifacts[index]);
+      const capture = options && options.capture;
+      const exportHeadHtml = capture
+        ? injectMotionCaptureIntoHead(getHeadHtml())
+        : stripScriptsFromHead(getHeadHtml());
+      const exportArtifactHtml = capture
+        ? keepBodyScripts(artifacts[index])
+        : stripScriptsFromBody(artifacts[index]);
       const html = `
         <!DOCTYPE html>
         <html>
@@ -4566,7 +4886,28 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const getArtifactElement = (doc: Document) =>
     doc.querySelector('.artifact') || doc.querySelector('.slide') || doc.body;
 
-  const extractJsonFromIframe = async (win: Window) => {
+  const waitForMotionCapture = async (win: Window, timeoutMs = 1200) => {
+    const started = Date.now();
+    const getCapture = () =>
+      (win as Window & { __ae2MotionCapture?: { tweens?: any[]; ready?: boolean } }).__ae2MotionCapture;
+
+    while (Date.now() - started < timeoutMs) {
+      const capture = getCapture();
+      if (capture && (capture.ready || (capture.tweens && capture.tweens.length > 0))) {
+        return capture.tweens || [];
+      }
+      if ((win as Window & { __ae2MotionReady?: boolean }).__ae2MotionReady) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const followup = getCapture();
+        return (followup && followup.tweens) || [];
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const capture = getCapture();
+    return (capture && capture.tweens) || [];
+  };
+
+  const extractJsonFromIframe = async (win: Window, motionCapture?: any[]) => {
     const doc = win.document;
     const artifactElement = getArtifactElement(doc);
 
@@ -4586,7 +4927,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       fps: exportFps,
       duration: exportDuration,
       useViewportScale: artifactMode !== 'slides',
-      resolutionLabel: exportResolution.label
+      resolutionLabel: exportResolution.label,
+      motionCapture: motionCapture || []
     });
   };
 
@@ -4595,13 +4937,15 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     
     setAnimationsEnabledForExport(false);
     try {
+      const captureWin = await loadArtifactIntoExportIframe(currentArtifactIndex, { capture: true });
+      const motionCapture = await waitForMotionCapture(captureWin);
       const win = await loadArtifactIntoExportIframe(currentArtifactIndex);
       const artifactElement = getArtifactElement(win.document);
       if (!artifactElement) {
         throw new Error('Could not find artifact content to export.');
       }
       const pallete = extractScenePalette(headContent, win, artifactElement);
-      const jsonStructure = await extractJsonFromIframe(win);
+      const jsonStructure = await extractJsonFromIframe(win, motionCapture);
       const usedHex = new Set<string>();
       collectUsedHexColors((jsonStructure as any).root, usedHex);
       const filteredPallete = filterPaletteByUsedColors(pallete, usedHex);
@@ -4626,13 +4970,15 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     try {
       const results: Array<{ jsonStructure: any; pallete: ScenePaletteEntry[] }> = [];
       for (let i = 0; i < artifacts.length; i += 1) {
+        const captureWin = await loadArtifactIntoExportIframe(i, { capture: true });
+        const motionCapture = await waitForMotionCapture(captureWin);
         const win = await loadArtifactIntoExportIframe(i);
         const artifactElement = getArtifactElement(win.document);
         if (!artifactElement) {
           throw new Error('Could not find artifact content to export.');
         }
         const pallete = extractScenePalette(headContent, win, artifactElement);
-        const jsonStructure = await extractJsonFromIframe(win);
+        const jsonStructure = await extractJsonFromIframe(win, motionCapture);
         const usedHex = new Set<string>();
         collectUsedHexColors((jsonStructure as any).root, usedHex);
         const filteredPallete = filterPaletteByUsedColors(pallete, usedHex);

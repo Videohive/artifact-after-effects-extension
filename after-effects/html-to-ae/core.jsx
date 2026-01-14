@@ -126,6 +126,7 @@
         applyBlendMode(layer, node.style);
         applyTransform(layer, node.style, preBBox, null);
         applyDropShadow(layer, node.style);
+        applyMotion(layer, node, preBBox);
 
         // 3. parent (���� ����)
         if (parentLayer) layer.parent = parentLayer;
@@ -235,6 +236,7 @@
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, textBBox, node.font ? node.font.writingMode : null);
       applyDropShadow(layer, node.style);
+      applyMotion(layer, node, textBBox);
       if (hasBorder(node.border)) {
         var borderShape = createBorderShape(comp, node, textBBox);
         if (borderShape) {
@@ -268,6 +270,7 @@
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, imgBBox, null);
       applyDropShadow(layer, node.style);
+      applyMotion(layer, node, imgBBox);
       if (
         imgResult &&
         imgResult.isPlaceholder &&
@@ -306,6 +309,7 @@
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, svgBBox, null);
       applyDropShadow(layer, node.style);
+      applyMotion(layer, node, svgBBox);
 
       var childComp = layer.source;
       var childBBox = {

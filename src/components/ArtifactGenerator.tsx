@@ -184,6 +184,92 @@ const MOTION_CAPTURE_SCRIPT = `
     window.__ae2MotionCaptureInstalled = true;
 
     var store = window.__ae2MotionCapture = { tweens: [], ready: false };
+
+    function parseSplitTypes(vars) {
+      var raw = '';
+      if (vars && typeof vars === 'object') {
+        raw = vars.type || vars.types || vars.split || '';
+      }
+      raw = String(raw || '').toLowerCase();
+      var parts = raw ? raw.split(/[\\s,]+/).filter(Boolean) : [];
+      var out = [];
+      function push(value) {
+        if (value !== 'lines' && value !== 'words' && value !== 'chars') return;
+        if (out.indexOf(value) === -1) out.push(value);
+      }
+      for (var i = 0; i < parts.length; i += 1) {
+        push(parts[i]);
+      }
+      if (out.length === 0) out.push('chars');
+      return out;
+    }
+
+    function markSplitNodes(list, type, sourceKey) {
+      if (!list || !list.length || !sourceKey || !type) return;
+      for (var i = 0; i < list.length; i += 1) {
+        var node = list[i];
+        if (!node || node.nodeType !== 1) continue;
+        node.setAttribute('data-ae2-split-type', type);
+        node.setAttribute('data-ae2-split-source', sourceKey);
+      }
+    }
+
+    function wrapSplitTextCtor(SplitTextCtor) {
+      if (!SplitTextCtor || SplitTextCtor.__ae2Wrapped) return SplitTextCtor;
+      function WrappedSplitText(target, vars) {
+        var split = new SplitTextCtor(target, vars);
+        try {
+          var sourceKey = null;
+          if (target && target.nodeType === 1) {
+            sourceKey = getTargetKey(target);
+          }
+          if (sourceKey) {
+            var types = parseSplitTypes(vars);
+            for (var i = 0; i < types.length; i += 1) {
+              var type = types[i];
+              var list = split && split[type] ? split[type] : null;
+              markSplitNodes(list, type, sourceKey);
+            }
+          }
+        } catch (e) {}
+        return split;
+      }
+      WrappedSplitText.__ae2Wrapped = true;
+      WrappedSplitText.prototype = SplitTextCtor.prototype;
+      for (var key in SplitTextCtor) {
+        if (Object.prototype.hasOwnProperty.call(SplitTextCtor, key)) {
+          WrappedSplitText[key] = SplitTextCtor[key];
+        }
+      }
+      return WrappedSplitText;
+    }
+
+    function ensureSplitTextWrapped() {
+      if (window.SplitText && !window.SplitText.__ae2Wrapped) {
+        window.SplitText = wrapSplitTextCtor(window.SplitText);
+      }
+    }
+
+    if (window.SplitText) {
+      ensureSplitTextWrapped();
+    } else {
+      try {
+        Object.defineProperty(window, 'SplitText', {
+          configurable: true,
+          enumerable: true,
+          get: function () { return undefined; },
+          set: function (value) {
+            Object.defineProperty(window, 'SplitText', {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: value
+            });
+            ensureSplitTextWrapped();
+          }
+        });
+      } catch (e) {}
+    }
     function markReady() {
       if (store.ready) return;
       store.ready = true;
@@ -281,35 +367,66 @@ const MOTION_CAPTURE_SCRIPT = `
       return path.join('>');
     }
 
+    function getSplitMeta(target) {
+      if (!target || target.nodeType !== 1) return null;
+      var type = target.getAttribute('data-ae2-split-type');
+      var source = target.getAttribute('data-ae2-split-source');
+      if (!type || !source) return null;
+      if (type !== 'lines' && type !== 'words' && type !== 'chars') return null;
+      return { type: type, source: source };
+    }
+
     function normalizeTargets(targets) {
-      if (!targets) return [];
+      var list = [];
+      var splitText = null;
+      function pushKey(key, splitType) {
+        if (!key) return;
+        if (list.indexOf(key) === -1) list.push(key);
+        if (!splitText && splitType) splitText = splitType;
+      }
+      if (!targets) return { keys: list, splitText: splitText };
       if (typeof targets === 'string') {
         try {
           var resolved = document.querySelectorAll(targets);
           if (resolved && resolved.length) {
-            var resolvedList = [];
             for (var r = 0; r < resolved.length; r += 1) {
-              var key = getTargetKey(resolved[r]);
-              if (key) resolvedList.push(key);
+              var meta = getSplitMeta(resolved[r]);
+              if (meta && meta.source) {
+                pushKey(meta.source, meta.type);
+              } else {
+                var key = getTargetKey(resolved[r]);
+                if (key) pushKey(key, null);
+              }
             }
-            if (resolvedList.length) return resolvedList;
+            if (list.length) return { keys: list, splitText: splitText };
           }
         } catch (e) {}
-        return [targets];
+        pushKey(targets, null);
+        return { keys: list, splitText: splitText };
       }
       if (targets.nodeType === 1) {
+        var metaSingle = getSplitMeta(targets);
+        if (metaSingle && metaSingle.source) {
+          pushKey(metaSingle.source, metaSingle.type);
+          return { keys: list, splitText: splitText };
+        }
         var single = getTargetKey(targets);
-        return single ? [single] : [];
+        if (single) pushKey(single, null);
+        return { keys: list, splitText: splitText };
       }
-      var list = [];
       if (typeof targets.length === 'number') {
         for (var i = 0; i < targets.length; i += 1) {
-          var key = getTargetKey(targets[i]);
-          if (key) list.push(key);
+          var metaList = getSplitMeta(targets[i]);
+          if (metaList && metaList.source) {
+            pushKey(metaList.source, metaList.type);
+          } else {
+            var key = getTargetKey(targets[i]);
+            if (key) pushKey(key, null);
+          }
         }
-        return list;
+        return { keys: list, splitText: splitText };
       }
-      return list;
+      return { keys: list, splitText: splitText };
     }
 
     function buildProps(fromVars, toVars) {
@@ -329,7 +446,8 @@ const MOTION_CAPTURE_SCRIPT = `
     }
 
     function recordTween(tween, type, targets, fromVars, toVars) {
-      var targetList = normalizeTargets(targets);
+      var normalized = normalizeTargets(targets);
+      var targetList = normalized.keys;
       if (!targetList.length) return;
       var duration = 0;
       if (tween && typeof tween.duration === 'function') {
@@ -348,6 +466,7 @@ const MOTION_CAPTURE_SCRIPT = `
       var ease = (toVars && toVars.ease) || (fromVars && fromVars.ease) || 'none';
       store.tweens.push({
         targets: targetList,
+        splitText: normalized.splitText || undefined,
         type: type,
         time: {
           start: Number(start) || 0,

@@ -103,6 +103,7 @@ export interface AEMotionTween {
   type: 'to' | 'from' | 'fromTo';
   time: AEMotionTime;
   props: Record<string, { from?: AEMotionValue; to?: AEMotionValue }>;
+  splitText?: 'lines' | 'words' | 'chars';
 }
 
 export interface AEExportSettings {

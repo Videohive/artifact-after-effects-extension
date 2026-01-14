@@ -445,6 +445,35 @@ const MOTION_CAPTURE_SCRIPT = `
       return props;
     }
 
+    function getStaggerDelay(stagger, index, total) {
+      if (!stagger || total <= 1) return 0;
+      if (typeof stagger === 'number') return stagger * index;
+      if (typeof stagger === 'function') {
+        try {
+          var fnValue = stagger(index, null, total);
+          return Number(fnValue) || 0;
+        } catch (e) {
+          return 0;
+        }
+      }
+      if (typeof stagger === 'object') {
+        var each = isFinite(stagger.each) ? Number(stagger.each) : null;
+        if (each === null && isFinite(stagger.amount)) {
+          each = total > 1 ? Number(stagger.amount) / (total - 1) : 0;
+        }
+        if (each === null) return 0;
+        var from = stagger.from;
+        var order = index;
+        if (from === 'end' || from === 'last') {
+          order = total - 1 - index;
+        } else if (from === 'center') {
+          order = Math.abs(index - (total - 1) / 2);
+        }
+        return each * order;
+      }
+      return 0;
+    }
+
     function recordTween(tween, type, targets, fromVars, toVars) {
       var normalized = normalizeTargets(targets);
       var targetList = normalized.keys;
@@ -464,8 +493,8 @@ const MOTION_CAPTURE_SCRIPT = `
         delay = toVars.delay;
       }
       var ease = (toVars && toVars.ease) || (fromVars && fromVars.ease) || 'none';
-      store.tweens.push({
-        targets: targetList,
+      var stagger = (toVars && toVars.stagger) || (fromVars && fromVars.stagger);
+      var baseEntry = {
         splitText: normalized.splitText || undefined,
         type: type,
         time: {
@@ -475,6 +504,31 @@ const MOTION_CAPTURE_SCRIPT = `
           ease: String(ease || 'none')
         },
         props: buildProps(fromVars, toVars)
+      };
+      if (stagger) {
+        for (var i = 0; i < targetList.length; i += 1) {
+          var staggerDelay = getStaggerDelay(stagger, i, targetList.length);
+          store.tweens.push({
+            targets: [targetList[i]],
+            splitText: baseEntry.splitText,
+            type: baseEntry.type,
+            time: {
+              start: baseEntry.time.start,
+              duration: baseEntry.time.duration,
+              delay: baseEntry.time.delay + staggerDelay,
+              ease: baseEntry.time.ease
+            },
+            props: baseEntry.props
+          });
+        }
+        return;
+      }
+      store.tweens.push({
+        targets: targetList,
+        splitText: baseEntry.splitText,
+        type: baseEntry.type,
+        time: baseEntry.time,
+        props: baseEntry.props
       });
     }
 

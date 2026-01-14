@@ -118,6 +118,7 @@
 
     // Position: shapes have their own Transform inside group; easiest: layer position to bbox center
     setLayerTransform(layer, localBBox);
+    setLayerAnchorCenter(layer);
     applyOpacity(layer, null, parseCssAlpha(fillColor));
 
     return layer;
@@ -212,6 +213,7 @@
       );
     }
 
+    setLayerAnchorCenter(layer);
     return layer;
   }
 
@@ -275,6 +277,7 @@
       fill.enabled = false
 
       setLayerTransform(layer, localBBox);
+      setLayerAnchorCenter(layer);
       return layer;
     }
 
@@ -330,6 +333,7 @@
     addSide("Left", leftInset, 0, leftInset, localBBox.h, sides.left);
 
     setLayerTopLeft(layer, localBBox);
+    setLayerAnchorCenter(layer);
     return layer;
   }
   function applyFontWithFallback(doc, candidates) {

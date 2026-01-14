@@ -84,6 +84,7 @@
     var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
     fill.property("Color").setValue([1, 1, 1]);
     setLayerTopLeft(layer, bbox);
+    setLayerAnchorCenter(layer);
     if (parentLayer) layer.parent = parentLayer;
 
     if (targetLayer) {

@@ -291,6 +291,7 @@
 
     applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform);
     setLayerTopLeft(layer, localBBox);
+    setLayerAnchorCenter(layer);
     return layer;
   }
 

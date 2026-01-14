@@ -335,6 +335,30 @@
     layer.property("Transform").property("Position").setValue([x, y]);
   }
 
+  function setLayerAnchorCenter(layer) {
+    if (!layer) return;
+    var tr = layer.property("Transform");
+    if (!tr) return;
+    var anchorProp = tr.property("Anchor Point");
+    var posProp = tr.property("Position");
+    var scaleProp = tr.property("Scale");
+    if (!anchorProp || !posProp || !scaleProp) return;
+    var anchor = anchorProp.value;
+    var pos = posProp.value;
+    if (!anchor || !pos || anchor.length < 2 || pos.length < 2) return;
+    var r = layer.sourceRectAtTime(0, false);
+    if (!r) return;
+    var newAnchor = [r.left + r.width / 2, r.top + r.height / 2];
+    if (!isFinite(newAnchor[0]) || !isFinite(newAnchor[1])) return;
+    var scale = scaleProp.value;
+    var sx = scale && scale.length ? scale[0] / 100 : 1;
+    var sy = scale && scale.length ? scale[1] / 100 : 1;
+    var dx = (newAnchor[0] - anchor[0]) * sx;
+    var dy = (newAnchor[1] - anchor[1]) * sy;
+    anchorProp.setValue(newAnchor);
+    posProp.setValue([pos[0] + dx, pos[1] + dy]);
+  }
+
   function setLayerTopLeft(layer, bbox) {
     var t = layer.property("Transform");
     t.property("Anchor Point").setValue([0, 0]);

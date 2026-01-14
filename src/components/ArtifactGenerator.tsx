@@ -365,6 +365,7 @@ const stripInjectedHeadBlocks = (headHtml: string) => {
 const attachLooseScriptsToArtifacts = (doc: Document, artifacts: HTMLElement[]) => {
   if (!doc.body || artifacts.length === 0) return;
   const hoistToHead = (script: HTMLScriptElement) => {
+    if (script.getAttribute('data-ae2-motion') === 'true') return;
     if (!doc.head) return;
     const insert = (node: HTMLScriptElement) => {
       doc.head.appendChild(node);
@@ -409,6 +410,14 @@ const attachLooseScriptsToArtifacts = (doc: Document, artifacts: HTMLElement[]) 
     if (!(el instanceof HTMLScriptElement)) return;
     const scope = (el.getAttribute('data-ae2-scope') || '').toLowerCase();
     const explicitSlide = !!el.getAttribute('data-ae2-slide') || !!el.getAttribute('data-slide');
+    if (el.getAttribute('data-ae2-motion') === 'true') {
+      if (lastArtifact) {
+        lastArtifact.appendChild(el);
+      } else {
+        pending.push(el as HTMLScriptElement);
+      }
+      return;
+    }
     if (scope === 'slide' || explicitSlide) {
       if (lastArtifact) {
         lastArtifact.appendChild(el);
@@ -432,6 +441,7 @@ const attachLooseScriptsToArtifacts = (doc: Document, artifacts: HTMLElement[]) 
       const scope = (script.getAttribute('data-ae2-scope') || '').toLowerCase();
       const explicitSlide = !!script.getAttribute('data-ae2-slide') || !!script.getAttribute('data-slide');
       if (scope === 'slide' || explicitSlide) return;
+      if (script.getAttribute('data-ae2-motion') === 'true') return;
       hoistToHead(script);
     });
   });

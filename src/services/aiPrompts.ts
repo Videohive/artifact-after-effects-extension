@@ -1376,19 +1376,16 @@ Text should feel read, not triggered.
 
 ---
 
-### 6A.4 Parent–Text Coupling (MANDATORY)
+### 6A.4 Parent–Text Volumetric Coupling (MANDATORY)
 
-Text cannot animate independently of its container.
+Text must NEVER animate inside a static container. This is a critical failure of volume.
 
-Rules:
-- Containers establish space first.
-- Text resolves within that space.
-- Text motion energy must be lower than its container’s structural motion.
-
-If a container animates, its text must participate.
-If text participates, its container must also participate.
-
-Violating this coupling creates a static island and is forbidden.
+Rules of Interaction:
+- **Spatial Domain:** The container must establish the spatial arrival first (or simultaneously).
+- **Inherited Momentum:** If a container moves along the Z or Y axis, the text must inherit this motion but with a "Lag & Snap" effect (different easing and slight delay).
+- **Parallax of Logic:** To create volume, the container and the text MUST move at different speeds and potentially slightly different vectors. 
+  - *Example:* Container scales up from 0.95 + moves Y:20, while Text moves Z:-50 + rotateX:10.
+- **Atmospheric Depth:** The container's arrival should feel like a "reveal" or "unfolding" of the space the text occupies.
 
 ---
 
@@ -1692,22 +1689,23 @@ Excessive motion on low-importance elements is forbidden.
 
 ---
 
-## 9. CONTEXTUAL ADAPTATION
+## 9. AUTONOMOUS SPECTRUM INFERENCE (MANDATORY)
 
-Before constructing motion, infer from the topic:
+Before generation, the model must categorize the input on three scales:
 
-- perceived gravity (light / medium / heavy),
-- energy level (calm / balanced / dynamic),
-- informational density (sparse / moderate / dense).
+### 9.1 The Kinetic Scale (Energy Level)
+- **High Energy (Opener):** Rapid acceleration, aggressive easing (expo.inOut), high temporal overlap, significant spatial travel.
+- **Low Energy (Presentation):** Fluid transitions, long durations, gentle easing (power2.out), minimal overlap, focus on readability.
 
-These inferences must affect:
-- motion dominance,
-- acceptable variation range,
-- secondary motion restraint.
+### 9.2 The Gravity Scale (Weight)
+- **Heavy (Structural):** Objects move as if they have mass. Slow settling, micro-overshoots, lower Z-axis displacement.
+- **Light (Atmospheric):** Objects float or drift. High Z-axis range, faster resolution, more transparency-led motion.
 
-No presets.
-No hard-coded styles.
-Context must influence behavior implicitly.
+### 9.3 The Spatial Depth Scale
+- **Flat/Editorial:** Focus on X/Y axes and text granularity. Volume is created through timing.
+- **Immersive/Product:** Focus on Z-axis and Rotational Inertia. Volume is created through 3D transforms.
+
+The model is FORBIDDEN from using a middle-ground default. It must choose a distinct "Motion Signature" based on the TOPIC and ARTIFACT MODE.
 
 ---
 

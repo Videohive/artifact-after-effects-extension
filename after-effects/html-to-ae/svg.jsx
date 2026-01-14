@@ -11,6 +11,7 @@
     var topBlocks = extractSvgTopLevelBlocks(svgInner);
     var rootSvgData = parseSvgData(svg);
     normalizeSvgData(rootSvgData, localBBox, rootData, null);
+    var hasMotion = node && node.motion && node.motion.length;
 
     debugLog(
       "SVG: create layers name=" +
@@ -73,6 +74,12 @@
         if (layer) {
           if (isFinite(blockOpacity) && blockOpacity !== 1) {
             layer.property("Transform").property("Opacity").setValue(blockOpacity * 100);
+          }
+          if (hasMotion) {
+            var layerMotion = filterMotionForLayer(node.motion, layer.name);
+            if (layerMotion.length) {
+              applyMotion(layer, { motion: layerMotion }, localBBox);
+            }
           }
           layers.push(layer);
         }
@@ -1536,17 +1543,124 @@
     }
   }
 
+  function normalizeMotionTarget(target) {
+    if (!target) return null;
+    var trimmed = String(target).replace(/^\s+|\s+$/g, "");
+    if (!trimmed) return null;
+    if (trimmed.charAt(0) === "#" || trimmed.charAt(0) === ".") return trimmed.substring(1);
+    return trimmed;
+  }
+
+  function filterMotionForLayer(motionList, layerName) {
+    if (!motionList || !motionList.length || !layerName) return [];
+    var out = [];
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.targets || !entry.targets.length) continue;
+      var matched = false;
+      for (var t = 0; t < entry.targets.length; t++) {
+        var key = normalizeMotionTarget(entry.targets[t]);
+        if (!key) continue;
+        var aeKey = safeName(key);
+        if (key === layerName || aeKey === layerName) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) out.push(entry);
+    }
+    return out;
+  }
+
+  function getDashLengthFromMotion(motionList) {
+    var len = 0;
+    if (!motionList || !motionList.length) return len;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props.strokeDasharray) continue;
+      var prop = entry.props.strokeDasharray;
+      var raw = null;
+      if (prop.to && prop.to.value !== undefined) raw = prop.to.value;
+      else if (prop.from && prop.from.value !== undefined) raw = prop.from.value;
+      var num = parseMotionNumber(raw);
+      if (num !== null && isFinite(num) && Math.abs(num) > 0) return Math.abs(num);
+    }
+    for (var j = 0; j < motionList.length; j++) {
+      var entry2 = motionList[j];
+      if (!entry2 || !entry2.props || !entry2.props.strokeDashoffset) continue;
+      var prop2 = entry2.props.strokeDashoffset;
+      var vals = [];
+      if (prop2.from && prop2.from.value !== undefined) vals.push(prop2.from.value);
+      if (prop2.to && prop2.to.value !== undefined) vals.push(prop2.to.value);
+      for (var v = 0; v < vals.length; v++) {
+        var num2 = parseMotionNumber(vals[v]);
+        if (num2 !== null && isFinite(num2)) {
+          var absVal = Math.abs(num2);
+          if (absVal > len) len = absVal;
+        }
+      }
+    }
+    return len;
+  }
+
+  function getOrAddTrimPaths(contents) {
+    if (!contents) return null;
+    var trim = contents.property("ADBE Vector Filter - Trim");
+    if (trim) return trim;
+    try {
+      return contents.addProperty("ADBE Vector Filter - Trim");
+    } catch (e) {
+      return contents.property("ADBE Vector Filter - Trim");
+    }
+  }
+
+  function filterAnimatedDashOffset(motionList) {
+    var out = [];
+    if (!motionList || !motionList.length) return out;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props.strokeDashoffset) continue;
+      var duration = entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0;
+      if (duration > 0) out.push(entry);
+    }
+    return out;
+  }
+
   function applySvgStrokeDashMotion(layers, motionList) {
     if (!layers || !layers.length || !motionList || !motionList.length) return;
-    var hasDashArray = collectMotionSegments(motionList, "strokeDasharray").length > 0;
-    var hasDashOffset = collectMotionSegments(motionList, "strokeDashoffset").length > 0;
-    if (!hasDashArray && !hasDashOffset) return;
-
     for (var i = 0; i < layers.length; i++) {
       var layer = layers[i];
       if (!layer) continue;
+      var layerMotion = filterMotionForLayer(motionList, layer.name);
+      if (!layerMotion.length) continue;
+      var hasDashArray = collectMotionSegments(layerMotion, "strokeDasharray").length > 0;
+      var hasDashOffset = collectMotionSegments(layerMotion, "strokeDashoffset").length > 0;
+      if (!hasDashArray && !hasDashOffset) continue;
       var contents = layer.property("Contents");
       if (!contents) continue;
+
+      if (hasDashOffset) {
+        var animatedOffset = filterAnimatedDashOffset(layerMotion);
+        if (!animatedOffset.length) continue;
+        var dashLen = getDashLengthFromMotion(layerMotion);
+        if (!dashLen || !isFinite(dashLen)) continue;
+        var baseOffset = dashLen;
+        var trim = getOrAddTrimPaths(contents);
+        if (!trim) continue;
+        var endProp = trim.property("ADBE Vector Trim End");
+        if (endProp && endProp.canSetExpression) {
+          var convertFn = function (v) {
+            return (1 - v / dashLen) * 100;
+          };
+          var endSegments = buildMotionSegments(animatedOffset, "strokeDashoffset", baseOffset, 1, convertFn);
+          var baseEnd = convertFn(baseOffset);
+          attachMotionControls(endSegments, layer, "Trim End", null);
+          if (endSegments.length) {
+            endProp.expression = buildSegmentedScalarExpression(endSegments, baseEnd);
+          }
+        }
+        continue;
+      }
       var strokes = [];
       collectSvgStrokeProps(contents, strokes);
       if (!strokes.length) continue;
@@ -1561,13 +1675,13 @@
           var gapProp = getOrAddDashProp(dashes, "ADBE Vector Stroke Gap 1");
           if (dashProp && dashProp.canSetExpression) {
             var baseDash = dashProp.value;
-            var dashSegments = buildMotionSegments(motionList, "strokeDasharray", baseDash, 1, null);
+            var dashSegments = buildMotionSegments(layerMotion, "strokeDasharray", baseDash, 1, null);
             attachMotionControls(dashSegments, layer, "Stroke Dash", null);
             dashProp.expression = buildSegmentedScalarExpression(dashSegments, baseDash);
           }
           if (gapProp && gapProp.canSetExpression) {
             var baseGap = gapProp.value;
-            var gapSegments = buildMotionSegments(motionList, "strokeDasharray", baseGap, 1, null);
+            var gapSegments = buildMotionSegments(layerMotion, "strokeDasharray", baseGap, 1, null);
             attachMotionControls(gapSegments, layer, "Stroke Gap", null);
             gapProp.expression = buildSegmentedScalarExpression(gapSegments, baseGap);
           }
@@ -1577,7 +1691,7 @@
           var offsetProp = dashes.property("ADBE Vector Stroke Offset");
           if (offsetProp && offsetProp.canSetExpression) {
             var baseOffset = offsetProp.value;
-            var offsetSegments = buildMotionSegments(motionList, "strokeDashoffset", baseOffset, 1, null);
+            var offsetSegments = buildMotionSegments(layerMotion, "strokeDashoffset", baseOffset, 1, null);
             attachMotionControls(offsetSegments, layer, "Stroke Offset", null);
             offsetProp.expression = buildSegmentedScalarExpression(offsetSegments, baseOffset);
           }

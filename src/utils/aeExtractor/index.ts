@@ -541,13 +541,32 @@ const normalizeMotionTarget = (target: string): string | null => {
   return trimmed;
 };
 
+const collectSvgChildIds = (content?: string): Set<string> => {
+  const ids = new Set<string>();
+  if (!content) return ids;
+  const re = /\bid\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content))) {
+    const id = match[1].trim();
+    if (id) ids.add(id);
+  }
+  return ids;
+};
+
 const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
   if (!root || !tweens || tweens.length === 0) return;
   const nodeMap = new Map<string, AENode>();
+  const svgContentMap = new Map<string, AENode>();
 
   const visit = (node: AENode | undefined) => {
     if (!node) return;
     if (node.name && !nodeMap.has(node.name)) nodeMap.set(node.name, node);
+    if (node.type === 'svg' && node.content) {
+      const ids = collectSvgChildIds(node.content);
+      ids.forEach(id => {
+        if (!svgContentMap.has(id)) svgContentMap.set(id, node);
+      });
+    }
     if (node.children && node.children.length) {
       node.children.forEach(child => visit(child));
     }
@@ -569,7 +588,7 @@ const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
     tween.targets.forEach(target => {
       const key = normalizeMotionTarget(target);
       if (!key) return;
-      const node = nodeMap.get(key);
+      const node = nodeMap.get(key) || svgContentMap.get(key);
       const entry = { ...tween, targets: [target] };
       if (node) {
         const shouldRedirectSplitText =

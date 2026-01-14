@@ -949,7 +949,13 @@
     s = s.substring(6);
     if (s.charAt(s.length - 1) === ")") s = s.substring(0, s.length - 1);
     var roundIdx = s.indexOf("round");
-    if (roundIdx !== -1) s = s.substring(0, roundIdx);
+    var roundText = null;
+    if (roundIdx !== -1) {
+      roundText = s.substring(roundIdx + 5);
+      var roundSlash = roundText.indexOf("/");
+      if (roundSlash !== -1) roundText = roundText.substring(0, roundSlash);
+      s = s.substring(0, roundIdx);
+    }
     var slashIdx = s.indexOf("/");
     if (slashIdx !== -1) s = s.substring(0, slashIdx);
     var raw = s.replace(/,/g, " ").split(/\s+/);
@@ -987,12 +993,38 @@
       left = parts[3];
     }
 
+    var rx = 0;
+    var ry = 0;
+    if (roundText) {
+      var rRaw = roundText.replace(/,/g, " ").split(/\s+/);
+      var rParts = [];
+      for (var r = 0; r < rRaw.length; r++) {
+        if (rRaw[r]) rParts.push(rRaw[r]);
+      }
+      if (rParts.length === 1) {
+        rx = parsePart(rParts[0], bbox.w);
+        ry = parsePart(rParts[0], bbox.h);
+      } else if (rParts.length >= 2) {
+        rx = parsePart(rParts[0], bbox.w);
+        ry = parsePart(rParts[1], bbox.h);
+      }
+    }
+
     return {
       top: parsePart(top, bbox.h),
       right: parsePart(right, bbox.w),
       bottom: parsePart(bottom, bbox.h),
       left: parsePart(left, bbox.w),
+      rx: rx,
+      ry: ry,
     };
+  }
+
+  function clampRoundnessValue(value, max) {
+    var v = Number(value);
+    if (!isFinite(v) || v <= 0) return 0;
+    if (!isFinite(max) || max <= 0) return v;
+    return Math.min(v, max);
   }
 
   function buildInsetShape(inset, bbox) {
@@ -1007,26 +1039,109 @@
     var y0 = t;
     var x1 = l + w;
     var y1 = t + h;
+    if (w <= 0 || h <= 0) return null;
+
+    var rx = clampRoundnessValue(inset.rx || 0, w / 2);
+    var ry = clampRoundnessValue(inset.ry || 0, h / 2);
+    var hasRound = rx > 0 && ry > 0;
+    var k = 0.5522847498307936;
+    var rxk = hasRound ? rx * k : 0;
+    var ryk = hasRound ? ry * k : 0;
 
     var s = new Shape();
     s.vertices = [
-      [x0, y0],
-      [x1, y0],
-      [x1, y1],
-      [x0, y1],
+      [x0 + rx, y0],
+      [x1 - rx, y0],
+      [x1, y0 + ry],
+      [x1, y1 - ry],
+      [x1 - rx, y1],
+      [x0 + rx, y1],
+      [x0, y1 - ry],
+      [x0, y0 + ry],
     ];
     s.inTangents = [
+      [-rxk, 0],
       [0, 0],
+      [-rxk, 0],
       [0, 0],
+      [rxk, 0],
       [0, 0],
+      [0, ryk],
       [0, 0],
     ];
     s.outTangents = [
       [0, 0],
+      [0, ryk],
       [0, 0],
+      [0, ryk],
       [0, 0],
+      [-rxk, 0],
       [0, 0],
+      [0, -ryk],
     ];
+    s.closed = true;
+    return s;
+  }
+
+  function parsePolygonPoints(value, bbox) {
+    if (!value || !bbox) return null;
+    var s = String(value).trim();
+    if (s.indexOf("polygon(") !== 0) return null;
+    s = s.substring(8);
+    if (s.charAt(s.length - 1) === ")") s = s.substring(0, s.length - 1);
+    var items = s.split(",");
+    if (items.length === 1) {
+      var flat = String(items[0]).trim().split(/\s+/);
+      items = [];
+      for (var f = 0; f + 1 < flat.length; f += 2) {
+        items.push(flat[f] + " " + flat[f + 1]);
+      }
+    }
+    var points = [];
+    for (var i = 0; i < items.length; i++) {
+      var part = String(items[i]).trim();
+      if (!part) continue;
+      var nums = part.split(/\s+/);
+      if (nums.length < 2) continue;
+      var xVal = nums[0];
+      var yVal = nums[1];
+      var x = xVal.indexOf("%") !== -1 ? (parseFloat(xVal) / 100) * bbox.w : parseFloat(xVal);
+      var y = yVal.indexOf("%") !== -1 ? (parseFloat(yVal) / 100) * bbox.h : parseFloat(yVal);
+      if (!isFinite(x) || !isFinite(y)) continue;
+      points.push([x, y]);
+    }
+    return points.length ? points : null;
+  }
+
+  function normalizePolygonPoints(a, b) {
+    var aLen = a ? a.length : 0;
+    var bLen = b ? b.length : 0;
+    var max = Math.max(aLen, bLen);
+    if (max < 1) return { a: a, b: b, count: 0 };
+    function pad(list, len) {
+      var out = list ? list.slice(0) : [];
+      var last = out.length ? out[out.length - 1] : [0, 0];
+      while (out.length < len) out.push([last[0], last[1]]);
+      if (out.length > len) out = out.slice(0, len);
+      return out;
+    }
+    return { a: pad(a, max), b: pad(b, max), count: max };
+  }
+
+  function buildPolygonShape(points) {
+    if (!points || !points.length) return null;
+    var s = new Shape();
+    var verts = [];
+    var ins = [];
+    var outs = [];
+    for (var i = 0; i < points.length; i++) {
+      verts.push([points[i][0], points[i][1]]);
+      ins.push([0, 0]);
+      outs.push([0, 0]);
+    }
+    s.vertices = verts;
+    s.inTangents = ins;
+    s.outTangents = outs;
     s.closed = true;
     return s;
   }
@@ -1053,7 +1168,7 @@
   }
 
   function buildClipPathInsetSegments(motionList, bbox) {
-    var out = { top: [], right: [], bottom: [], left: [] };
+    var out = { top: [], right: [], bottom: [], left: [], rx: [], ry: [] };
     if (!motionList || !motionList.length || !bbox) return out;
     for (var i = 0; i < motionList.length; i++) {
       var entry = motionList[i];
@@ -1079,6 +1194,8 @@
       out.right.push({ t0: t0, t1: t1, v0: insetFrom.right, v1: insetTo.right, ease: ease });
       out.bottom.push({ t0: t0, t1: t1, v0: insetFrom.bottom, v1: insetTo.bottom, ease: ease });
       out.left.push({ t0: t0, t1: t1, v0: insetFrom.left, v1: insetTo.left, ease: ease });
+      out.rx.push({ t0: t0, t1: t1, v0: insetFrom.rx || 0, v1: insetTo.rx || 0, ease: ease });
+      out.ry.push({ t0: t0, t1: t1, v0: insetFrom.ry || 0, v1: insetTo.ry || 0, ease: ease });
     }
 
     function sortSeg(a, b) {
@@ -1090,7 +1207,76 @@
     out.right.sort(sortSeg);
     out.bottom.sort(sortSeg);
     out.left.sort(sortSeg);
+    out.rx.sort(sortSeg);
+    out.ry.sort(sortSeg);
     return out;
+  }
+
+  function buildClipPathPolygonSegments(motionList, bbox) {
+    var out = { points: [], count: 0 };
+    if (!motionList || !motionList.length || !bbox) return out;
+    var entries = [];
+    var maxCount = 0;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props.clipPath) continue;
+      var clip = entry.props.clipPath || {};
+      var fromVal = clip.from && clip.from.value !== undefined ? clip.from.value : null;
+      var toVal = clip.to && clip.to.value !== undefined ? clip.to.value : null;
+      if (fromVal === null && toVal === null) continue;
+      if (fromVal === null) fromVal = toVal;
+      if (toVal === null) toVal = fromVal;
+      var fromPts = parsePolygonPoints(fromVal, bbox);
+      var toPts = parsePolygonPoints(toVal, bbox);
+      if (!fromPts && !toPts) continue;
+      if (!fromPts) fromPts = toPts;
+      if (!toPts) toPts = fromPts;
+      maxCount = Math.max(maxCount, fromPts.length, toPts.length);
+      entries.push({ entry: entry, from: fromPts, to: toPts });
+    }
+    if (!entries.length || maxCount < 1) return out;
+
+    for (var p = 0; p < maxCount; p++) {
+      out.points.push({ x: [], y: [] });
+    }
+
+    for (var e = 0; e < entries.length; e++) {
+      var info = entries[e];
+      var norm = normalizePolygonPoints(info.from, info.to);
+      if (!norm.count) continue;
+      var t0 = getMotionStart(info.entry);
+      var t1 = t0 + (info.entry.time && isFinite(info.entry.time.duration) ? info.entry.time.duration : 0);
+      var ease = info.entry.time && info.entry.time.ease ? info.entry.time.ease : null;
+      for (var idx = 0; idx < norm.count; idx++) {
+        var p0 = norm.a[idx];
+        var p1 = norm.b[idx];
+        out.points[idx].x.push({ t0: t0, t1: t1, v0: p0[0], v1: p1[0], ease: ease });
+        out.points[idx].y.push({ t0: t0, t1: t1, v0: p0[1], v1: p1[1], ease: ease });
+      }
+    }
+
+    out.count = maxCount;
+    return out;
+  }
+
+  function detectClipPathType(motionList, bbox) {
+    if (!motionList || !motionList.length || !bbox) return null;
+    var hasInset = false;
+    var hasPoly = false;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props.clipPath) continue;
+      var clip = entry.props.clipPath || {};
+      var fromVal = clip.from && clip.from.value !== undefined ? clip.from.value : null;
+      var toVal = clip.to && clip.to.value !== undefined ? clip.to.value : null;
+      if (fromVal && String(fromVal).indexOf("inset(") === 0) hasInset = true;
+      if (toVal && String(toVal).indexOf("inset(") === 0) hasInset = true;
+      if (fromVal && String(fromVal).indexOf("polygon(") === 0) hasPoly = true;
+      if (toVal && String(toVal).indexOf("polygon(") === 0) hasPoly = true;
+    }
+    if (hasInset && !hasPoly) return "inset";
+    if (hasPoly && !hasInset) return "polygon";
+    return null;
   }
 
   function applyClipPathMotion(layer, node, bbox) {
@@ -1101,23 +1287,57 @@
     if (!segments.length) return;
 
     if (pathProp.canSetExpression) {
+      var mode = detectClipPathType(node.motion, bbox);
+      if (mode === "polygon") {
+        var polySegs = buildClipPathPolygonSegments(node.motion, bbox);
+        if (polySegs.count) {
+          var exprPoly = "var t=time;\n";
+          var ptsExpr = "[";
+          for (var p = 0; p < polySegs.count; p++) {
+            exprPoly += buildSegmentedVarExpr(polySegs.points[p].x, "px" + p, 0);
+            exprPoly += buildSegmentedVarExpr(polySegs.points[p].y, "py" + p, 0);
+            if (p > 0) ptsExpr += ",";
+            ptsExpr += "[px" + p + ",py" + p + "]";
+          }
+          ptsExpr += "]";
+          var zeros = [];
+          for (var z = 0; z < polySegs.count; z++) zeros.push("[0,0]");
+          exprPoly +=
+            "var pts=" + ptsExpr + ";\n" +
+            "createPath(pts," +
+            "[" + zeros.join(",") + "]," +
+            "[" + zeros.join(",") + "],true);";
+          pathProp.expression = exprPoly;
+          return;
+        }
+      }
+
       var insetSegs = buildClipPathInsetSegments(node.motion, bbox);
       var expr =
         "var t=time;\n" +
-        "var top=0; var right=0; var bottom=0; var left=0;\n" +
+        "var top=0; var right=0; var bottom=0; var left=0; var rx=0; var ry=0;\n" +
         buildSegmentedVarExpr(insetSegs.top, "top", 0) +
         buildSegmentedVarExpr(insetSegs.right, "right", 0) +
         buildSegmentedVarExpr(insetSegs.bottom, "bottom", 0) +
         buildSegmentedVarExpr(insetSegs.left, "left", 0) +
+        buildSegmentedVarExpr(insetSegs.rx, "rx", 0) +
+        buildSegmentedVarExpr(insetSegs.ry, "ry", 0) +
         "var w=Math.max(0," + bbox.w + "-left-right);\n" +
         "var h=Math.max(0," + bbox.h + "-top-bottom);\n" +
         "var x0=left; var y0=top; var x1=left+w; var y1=top+h;\n" +
-        "createPath([[x0,y0],[x1,y0],[x1,y1],[x0,y1]]," +
-        "[[0,0],[0,0],[0,0],[0,0]],[[0,0],[0,0],[0,0],[0,0]],true);";
+        "rx=Math.min(Math.max(0,rx),w/2); ry=Math.min(Math.max(0,ry),h/2);\n" +
+        "var hasRound=(rx>0 && ry>0);\n" +
+        "var k=0.5522847498307936;\n" +
+        "var rxk=hasRound?rx*k:0; var ryk=hasRound?ry*k:0;\n" +
+        "var pts=[[x0+rx,y0],[x1-rx,y0],[x1,y0+ry],[x1,y1-ry],[x1-rx,y1],[x0+rx,y1],[x0,y1-ry],[x0,y0+ry]];\n" +
+        "var inT=[[-rxk,0],[0,0],[-rxk,0],[0,0],[rxk,0],[0,0],[0,ryk],[0,0]];\n" +
+        "var outT=[[0,0],[0,ryk],[0,0],[0,ryk],[0,0],[-rxk,0],[0,0],[0,-ryk]];\n" +
+        "createPath(pts,inT,outT,true);";
       pathProp.expression = expr;
       return;
     }
 
+    var fallbackMode = detectClipPathType(node.motion, bbox);
     for (var i = 0; i < segments.length; i++) {
       var entry = segments[i];
       var props = entry.props || {};
@@ -1127,6 +1347,25 @@
       if (fromVal === null && toVal === null) continue;
       if (fromVal === null) fromVal = toVal;
       if (toVal === null) toVal = fromVal;
+
+      var t0 = getMotionStart(entry);
+      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+
+      if (fallbackMode === "polygon") {
+        var polyFrom = parsePolygonPoints(fromVal, bbox);
+        var polyTo = parsePolygonPoints(toVal, bbox);
+        if (!polyFrom && !polyTo) continue;
+        if (!polyFrom) polyFrom = polyTo;
+        if (!polyTo) polyTo = polyFrom;
+        var normPoly = normalizePolygonPoints(polyFrom, polyTo);
+        if (!normPoly.count) continue;
+        var shapeFromPoly = buildPolygonShape(normPoly.a);
+        var shapeToPoly = buildPolygonShape(normPoly.b);
+        if (!shapeFromPoly || !shapeToPoly) continue;
+        pathProp.setValueAtTime(t0, shapeFromPoly);
+        pathProp.setValueAtTime(t1, shapeToPoly);
+        continue;
+      }
 
       var insetFrom = parseInsetValues(fromVal, bbox);
       var insetTo = parseInsetValues(toVal, bbox);
@@ -1138,8 +1377,6 @@
       var shapeTo = buildInsetShape(insetTo, bbox);
       if (!shapeFrom || !shapeTo) continue;
 
-      var t0 = getMotionStart(entry);
-      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
       pathProp.setValueAtTime(t0, shapeFrom);
       pathProp.setValueAtTime(t1, shapeTo);
     }

@@ -636,19 +636,36 @@ const MOTION_CAPTURE_SCRIPT = `
           var children = tl.getChildren(true, true, true);
           return children && children.length ? children[children.length - 1] : null;
         }
+        function snapshotChildren() {
+          if (!tl.getChildren) return [];
+          return tl.getChildren(true, true, true) || [];
+        }
+        function findAddedTween(before, after) {
+          if (!after || !after.length) return null;
+          if (!before || !before.length) return after[after.length - 1];
+          for (var i = after.length - 1; i >= 0; i -= 1) {
+            if (before.indexOf(after[i]) === -1) return after[i];
+          }
+          return after[after.length - 1];
+        }
         ['to', 'from', 'fromTo'].forEach(function (method) {
           var orig = tl[method];
           if (typeof orig !== 'function') return;
           tl[method] = function (targets, vars, position) {
             var tween;
+            var before = snapshotChildren();
             if (method === 'fromTo') {
               tween = orig.apply(tl, arguments);
-              recordTween(resolveTween() || tween, method, targets, arguments[1], arguments[2]);
+              var after = snapshotChildren();
+              var added = findAddedTween(before, after) || resolveTween();
+              recordTween(added || tween, method, targets, arguments[1], arguments[2]);
               return tween;
             }
             tween = orig.apply(tl, arguments);
+            var afterSingle = snapshotChildren();
+            var addedSingle = findAddedTween(before, afterSingle) || resolveTween();
             recordTween(
-              resolveTween() || tween,
+              addedSingle || tween,
               method,
               targets,
               method === 'from' ? vars : null,

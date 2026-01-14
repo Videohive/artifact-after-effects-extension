@@ -95,6 +95,10 @@
       }
     }
 
+    if (node && node.motion && node.motion.length) {
+      applySvgStrokeDashMotion(layers, node.motion);
+    }
+
     return layers;
   }
 
@@ -1415,6 +1419,7 @@
   }
 
   function applySvgPaint(grpContents, attrs, defaultFillOn, compName) {
+    attrs = parseSvgStyleAttributes(attrs || {});
     var fillColor = parseSvgColor(attrs.fill);
     var strokeColor = parseSvgColor(attrs.stroke);
     var strokeWidth = parseNumber(attrs["stroke-width"], 1);
@@ -1423,6 +1428,8 @@
     var strokeOpacity = parseNumber(attrs["stroke-opacity"], 1);
     var dashArray = parseSvgDashArray(attrs["stroke-dasharray"]);
     var dashOffset = parseNumber(attrs["stroke-dashoffset"], 0);
+    var lineCapValue = mapSvgStrokeLineCap(attrs["stroke-linecap"]);
+    var lineJoinValue = mapSvgStrokeLineJoin(attrs["stroke-linejoin"]);
 
     if (defaultFillOn && !attrs.fill) {
       fillColor = fillColor || { rgb: [0, 0, 0], alpha: 1 };
@@ -1442,6 +1449,14 @@
       applyRgbColorProperty(stroke.property("Color"), strokeColor.rgb, strokeColor.alpha, compName);
       stroke.property("Stroke Width").setValue(strokeWidth);
       stroke.property("Opacity").setValue(opacity * strokeOpacity * strokeColor.alpha * 100);
+      if (lineCapValue !== null) {
+        var capProp = stroke.property("ADBE Vector Stroke Line Cap") || stroke.property("Line Cap");
+        if (capProp) capProp.setValue(lineCapValue);
+      }
+      if (lineJoinValue !== null) {
+        var joinProp = stroke.property("ADBE Vector Stroke Line Join") || stroke.property("Line Join");
+        if (joinProp) joinProp.setValue(lineJoinValue);
+      }
       stroke.enabled = true;
       if (dashArray) {
         var dashes = stroke.property("ADBE Vector Stroke Dashes") || stroke.property("Dashes");
@@ -1475,6 +1490,99 @@
       }
     } else {
       stroke.enabled = false;
+    }
+  }
+
+  function mapSvgStrokeLineCap(value) {
+    if (!value) return null;
+    var v = String(value).toLowerCase();
+    if (v === "round") return 2;
+    if (v === "square") return 3;
+    if (v === "butt") return 1;
+    return null;
+  }
+
+  function mapSvgStrokeLineJoin(value) {
+    if (!value) return null;
+    var v = String(value).toLowerCase();
+    if (v === "round") return 2;
+    if (v === "bevel") return 3;
+    if (v === "miter" || v === "miter-clip") return 1;
+    return null;
+  }
+
+  function collectSvgStrokeProps(contents, out) {
+    if (!contents || !out) return;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var prop = contents.property(i);
+      if (!prop) continue;
+      if (prop.matchName === "ADBE Vector Group") {
+        collectSvgStrokeProps(prop.property("Contents"), out);
+      } else if (prop.matchName === "ADBE Vector Graphic - Stroke") {
+        out.push(prop);
+      }
+    }
+  }
+
+  function getOrAddDashProp(dashes, matchName) {
+    if (!dashes) return null;
+    var prop = dashes.property(matchName);
+    if (prop) return prop;
+    try {
+      return dashes.addProperty(matchName);
+    } catch (e) {
+      return dashes.property(matchName);
+    }
+  }
+
+  function applySvgStrokeDashMotion(layers, motionList) {
+    if (!layers || !layers.length || !motionList || !motionList.length) return;
+    var hasDashArray = collectMotionSegments(motionList, "strokeDasharray").length > 0;
+    var hasDashOffset = collectMotionSegments(motionList, "strokeDashoffset").length > 0;
+    if (!hasDashArray && !hasDashOffset) return;
+
+    for (var i = 0; i < layers.length; i++) {
+      var layer = layers[i];
+      if (!layer) continue;
+      var contents = layer.property("Contents");
+      if (!contents) continue;
+      var strokes = [];
+      collectSvgStrokeProps(contents, strokes);
+      if (!strokes.length) continue;
+
+      for (var s = 0; s < strokes.length; s++) {
+        var stroke = strokes[s];
+        var dashes = stroke.property("ADBE Vector Stroke Dashes") || stroke.property("Dashes");
+        if (!dashes) continue;
+
+        if (hasDashArray) {
+          var dashProp = getOrAddDashProp(dashes, "ADBE Vector Stroke Dash 1");
+          var gapProp = getOrAddDashProp(dashes, "ADBE Vector Stroke Gap 1");
+          if (dashProp && dashProp.canSetExpression) {
+            var baseDash = dashProp.value;
+            var dashSegments = buildMotionSegments(motionList, "strokeDasharray", baseDash, 1, null);
+            attachMotionControls(dashSegments, layer, "Stroke Dash", null);
+            dashProp.expression = buildSegmentedScalarExpression(dashSegments, baseDash);
+          }
+          if (gapProp && gapProp.canSetExpression) {
+            var baseGap = gapProp.value;
+            var gapSegments = buildMotionSegments(motionList, "strokeDasharray", baseGap, 1, null);
+            attachMotionControls(gapSegments, layer, "Stroke Gap", null);
+            gapProp.expression = buildSegmentedScalarExpression(gapSegments, baseGap);
+          }
+        }
+
+        if (hasDashOffset) {
+          var offsetProp = dashes.property("ADBE Vector Stroke Offset");
+          if (offsetProp && offsetProp.canSetExpression) {
+            var baseOffset = offsetProp.value;
+            var offsetSegments = buildMotionSegments(motionList, "strokeDashoffset", baseOffset, 1, null);
+            attachMotionControls(offsetSegments, layer, "Stroke Offset", null);
+            offsetProp.expression = buildSegmentedScalarExpression(offsetSegments, baseOffset);
+          }
+        }
+      }
     }
   }
 

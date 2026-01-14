@@ -347,6 +347,41 @@
     return n * sign;
   }
 
+  function ensureSliderControl(layer, name, value) {
+    if (!layer || !name) return null;
+    var effects = layer.property("Effects");
+    if (!effects) return null;
+    var effect = effects.property(name);
+    if (!effect) {
+      effect = effects.addProperty("ADBE Slider Control");
+      effect.name = name;
+    }
+    var prop = effect.property("Slider");
+    if (prop && isFinite(value)) prop.setValue(value);
+    return prop;
+  }
+
+  function attachMotionControls(segments, layer, propLabel, exprTransform) {
+    if (!segments || !segments.length || !layer) return;
+    var label = propLabel || "Value";
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      var baseName = label + " " + (i + 1);
+      var fromName = safeName(baseName + " From");
+      var toName = safeName(baseName + " To");
+      ensureSliderControl(layer, fromName, seg.v0);
+      ensureSliderControl(layer, toName, seg.v1);
+      var fromExpr = 'effect("' + fromName + '")("Slider")';
+      var toExpr = 'effect("' + toName + '")("Slider")';
+      if (exprTransform) {
+        fromExpr = exprTransform(fromExpr);
+        toExpr = exprTransform(toExpr);
+      }
+      seg.v0Expr = fromExpr;
+      seg.v1Expr = toExpr;
+    }
+  }
+
   function pickMotionProp(motionList, propNames) {
     if (!motionList || !motionList.length) return null;
     for (var i = 0; i < motionList.length; i++) {
@@ -360,6 +395,122 @@
       }
     }
     return null;
+  }
+
+  function collectMotionSegments(motionList, propName) {
+    var out = [];
+    if (!motionList || !motionList.length || !propName) return out;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props[propName]) continue;
+      out.push({ prop: propName, tween: entry, index: i });
+    }
+    return out;
+  }
+
+  function getMotionStart(entry) {
+    if (!entry || !entry.time) return 0;
+    var start = isFinite(entry.time.start) ? entry.time.start : 0;
+    var delay = isFinite(entry.time.delay) ? entry.time.delay : 0;
+    return start + delay;
+  }
+
+  function buildMotionSegments(motionList, propName, baseValue, scale, convertFn) {
+    var entries = collectMotionSegments(motionList, propName);
+    if (!entries.length) return [];
+    entries.sort(function (a, b) {
+      var ta = getMotionStart(a.tween);
+      var tb = getMotionStart(b.tween);
+      if (ta < tb) return -1;
+      if (ta > tb) return 1;
+      return a.index - b.index;
+    });
+
+    var segments = [];
+    var prev = baseValue;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i].tween;
+      var props = entry.props[propName];
+      var fromVal = props && props.from ? parseMotionNumber(props.from.value) : null;
+      var toVal = props && props.to ? parseMotionNumber(props.to.value) : null;
+      if (fromVal === null) fromVal = prev;
+      if (toVal === null) toVal = fromVal;
+      if (convertFn) {
+        fromVal = convertFn(fromVal);
+        toVal = convertFn(toVal);
+      }
+      var t0 = getMotionStart(entry);
+      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+      var seg = {
+        t0: t0,
+        t1: t1,
+        v0: fromVal * scale,
+        v1: toVal * scale,
+        ease: entry.time && entry.time.ease ? entry.time.ease : null,
+      };
+      var last = segments.length ? segments[segments.length - 1] : null;
+      if (
+        !last ||
+        last.t0 !== seg.t0 ||
+        last.t1 !== seg.t1 ||
+        last.v0 !== seg.v0 ||
+        last.v1 !== seg.v1 ||
+        String(last.ease || "") !== String(seg.ease || "")
+      ) {
+        segments.push(seg);
+      }
+      prev = toVal;
+    }
+    return segments;
+  }
+
+  function formatExprValue(value) {
+    return typeof value === "string" ? value : String(value);
+  }
+
+  function buildSegmentedVarExpr(segments, varName, baseValue) {
+    if (!segments || !segments.length) return "var " + varName + "=" + formatExprValue(baseValue) + ";\n";
+    var startVal = segments[0].v0Expr || segments[0].v0;
+    if (!isFinite(startVal) && typeof startVal !== "string") startVal = baseValue;
+    var expr = "var " + varName + "=" + formatExprValue(startVal) + ";\n";
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      var easeFn = buildEaseFunctionSource(seg.ease);
+      var v0Expr = seg.v0Expr || seg.v0;
+      var v1Expr = seg.v1Expr || seg.v1;
+      expr +=
+        "if (t>=" +
+        seg.t0 +
+        ") {\n" +
+        "  var t0=" +
+        seg.t0 +
+        "; var t1=" +
+        seg.t1 +
+        ";\n" +
+        "  var v0=" +
+        formatExprValue(v0Expr) +
+        "; var v1=" +
+        formatExprValue(v1Expr) +
+        ";\n" +
+        "  var easeFn=" +
+        easeFn +
+        ";\n" +
+        "  if (t1<=t0) { " +
+        varName +
+        "=(t<=t0)?v0:v1; }\n" +
+        "  else if (t<=t1) { var p=(t-t0)/(t1-t0); var e=easeFn(p); " +
+        varName +
+        "=v0+(v1-v0)*e; }\n" +
+        "  else { " +
+        varName +
+        "=v1; }\n" +
+        "}\n";
+    }
+    return expr;
+  }
+
+  function buildSegmentedScalarExpression(segments, baseValue) {
+    return "var t=time;\nvar base=value;\n" + buildSegmentedVarExpr(segments, "v", "base") + "v;";
   }
 
   function buildEaseFunctionSource(easeStr) {
@@ -495,139 +646,86 @@
     var motionList = node.motion;
 
     // Opacity (0..1 -> 0..100)
-    var opacityEntry = pickMotionProp(motionList, ["opacity"]);
-    if (opacityEntry) {
-      var o = opacityEntry.tween;
-      var of = o.props.opacity && o.props.opacity.from ? parseMotionNumber(o.props.opacity.from.value) : null;
-      var ot = o.props.opacity && o.props.opacity.to ? parseMotionNumber(o.props.opacity.to.value) : null;
-      if (of !== null || ot !== null) {
-        var baseOpacity = layer.property("Transform").property("Opacity").value;
-        if (of === null) of = baseOpacity / 100;
-        if (ot === null) ot = baseOpacity / 100;
-        var t0 = (o.time && isFinite(o.time.start) ? o.time.start : 0) + (o.time && isFinite(o.time.delay) ? o.time.delay : 0);
-        var t1 = t0 + (o.time && isFinite(o.time.duration) ? o.time.duration : 0);
-        var easeStr = o.time && o.time.ease ? o.time.ease : null;
-        var expr = buildTweenExpression(t0, t1, of * 100, ot * 100, easeStr, "v");
-        var prop = layer.property("Transform").property("Opacity");
-        if (prop.canSetExpression) prop.expression = expr;
+    var opacityProp = layer.property("Transform").property("Opacity");
+    var baseOpacity = opacityProp.value;
+    var opacitySegments = buildMotionSegments(motionList, "opacity", baseOpacity / 100, 100, null);
+    attachMotionControls(opacitySegments, layer, "Opacity", null);
+    if (opacitySegments.length) {
+      if (opacityProp.canSetExpression) {
+        opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
       }
     }
 
     // Position (x/y offsets)
-    var xEntry = pickMotionProp(motionList, ["x"]);
-    var yEntry = pickMotionProp(motionList, ["y"]);
-    if (xEntry || yEntry) {
-      var basePos = layer.property("Transform").property("Position").value;
-      var xt = xEntry ? xEntry.tween : null;
-      var yt = yEntry ? yEntry.tween : null;
-      var xf = xt && xt.props.x && xt.props.x.from ? parseMotionNumber(xt.props.x.from.value) : 0;
-      var xto = xt && xt.props.x && xt.props.x.to ? parseMotionNumber(xt.props.x.to.value) : 0;
-      var yf = yt && yt.props.y && yt.props.y.from ? parseMotionNumber(yt.props.y.from.value) : 0;
-      var yto = yt && yt.props.y && yt.props.y.to ? parseMotionNumber(yt.props.y.to.value) : 0;
-      if (xf === null) xf = 0;
-      if (xto === null) xto = 0;
-      if (yf === null) yf = 0;
-      if (yto === null) yto = 0;
-      var t0x = xt ? (xt.time.start || 0) + (xt.time.delay || 0) : 0;
-      var t1x = xt ? t0x + (xt.time.duration || 0) : 0;
-      var t0y = yt ? (yt.time.start || 0) + (yt.time.delay || 0) : 0;
-      var t1y = yt ? t0y + (yt.time.duration || 0) : 0;
-
-      var xEase = xt && xt.time && xt.time.ease ? xt.time.ease : null;
-      var yEase = yt && yt.time && yt.time.ease ? yt.time.ease : null;
+    var basePos = layer.property("Transform").property("Position").value;
+    var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
+    var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
+    var xSegments = buildMotionSegments(motionList, "x", 0, 1, null);
+    var ySegments = buildMotionSegments(motionList, "y", 0, 1, null);
+    var xPercentSegments = buildMotionSegments(motionList, "xPercent", 0, 1, null);
+    var yPercentSegments = buildMotionSegments(motionList, "yPercent", 0, 1, null);
+    attachMotionControls(xSegments, layer, "Position X", null);
+    attachMotionControls(ySegments, layer, "Position Y", null);
+    attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {
+      return "(" + expr + "/100)*" + axisW;
+    });
+    attachMotionControls(yPercentSegments, layer, "Position Y Percent", function (expr) {
+      return "(" + expr + "/100)*" + axisH;
+    });
+    if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
       var expr =
         "var base=value;\n" +
-        "var tx=0; var ty=0;\n" +
-        (xEntry ? buildTweenValueExpr(t0x, t1x, xf, xto, xEase, "tx") : "") +
-        (yEntry ? buildTweenValueExpr(t0y, t1y, yf, yto, yEase, "ty") : "") +
-        "[base[0]+tx, base[1]+ty];";
+        "var t=time;\n" +
+        buildSegmentedVarExpr(xSegments, "tx", 0) +
+        buildSegmentedVarExpr(ySegments, "ty", 0) +
+        buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
+        buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
+        "[base[0]+tx+txp, base[1]+ty+typ];";
       var posProp = layer.property("Transform").property("Position");
       if (posProp.canSetExpression) posProp.expression = expr;
     }
 
     // Scale
-    var scaleEntry = pickMotionProp(motionList, ["scale"]);
-    var sxEntry = pickMotionProp(motionList, ["scaleX"]);
-    var syEntry = pickMotionProp(motionList, ["scaleY"]);
-    if (scaleEntry || sxEntry || syEntry) {
-      var scaleProp = layer.property("Transform").property("Scale");
-      var baseScale = scaleProp.value;
-      var tScale = scaleEntry ? scaleEntry.tween : null;
-      var tSx = sxEntry ? sxEntry.tween : null;
-      var tSy = syEntry ? syEntry.tween : null;
-
-      var sFrom = tScale && tScale.props.scale && tScale.props.scale.from ? parseMotionNumber(tScale.props.scale.from.value) : null;
-      var sTo = tScale && tScale.props.scale && tScale.props.scale.to ? parseMotionNumber(tScale.props.scale.to.value) : null;
-      var sxFrom = tSx && tSx.props.scaleX && tSx.props.scaleX.from ? parseMotionNumber(tSx.props.scaleX.from.value) : null;
-      var sxTo = tSx && tSx.props.scaleX && tSx.props.scaleX.to ? parseMotionNumber(tSx.props.scaleX.to.value) : null;
-      var syFrom = tSy && tSy.props.scaleY && tSy.props.scaleY.from ? parseMotionNumber(tSy.props.scaleY.from.value) : null;
-      var syTo = tSy && tSy.props.scaleY && tSy.props.scaleY.to ? parseMotionNumber(tSy.props.scaleY.to.value) : null;
-
-      var t0s = tScale ? (tScale.time.start || 0) + (tScale.time.delay || 0) : null;
-      var t1s = tScale ? t0s + (tScale.time.duration || 0) : null;
-      var t0sx = tSx ? (tSx.time.start || 0) + (tSx.time.delay || 0) : null;
-      var t1sx = tSx ? t0sx + (tSx.time.duration || 0) : null;
-      var t0sy = tSy ? (tSy.time.start || 0) + (tSy.time.delay || 0) : null;
-      var t1sy = tSy ? t0sy + (tSy.time.duration || 0) : null;
-
-      var scaleEase = tScale && tScale.time && tScale.time.ease ? tScale.time.ease : null;
-      var sxEase = tSx && tSx.time && tSx.time.ease ? tSx.time.ease : null;
-      var syEase = tSy && tSy.time && tSy.time.ease ? tSy.time.ease : null;
+    var scaleProp = layer.property("Transform").property("Scale");
+    var baseScale = scaleProp.value;
+    var scaleSegments = buildMotionSegments(motionList, "scale", baseScale[0] / 100, 100, null);
+    var sxSegments = buildMotionSegments(motionList, "scaleX", baseScale[0] / 100, 100, null);
+    var sySegments = buildMotionSegments(motionList, "scaleY", baseScale[1] / 100, 100, null);
+    attachMotionControls(scaleSegments, layer, "Scale", null);
+    attachMotionControls(sxSegments, layer, "Scale X", null);
+    attachMotionControls(sySegments, layer, "Scale Y", null);
+    if (scaleSegments.length || sxSegments.length || sySegments.length) {
       var expr =
         "var base=value;\n" +
+        "var t=time;\n" +
         "var sx=base[0]; var sy=base[1];\n" +
-        "var s=0;\n" +
-        (tScale
-          ? buildTweenValueExpr(
-              t0s,
-              t1s,
-              sFrom !== null ? sFrom * 100 : baseScale[0],
-              sTo !== null ? sTo * 100 : baseScale[0],
-              scaleEase,
-              "s"
-            ) + "sx=s; sy=s;\n"
-          : "") +
-        (tSx
-          ? buildTweenValueExpr(
-              t0sx,
-              t1sx,
-              sxFrom !== null ? sxFrom * 100 : baseScale[0],
-              sxTo !== null ? sxTo * 100 : baseScale[0],
-              sxEase,
-              "sx"
-            )
-          : "") +
-        (tSy
-          ? buildTweenValueExpr(
-              t0sy,
-              t1sy,
-              syFrom !== null ? syFrom * 100 : baseScale[1],
-              syTo !== null ? syTo * 100 : baseScale[1],
-              syEase,
-              "sy"
-            )
-          : "") +
+        "var s=" +
+        baseScale[0] +
+        ";\n" +
+        (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", baseScale[0]) + "sx=s; sy=s;\n" : "") +
+        (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", baseScale[0]) : "") +
+        (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", baseScale[1]) : "") +
         "[sx, sy];";
       if (scaleProp.canSetExpression) scaleProp.expression = expr;
     }
 
     // Rotation
-    var rotEntry = pickMotionProp(motionList, ["rotation", "rotate"]);
-    if (rotEntry) {
-      var r = rotEntry.tween;
-      var rk = rotEntry.prop === "rotate" ? "rotate" : "rotation";
-      var rf = r.props[rk] && r.props[rk].from ? parseMotionNumber(r.props[rk].from.value) : null;
-      var rt = r.props[rk] && r.props[rk].to ? parseMotionNumber(r.props[rk].to.value) : null;
-      if (rf !== null || rt !== null) {
-        var baseRot = layer.property("Transform").property("Rotation").value;
-        if (rf === null) rf = baseRot;
-        if (rt === null) rt = baseRot;
-        var t0r = (r.time && isFinite(r.time.start) ? r.time.start : 0) + (r.time && isFinite(r.time.delay) ? r.time.delay : 0);
-        var t1r = t0r + (r.time && isFinite(r.time.duration) ? r.time.duration : 0);
-        var rEase = r.time && r.time.ease ? r.time.ease : null;
-        var rexpr = buildTweenExpression(t0r, t1r, rf, rt, rEase, "v");
-        var rotProp = layer.property("Transform").property("Rotation");
-        if (rotProp.canSetExpression) rotProp.expression = rexpr;
+    var rotSegments = buildMotionSegments(motionList, "rotation", 0, 1, null);
+    var rotateSegments = buildMotionSegments(motionList, "rotate", 0, 1, null);
+    var rotationProp = layer.property("Transform").property("Rotation");
+    var baseRot = rotationProp.value;
+    var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
+    if (useRotSegments.length) {
+      if (!rotSegments.length && rotateSegments.length) {
+        // If only "rotate" segments are provided, treat them as rotation.
+        useRotSegments = rotateSegments;
+      }
+      // Rebuild with base values for rotation if missing in segments.
+      var motionKey = rotSegments.length ? "rotation" : "rotate";
+      useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
+      attachMotionControls(useRotSegments, layer, "Rotation", null);
+      if (rotationProp.canSetExpression) {
+        rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
       }
     }
   }

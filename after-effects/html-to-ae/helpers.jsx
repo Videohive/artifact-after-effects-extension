@@ -762,14 +762,15 @@
       advanced.property("ADBE Text Range Type2").setValue(basedOnValue);
     }
 
-    var startProp = selector.property("ADBE Text Percent Start");
+    var offsetProp = selector.property("ADBE Text Percent Offset");
     var splitTween = findSplitTween(motionList);
-    if (startProp && splitTween && startProp.canSetExpression) {
+    if (offsetProp && splitTween && offsetProp.canSetExpression) {
       var t0 = getMotionStart(splitTween);
       var t1 = t0 + (splitTween.time && isFinite(splitTween.time.duration) ? splitTween.time.duration : 0);
       var ease = splitTween.time && splitTween.time.ease ? splitTween.time.ease : null;
-      startProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
+      offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
     }
+
   }
 
   function applyMotion(layer, node, bbox) {

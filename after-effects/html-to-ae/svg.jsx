@@ -80,7 +80,9 @@
             if (layerMotion.length) {
               applyMotion(layer, { motion: layerMotion }, localBBox);
             }
-            applySvgInternalMotion(layer, svgData, node.motion);
+            var blockTag = block && block.tag ? String(block.tag).toLowerCase() : "";
+            var skipGroupName = blockTag && blockTag !== "g" ? layer.name : null;
+            applySvgInternalMotion(layer, svgData, node.motion, skipGroupName);
           }
           layers.push(layer);
         }
@@ -1768,7 +1770,7 @@
     }
   }
 
-  function applySvgInternalMotion(layer, svgData, motionList) {
+  function applySvgInternalMotion(layer, svgData, motionList, skipGroupName) {
     if (!layer || !svgData || !motionList || !motionList.length) return;
     var contents = layer.property("Contents");
     if (!contents) return;
@@ -1778,6 +1780,12 @@
       if (!group || group.matchName !== "ADBE Vector Group") continue;
       var groupName = group.name;
       if (!groupName) continue;
+      if (
+        skipGroupName &&
+        (groupName === skipGroupName || safeName(groupName) === skipGroupName)
+      ) {
+        continue;
+      }
       var groupMotion = filterMotionForLayer(motionList, groupName);
       if (!groupMotion.length) continue;
       var svgEl = findSvgElementById(svgData, groupName);

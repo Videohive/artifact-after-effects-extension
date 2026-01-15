@@ -1537,6 +1537,49 @@
     }
   }
 
+  function collectSvgFillProps(contents, out) {
+    if (!contents || !out) return;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var prop = contents.property(i);
+      if (!prop) continue;
+      if (prop.matchName === "ADBE Vector Group") {
+        collectSvgFillProps(prop.property("Contents"), out);
+      } else if (prop.matchName === "ADBE Vector Graphic - Fill") {
+        out.push(prop);
+      }
+    }
+  }
+
+  function normalizeSvgGroupOpacityForMotion(group, svgEl) {
+    if (!group || !svgEl || !svgEl.attrs) return;
+    var attrs = parseSvgStyleAttributes(svgEl.attrs || {});
+    var elementOpacity = parseNumber(attrs.opacity, 1);
+    if (!isFinite(elementOpacity) || elementOpacity === 1 || elementOpacity <= 0) return;
+    var contents = group.property("Contents");
+    if (!contents) return;
+    var strokes = [];
+    var fills = [];
+    collectSvgStrokeProps(contents, strokes);
+    collectSvgFillProps(contents, fills);
+    function clampOpacity(value) {
+      if (!isFinite(value)) return value;
+      if (value < 0) return 0;
+      if (value > 100) return 100;
+      return value;
+    }
+    for (var s = 0; s < strokes.length; s++) {
+      var stroke = strokes[s];
+      var op = stroke.property("Opacity");
+      if (op && isFinite(op.value)) op.setValue(clampOpacity(op.value / elementOpacity));
+    }
+    for (var f = 0; f < fills.length; f++) {
+      var fill = fills[f];
+      var opFill = fill.property("Opacity");
+      if (opFill && isFinite(opFill.value)) opFill.setValue(clampOpacity(opFill.value / elementOpacity));
+    }
+  }
+
   function getOrAddDashProp(dashes, matchName) {
     if (!dashes) return null;
     var prop = dashes.property(matchName);
@@ -1834,6 +1877,9 @@
       var groupMotion = filterMotionForLayer(motionList, groupName);
       if (!groupMotion.length) continue;
       var svgEl = findSvgElementById(svgData, groupName);
+      if (collectMotionSegments(groupMotion, "opacity").length && svgEl) {
+        normalizeSvgGroupOpacityForMotion(group, svgEl);
+      }
       if (skipGroup) {
         if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl);
         continue;

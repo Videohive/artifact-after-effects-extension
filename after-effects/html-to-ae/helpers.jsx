@@ -943,10 +943,74 @@
     var scaleSegments = buildMotionSegments(motionList, "scale", baseScale[0] / 100, 100, null);
     var sxSegments = buildMotionSegments(motionList, "scaleX", baseScale[0] / 100, 100, null);
     var sySegments = buildMotionSegments(motionList, "scaleY", baseScale[1] / 100, 100, null);
+    var widthSegments = [];
+    var heightSegments = [];
+    if (axisW > 0) {
+      var widthAbsSegments = buildMotionSegments(
+        motionList,
+        "width",
+        axisW * (baseScale[0] / 100),
+        1,
+        function (v) {
+          return (v / axisW) * 100;
+        },
+        function (entry) {
+          return !isPercentMotionEntry(entry, "width");
+        }
+      );
+      var widthPercentSegments = buildMotionSegments(
+        motionList,
+        "width",
+        baseScale[0],
+        1,
+        function (v) {
+          return v;
+        },
+        function (entry) {
+          return isPercentMotionEntry(entry, "width");
+        }
+      );
+      widthSegments = mergeMotionSegments(widthAbsSegments, widthPercentSegments);
+    }
+    if (axisH > 0) {
+      var heightAbsSegments = buildMotionSegments(
+        motionList,
+        "height",
+        axisH * (baseScale[1] / 100),
+        1,
+        function (v) {
+          return (v / axisH) * 100;
+        },
+        function (entry) {
+          return !isPercentMotionEntry(entry, "height");
+        }
+      );
+      var heightPercentSegments = buildMotionSegments(
+        motionList,
+        "height",
+        baseScale[1],
+        1,
+        function (v) {
+          return v;
+        },
+        function (entry) {
+          return isPercentMotionEntry(entry, "height");
+        }
+      );
+      heightSegments = mergeMotionSegments(heightAbsSegments, heightPercentSegments);
+    }
     attachMotionControls(scaleSegments, layer, "Scale", null);
     attachMotionControls(sxSegments, layer, "Scale X", null);
     attachMotionControls(sySegments, layer, "Scale Y", null);
-    if (scaleSegments.length || sxSegments.length || sySegments.length) {
+    attachMotionControls(widthSegments, layer, "Width", null);
+    attachMotionControls(heightSegments, layer, "Height", null);
+    if (
+      scaleSegments.length ||
+      sxSegments.length ||
+      sySegments.length ||
+      widthSegments.length ||
+      heightSegments.length
+    ) {
       var expr =
         "var base=value;\n" +
         "var t=time;\n" +
@@ -957,6 +1021,8 @@
         (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", baseScale[0]) + "sx=s; sy=s;\n" : "") +
         (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", baseScale[0]) : "") +
         (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", baseScale[1]) : "") +
+        (widthSegments.length ? buildSegmentedVarExpr(widthSegments, "sx", baseScale[0]) : "") +
+        (heightSegments.length ? buildSegmentedVarExpr(heightSegments, "sy", baseScale[1]) : "") +
         "[sx, sy];";
       if (scaleProp.canSetExpression) scaleProp.expression = expr;
     }
@@ -1445,12 +1511,28 @@
     return null;
   }
 
-  function applyMotionTransformOrigin(layer, motionList, bbox) {
-    var originValue = findMotionTransformOrigin(motionList);
-    if (!originValue || !layer || !bbox) return;
-    if (typeof resolveTransformOrigin !== "function") return;
-    var origin = resolveTransformOrigin({ transformOrigin: originValue }, bbox);
-    if (!origin) return;
+  function hasMotionProp(motionList, propName) {
+    if (!motionList || !motionList.length || !propName) return false;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props[propName]) continue;
+      return true;
+    }
+    return false;
+  }
+
+  function resolveImplicitTransformOrigin(motionList) {
+    if (!motionList || !motionList.length) return null;
+    var hasWidth = hasMotionProp(motionList, "width");
+    var hasHeight = hasMotionProp(motionList, "height");
+    if (hasWidth && hasHeight) return "left top";
+    if (hasWidth) return "left center";
+    if (hasHeight) return "center top";
+    return null;
+  }
+
+  function setLayerAnchorToOrigin(layer, bbox, origin) {
+    if (!layer || !bbox || !origin) return;
     var tr = layer.property("Transform");
     if (!tr) return;
     var anchorProp = tr.property("Anchor Point");
@@ -1471,4 +1553,16 @@
     var dy = (newAnchor[1] - anchor[1]) * sy;
     anchorProp.setValue(newAnchor);
     posProp.setValue([pos[0] + dx, pos[1] + dy]);
+  }
+
+  function applyMotionTransformOrigin(layer, motionList, bbox) {
+    var originValue = findMotionTransformOrigin(motionList);
+    if (!originValue) {
+      originValue = resolveImplicitTransformOrigin(motionList);
+    }
+    if (!originValue || !layer || !bbox) return;
+    if (typeof resolveTransformOrigin !== "function") return;
+    var origin = resolveTransformOrigin({ transformOrigin: originValue }, bbox);
+    if (!origin) return;
+    setLayerAnchorToOrigin(layer, bbox, origin);
   }

@@ -185,11 +185,17 @@
     var gradient = gradients && gradients.length ? gradients[0] : null;
     var fillColor = gradient ? pickGradientBaseColor(gradient) : getEffectiveBackgroundColor(node.style);
     applyCssColorProperty(fill.property("Color"), fillColor, comp.name);
+    var fillAlpha = parseCssAlpha(fillColor);
+    if (isFinite(fillAlpha)) {
+      if (fillAlpha < 0) fillAlpha = 0;
+      if (fillAlpha > 1) fillAlpha = 1;
+      var fillOpacity = fill.property("Opacity");
+      if (fillOpacity) fillOpacity.setValue(Math.round(fillAlpha * 100));
+    }
 
     // Position: shapes have their own Transform inside group; easiest: layer position to bbox center
     setLayerTransform(layer, localBBox);
     setLayerAnchorCenter(layer);
-    applyOpacity(layer, null, parseCssAlpha(fillColor));
     if (gradient) {
       applyBackgroundGradients(layer, node.style, localBBox);
     }

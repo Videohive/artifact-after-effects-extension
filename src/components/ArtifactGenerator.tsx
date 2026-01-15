@@ -344,15 +344,6 @@ const MOTION_CAPTURE_SCRIPT = `
       if (target.ownerSVGElement && target !== target.ownerSVGElement) {
         if (target.ownerSVGElement.id) return '#' + target.ownerSVGElement.id;
       }
-      if (target.closest) {
-        var parentWithId = target.closest('[id]');
-        if (parentWithId && parentWithId.id) return '#' + parentWithId.id;
-      }
-      var cls = target.className;
-      if (cls && typeof cls === 'string') {
-        var parts = cls.split(/\\s+/).filter(Boolean);
-        if (parts.length === 1) return '.' + parts[0];
-      }
       var path = [];
       var node = target;
       while (node && node.parentElement) {

@@ -541,6 +541,34 @@ const normalizeMotionTarget = (target: string): string | null => {
   return trimmed;
 };
 
+const buildDomMotionPath = (el: Element): string | null => {
+  if (!el) return null;
+  const path: string[] = [];
+  let node: Element | null = el;
+  const doc = el.ownerDocument;
+  while (node && node.parentElement) {
+    const parentEl: Element | null = node.parentElement;
+    let index = 1;
+    let sib: Element | null = node;
+    while (sib && sib.previousElementSibling) {
+      sib = sib.previousElementSibling;
+      index += 1;
+    }
+    path.unshift(`${node.tagName.toLowerCase()}:nth-child(${index})`);
+    node = parentEl;
+    if (doc && node === doc.body) break;
+  }
+  return path.length ? path.join('>') : null;
+};
+
+const getMotionKeyForElement = (el: Element): string | null => {
+  if (!el) return null;
+  if ((el as HTMLElement).id) return null;
+  const svgOwner = (el as SVGElement).ownerSVGElement;
+  if (svgOwner && el !== svgOwner && svgOwner.id) return null;
+  return buildDomMotionPath(el);
+};
+
 const collectSvgChildIds = (content?: string): Set<string> => {
   const ids = new Set<string>();
   if (!content) return ids;
@@ -553,7 +581,11 @@ const collectSvgChildIds = (content?: string): Set<string> => {
   return ids;
 };
 
-const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
+const attachMotionToNodes = (
+  root: AENode,
+  tweens?: AEMotionTween[],
+  motionKeyMap?: Map<string, AENode>
+) => {
   if (!root || !tweens || tweens.length === 0) return;
   const nodeMap = new Map<string, AENode>();
   const svgContentMap = new Map<string, AENode>();
@@ -582,21 +614,30 @@ const attachMotionToNodes = (root: AENode, tweens?: AEMotionTween[]) => {
     }
     return null;
   };
+  const hasClipPathMotion = (entry: AEMotionTween) =>
+    !!(entry && entry.props && entry.props.clipPath);
 
   tweens.forEach(tween => {
     if (!tween || !tween.targets || tween.targets.length === 0) return;
     tween.targets.forEach(target => {
       const key = normalizeMotionTarget(target);
       if (!key) return;
-      const node = nodeMap.get(key) || svgContentMap.get(key);
+      const node = nodeMap.get(key) || (motionKeyMap ? motionKeyMap.get(key) : null) || svgContentMap.get(key);
       const entry = { ...tween, targets: [target] };
       if (node) {
         const shouldRedirectSplitText =
           !!entry.splitText && node.type === 'group' && node.children && node.children.length;
-        const targetNode = shouldRedirectSplitText ? findTextChild(node) : null;
+        const targetNode =
+          shouldRedirectSplitText && !hasClipPathMotion(entry) ? findTextChild(node) : null;
         const attachNode = targetNode || node;
         if (!attachNode.motion) attachNode.motion = [];
         attachNode.motion.push(entry);
+        if (hasClipPathMotion(entry) && attachNode.clip) {
+          attachNode.clip.enabled = true;
+          if (attachNode.renderHints) {
+            attachNode.renderHints.needsPrecomp = true;
+          }
+        }
       } else {
         unmatched.push(entry);
       }
@@ -1182,6 +1223,8 @@ export const extractSlideLayout = async (
       ? new DOMRect(0, 0, viewportW, viewportH)
       : rootRect;
 
+  const motionKeyMap = new Map<string, AENode>();
+
 
   const process = (el: Element): AENode | null => {
     const style = win.getComputedStyle(el);
@@ -1269,6 +1312,11 @@ export const extractSlideLayout = async (
     const finalize = <T,>(value: T): T => {
       if (restoreTransform) restoreTransform();
       return value;
+    };
+    const finalizeNode = (node: AENode): AENode => {
+      const key = getMotionKeyForElement(el);
+      if (key) motionKeyMap.set(key, node);
+      return finalize(node);
     };
 
     const rect = el.getBoundingClientRect();
@@ -1796,7 +1844,7 @@ export const extractSlideLayout = async (
       }
     }
 
-    return finalize({
+    return finalizeNode({
       type,
       name: getName(el),
       bbox: finalBBox,
@@ -1823,7 +1871,7 @@ export const extractSlideLayout = async (
   const root = process(slide);
   if (!root) throw new Error('extractSlideLayout: slide root is not visible or has zero size.');
 
-  attachMotionToNodes(root, options?.motionCapture);
+  attachMotionToNodes(root, options?.motionCapture, motionKeyMap);
   expandGroupBoundsWithMotion(root);
 
   return {

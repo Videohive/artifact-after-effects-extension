@@ -293,6 +293,7 @@
     }
 
     applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform);
+    applySvgInternalGroupAnchors(layer, svgData);
     setLayerTopLeft(layer, localBBox);
     setLayerAnchorCenter(layer);
     return layer;
@@ -1840,6 +1841,47 @@
       var bbox = svgEl ? getSvgElementBounds(svgEl, svgData) : null;
       applyVectorGroupMotion(group, groupMotion, bbox || null);
       if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl);
+    }
+  }
+
+  function setVectorGroupAnchorFromBounds(group, bbox) {
+    if (!group || !bbox) return;
+    if (!isFinite(bbox.x) || !isFinite(bbox.y) || !isFinite(bbox.w) || !isFinite(bbox.h)) return;
+    var tr = group.property("ADBE Vector Transform Group") || group.property("Transform");
+    if (!tr) return;
+    var anchorProp = tr.property("Anchor Point");
+    var posProp = tr.property("Position");
+    var scaleProp = tr.property("Scale");
+    if (!anchorProp || !posProp || !scaleProp) return;
+    var anchor = anchorProp.value;
+    var pos = posProp.value;
+    if (!anchor || !pos || anchor.length < 2 || pos.length < 2) return;
+    var newAnchor = [bbox.x + bbox.w / 2, bbox.y + bbox.h / 2];
+    if (!isFinite(newAnchor[0]) || !isFinite(newAnchor[1])) return;
+    var scale = scaleProp.value;
+    var sx = scale && scale.length ? scale[0] / 100 : 1;
+    var sy = scale && scale.length ? scale[1] / 100 : 1;
+    var dx = (newAnchor[0] - anchor[0]) * sx;
+    var dy = (newAnchor[1] - anchor[1]) * sy;
+    anchorProp.setValue(newAnchor);
+    posProp.setValue([pos[0] + dx, pos[1] + dy]);
+  }
+
+  function applySvgInternalGroupAnchors(layer, svgData) {
+    if (!layer || !svgData) return;
+    var contents = layer.property("Contents");
+    if (!contents) return;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var group = contents.property(i);
+      if (!group || group.matchName !== "ADBE Vector Group") continue;
+      var groupName = group.name;
+      if (!groupName) continue;
+      var svgEl = findSvgElementById(svgData, groupName);
+      if (!svgEl) continue;
+      var bbox = getSvgElementBounds(svgEl, svgData);
+      if (!bbox) continue;
+      setVectorGroupAnchorFromBounds(group, bbox);
     }
   }
 

@@ -444,10 +444,18 @@
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i].tween;
       var props = entry.props[propName];
-      var fromVal = props && props.from ? parseMotionNumber(props.from.value) : null;
-      var toVal = props && props.to ? parseMotionNumber(props.to.value) : null;
+      var fromMeta = props && props.from ? props.from : null;
+      var toMeta = props && props.to ? props.to : null;
+      var fromVal = fromMeta ? parseMotionNumber(fromMeta.value) : null;
+      var toVal = toMeta ? parseMotionNumber(toMeta.value) : null;
       if (fromVal === null) fromVal = prev;
-      if (toVal === null) toVal = fromVal;
+      if (toVal === null) {
+        if (toMeta && toMeta.type === "function") {
+          toVal = prev;
+        } else {
+          toVal = fromVal;
+        }
+      }
       if (convertFn) {
         fromVal = convertFn(fromVal);
         toVal = convertFn(toVal);

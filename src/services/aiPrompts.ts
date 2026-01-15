@@ -1689,6 +1689,64 @@ Excessive motion on low-importance elements is forbidden.
 
 ---
 
+## 8A. SPATIAL PRESSURE & VOLUME (MANDATORY)
+
+Motion MUST imply spatial resistance.
+
+Elements do not simply move into place.
+They displace, compress, or disturb the space they enter.
+
+Rules:
+
+- Any primary container entrance MUST include at least ONE of:
+  - Z-axis displacement (positive or negative),
+  - rotational inertia (rotateX / rotateY),
+  - non-uniform scale (scaleX ≠ scaleY ≠ scaleZ).
+
+- Pure translate-only motion for primary elements is FORBIDDEN.
+
+- Space must feel:
+  - compressed before arrival,
+  - displaced during arrival,
+  - stabilized after arrival.
+
+Motion must suggest that:
+the element has mass AND the space reacts to it.
+
+---
+
+## 8B. Anti-Planar Entry Rule (CRITICAL)
+
+The following patterns are FORBIDDEN for primary or structural elements:
+
+- translateY + opacity only
+- translateX + opacity only
+- scale + opacity without Z-axis or rotation
+- easing-only variation without spatial differentiation
+
+If an entrance could exist in 2D space,
+it is considered FLAT and INVALID.
+
+---
+
+## 8C. Motion Field Consistency (MANDATORY)
+
+Animations must feel governed by a shared spatial field,
+not isolated element behaviors.
+
+Rules:
+- Elements entering the same section MUST share:
+  - a dominant spatial direction,
+  - a common pressure vector,
+  - but DIFFER in mass, drag, and resolution.
+
+This creates density and cohesion.
+
+Independent-looking motions inside one section
+are considered amateur and invalid.
+
+---
+
 ## 9. AUTONOMOUS SPECTRUM INFERENCE (MANDATORY)
 
 Before generation, the model must categorize the input on three scales:

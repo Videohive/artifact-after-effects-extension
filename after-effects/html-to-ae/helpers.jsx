@@ -887,6 +887,7 @@
     var hasScale = false;
     var hasRotation = false;
     var hasRotation3d = false;
+    var hasSkewY = false;
     var firstSplitProps = null;
     for (var i = 0; i < motionList.length; i++) {
       var entry = motionList[i];
@@ -900,6 +901,7 @@
       if (props.scale || props.scaleX || props.scaleY) hasScale = true;
       if (props.rotation || props.rotate) hasRotation = true;
       if (props.rotateX || props.rotateY) hasRotation3d = true;
+      if (props.skewY) hasSkewY = true;
     }
     if (!splitType) return;
     if (splitType !== "lines" && splitType !== "words" && splitType !== "chars") {
@@ -965,6 +967,13 @@
           var rotStart = getSplitStartValue(firstSplitProps, "rotation", null);
           if (rotStart === null) rotStart = getSplitStartValue(firstSplitProps, "rotate", 0);
           if (rotStart !== null) rotationProp.setValue(rotStart);
+        }
+      }
+      if (hasSkewY) {
+        var skewProp = animatorProps.addProperty("ADBE Text Skew");
+        if (skewProp && firstSplitProps) {
+          var skewStart = getSplitStartValue(firstSplitProps, "skewY", null);
+          if (skewStart !== null) skewProp.setValue(skewStart);
         }
       }
       if (hasRotation3d) {
@@ -1166,6 +1175,103 @@
       if (rotationProp.canSetExpression) {
         rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
       }
+    }
+
+    applyTextMotionAnimator(layer, motionList, bbox);
+  }
+
+  function applyTextMotionAnimator(layer, motionList, bbox) {
+    if (!layer || !motionList || !motionList.length) return;
+    var textGroup = null;
+    try {
+      textGroup = layer.property("Text");
+    } catch (e) {
+      textGroup = null;
+    }
+    if (!textGroup) return;
+
+    var hasOpacity = false;
+    var hasPosition = false;
+    var hasSkewY = false;
+    var firstEntry = null;
+    var firstProps = null;
+    var firstTime = null;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || entry.splitText) continue;
+      var props = entry.props || null;
+      if (!props) continue;
+      var entryHas = false;
+      if (props.opacity) {
+        hasOpacity = true;
+        entryHas = true;
+      }
+      if (props.x || props.y || props.xPercent || props.yPercent) {
+        hasPosition = true;
+        entryHas = true;
+      }
+      if (props.skewY) {
+        hasSkewY = true;
+        entryHas = true;
+      }
+      if (entryHas) {
+        var start = getMotionStart(entry);
+        if (firstTime === null || start < firstTime) {
+          firstEntry = entry;
+          firstProps = props;
+          firstTime = start;
+        }
+      }
+    }
+    if (!firstEntry || !firstProps || (!hasOpacity && !hasPosition && !hasSkewY)) return;
+
+    var animators = textGroup.property("Animators");
+    if (!animators) return;
+    var animator = animators.addProperty("ADBE Text Animator");
+    animator.name = "Motion";
+    var animatorProps = animator.property("ADBE Text Animator Properties");
+    if (!animatorProps) return;
+
+    var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
+    var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
+
+    if (hasOpacity) {
+      var opacityProp = animatorProps.addProperty("ADBE Text Opacity");
+      if (opacityProp) {
+        var opacityStart = getSplitStartValue(firstProps, "opacity", 1);
+        if (opacityStart !== null) opacityProp.setValue(opacityStart * 100);
+      }
+    }
+
+    if (hasPosition) {
+      var positionProp = animatorProps.addProperty("ADBE Text Position 3D");
+      if (positionProp) {
+        var xStart = getSplitStartValue(firstProps, "x", 0);
+        var yStart = getSplitStartValue(firstProps, "y", 0);
+        var xPct = getSplitStartValue(firstProps, "xPercent", 0);
+        var yPct = getSplitStartValue(firstProps, "yPercent", 0);
+        var px = (xStart || 0) + (xPct ? (xPct / 100) * axisW : 0);
+        var py = (yStart || 0) + (yPct ? (yPct / 100) * axisH : 0);
+        positionProp.setValue([px, py, 0]);
+      }
+    }
+
+    if (hasSkewY) {
+      var skewProp = animatorProps.addProperty("ADBE Text Skew");
+      if (skewProp) {
+        var skewStart = getSplitStartValue(firstProps, "skewY", 0);
+        if (skewStart !== null) skewProp.setValue(skewStart);
+      }
+    }
+
+    var selector = animator.property("Selectors").addProperty("ADBE Text Selector");
+    var offsetProp = selector ? selector.property("ADBE Text Percent Offset") : null;
+    if (offsetProp && offsetProp.canSetExpression) {
+      var t0 = getMotionStart(firstEntry);
+      var dur = firstEntry.time && isFinite(firstEntry.time.duration) ? firstEntry.time.duration : 0;
+      var t1 = t0 + dur;
+      var ease = firstEntry.time && firstEntry.time.ease ? firstEntry.time.ease : null;
+      offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
     }
   }
 

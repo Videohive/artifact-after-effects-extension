@@ -1770,6 +1770,53 @@
     }
   }
 
+  function getVectorEllipseSizeProp(group) {
+    if (!group) return null;
+    var contents = group.property("Contents");
+    if (!contents) return null;
+    var count = contents.numProperties || 0;
+    for (var i = 1; i <= count; i++) {
+      var item = contents.property(i);
+      if (!item || item.matchName !== "ADBE Vector Shape - Ellipse") continue;
+      return item.property("Size") || item.property("ADBE Vector Ellipse Size");
+    }
+    return null;
+  }
+
+  function applySvgEllipseSizeMotion(group, motionList, svgEl) {
+    if (!group || !motionList || !motionList.length || !svgEl) return;
+    var sizeProp = getVectorEllipseSizeProp(group);
+    if (!sizeProp || !sizeProp.canSetExpression) return;
+    var baseSize = sizeProp.value;
+    if (!baseSize || baseSize.length < 2) return;
+
+    var baseRx = baseSize[0] / 2;
+    var baseRy = baseSize[1] / 2;
+    var rSegments = buildMotionSegments(motionList, "r", baseRx, 1, null);
+    var rxSegments = buildMotionSegments(motionList, "rx", baseRx, 1, null);
+    var rySegments = buildMotionSegments(motionList, "ry", baseRy, 1, null);
+    var hasR = rSegments.length > 0;
+    var hasRx = rxSegments.length > 0;
+    var hasRy = rySegments.length > 0;
+    if (!hasR && !hasRx && !hasRy) return;
+
+    var useUniform = hasR && (!hasRx || !hasRy);
+
+    var expr = "var base=value;\nvar t=time;\n";
+    if (useUniform) {
+      expr += buildSegmentedVarExpr(rSegments, "r", baseRx);
+      expr += "var d=r*2;\n[d,d];";
+    } else {
+      if (hasRx) expr += buildSegmentedVarExpr(rxSegments, "rx", baseRx);
+      else expr += "var rx=" + baseRx + ";\n";
+      if (hasRy) expr += buildSegmentedVarExpr(rySegments, "ry", baseRy);
+      else expr += "var ry=" + baseRy + ";\n";
+      expr += "var w=rx*2; var h=ry*2;\n[w,h];";
+    }
+
+    sizeProp.expression = expr;
+  }
+
   function applySvgInternalMotion(layer, svgData, motionList, skipGroupName) {
     if (!layer || !svgData || !motionList || !motionList.length) return;
     var contents = layer.property("Contents");
@@ -1780,17 +1827,19 @@
       if (!group || group.matchName !== "ADBE Vector Group") continue;
       var groupName = group.name;
       if (!groupName) continue;
-      if (
+      var skipGroup =
         skipGroupName &&
-        (groupName === skipGroupName || safeName(groupName) === skipGroupName)
-      ) {
-        continue;
-      }
+        (groupName === skipGroupName || safeName(groupName) === skipGroupName);
       var groupMotion = filterMotionForLayer(motionList, groupName);
       if (!groupMotion.length) continue;
       var svgEl = findSvgElementById(svgData, groupName);
+      if (skipGroup) {
+        if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl);
+        continue;
+      }
       var bbox = svgEl ? getSvgElementBounds(svgEl, svgData) : null;
       applyVectorGroupMotion(group, groupMotion, bbox || null);
+      if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl);
     }
   }
 

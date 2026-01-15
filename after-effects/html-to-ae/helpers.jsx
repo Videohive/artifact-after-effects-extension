@@ -548,13 +548,27 @@
     var s = raw.toLowerCase();
     if (s === "linear" || s === "none") return "function(t){return t;}";
 
+    var stepsMatch = s.match(/^steps\(([^)]+)\)$/);
+    if (stepsMatch) {
+      var stepsCount = parseInt(stepsMatch[1], 10);
+      if (!isFinite(stepsCount) || stepsCount <= 0) stepsCount = 1;
+      return "function(t){return Math.floor(t*" + stepsCount + ")/" + stepsCount + ";}";
+    }
+
     var m = s.match(/^([a-z]+)(\d+)?\.(inout|in|out)(?:\(([^)]+)\))?$/);
     if (!m) return "function(t){return t;}";
 
     var base = m[1];
     var num = m[2] ? parseFloat(m[2]) : null;
     var mode = m[3];
-    var param = m[4] ? parseFloat(m[4]) : null;
+    var params = m[4]
+      ? m[4].split(",").map(function (v) {
+          var n = parseFloat(String(v).trim());
+          return isFinite(n) ? n : null;
+        })
+      : [];
+    var param = params.length ? params[0] : null;
+    var param2 = params.length > 1 ? params[1] : null;
 
     if (base === "quad") num = 2;
     if (base === "cubic") num = 3;
@@ -621,6 +635,35 @@
       if (mode === "in") return "function(t){return 1-Math.sqrt(1-t*t);}";
       if (mode === "out") return "function(t){return Math.sqrt(1-Math.pow(t-1,2));}";
       return "function(t){return t<0.5?(1-Math.sqrt(1-Math.pow(2*t,2)))/2:(Math.sqrt(1-Math.pow(-2*t+2,2))+1)/2;}";
+    }
+
+    if (base === "bounce") {
+      var bounceOut =
+        "function(x){var n1=7.5625;var d1=2.75;" +
+        "if(x<1/d1){return n1*x*x;}" +
+        "else if(x<2/d1){x-=1.5/d1;return n1*x*x+0.75;}" +
+        "else if(x<2.5/d1){x-=2.25/d1;return n1*x*x+0.9375;}" +
+        "else{x-=2.625/d1;return n1*x*x+0.984375;}}";
+      if (mode === "out") return "function(t){return (" + bounceOut + ")(t);}";
+      if (mode === "in") return "function(t){return 1-(" + bounceOut + ")(1-t);}";
+      return "function(t){return t<0.5?(1-(" + bounceOut + ")(1-2*t))/2:(1+(" + bounceOut + ")(2*t-1))/2;}";
+    }
+
+    if (base === "elastic") {
+      var amp = isFinite(param) ? param : 1;
+      var period = isFinite(param2) ? param2 : 0.3;
+      var elasticCore =
+        "function(x){if(x===0||x===1)return x;" +
+        "var a=" +
+        amp +
+        ";var p=" +
+        period +
+        ";var s;" +
+        "if(a<1){a=1;s=p/4;}else{s=p/(2*Math.PI)*Math.asin(1/a);}" +
+        "return a*Math.pow(2,-10*x)*Math.sin((x-s)*(2*Math.PI)/p)+1;}";
+      if (mode === "out") return "function(t){return (" + elasticCore + ")(t);}";
+      if (mode === "in") return "function(t){return 1-(" + elasticCore + ")(1-t);}";
+      return "function(t){return t<0.5?(1-(" + elasticCore + ")(1-2*t))/2:(1+(" + elasticCore + ")(2*t-1))/2;}";
     }
 
     return "function(t){return t;}";

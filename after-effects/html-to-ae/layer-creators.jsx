@@ -55,6 +55,74 @@
     return solid;
   }
 
+  function resolveLinearGradientPoints(angleDeg, bbox) {
+    if (!bbox) return { start: [0, 0], end: [0, 0] };
+    var rad = (angleDeg * Math.PI) / 180;
+    var dx = Math.sin(rad);
+    var dy = -Math.cos(rad);
+    var cx = bbox.x + bbox.w / 2;
+    var cy = bbox.y + bbox.h / 2;
+    var half = Math.sqrt(bbox.w * bbox.w + bbox.h * bbox.h) / 2;
+    var start = [cx - dx * half, cy - dy * half];
+    var end = [cx + dx * half, cy + dy * half];
+    return { start: start, end: end };
+  }
+
+  function getEffectProp(effect, names) {
+    if (!effect || !names) return null;
+    for (var i = 0; i < names.length; i++) {
+      var prop = effect.property(names[i]);
+      if (prop) return prop;
+    }
+    return null;
+  }
+
+  function applyGradientRamp(layer, gradient, bbox) {
+    if (!layer || !gradient || !gradient.stops || !gradient.stops.length) return;
+    var effects = layer.property("Effects");
+    if (!effects) return;
+    var effect = effects.addProperty("ADBE Ramp");
+    if (!effect) return;
+
+    var stops = gradient.stops;
+    var startStop = stops[0];
+    var endStop = stops.length > 1 ? stops[stops.length - 1] : stops[0];
+    var startColor = parseCssColor(startStop.color);
+    var endColor = parseCssColor(endStop.color);
+
+    var isRadial = String(gradient.type || "").toLowerCase() === "radial";
+    var shapeProp = getEffectProp(effect, ["Ramp Shape"]);
+    if (shapeProp) shapeProp.setValue(isRadial ? 2 : 1);
+
+    var startProp = getEffectProp(effect, ["Start of Ramp", "Start Point"]);
+    var endProp = getEffectProp(effect, ["End of Ramp", "End Point"]);
+    if (startProp && endProp) {
+      if (isRadial) {
+        var center = [bbox.x + bbox.w / 2, bbox.y + bbox.h / 2];
+        startProp.setValue(center);
+        endProp.setValue([center[0] + bbox.w / 2, center[1]]);
+      } else {
+        var points = resolveLinearGradientPoints(gradient.angle || 180, bbox);
+        startProp.setValue(points.start);
+        endProp.setValue(points.end);
+      }
+    }
+
+    var startColorProp = getEffectProp(effect, ["Start Color"]);
+    var endColorProp = getEffectProp(effect, ["End Color"]);
+    if (startColorProp) startColorProp.setValue(startColor);
+    if (endColorProp) endColorProp.setValue(endColor);
+  }
+
+  function applyBackgroundGradients(layer, style, bbox) {
+    if (!layer || !style || !bbox) return;
+    var gradients = getBackgroundGradients(style);
+    if (!gradients || !gradients.length) return;
+    for (var i = 0; i < gradients.length; i++) {
+      applyGradientRamp(layer, gradients[i], bbox);
+    }
+  }
+
   function createPrecompLayer(node, parentComp, localBBox, rootData) {
     var preName = safeName(node.name || "Precomp");
     var w = Math.min(30000, Math.max(4, Math.round(localBBox.w)));
@@ -113,13 +181,18 @@
     if (br > 0) rect.property("Roundness").setValue(clampRoundnessValue(br, localBBox.w, localBBox.h));
 
     var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
-    var fillColor = getEffectiveBackgroundColor(node.style);
+    var gradients = getBackgroundGradients(node.style);
+    var gradient = gradients && gradients.length ? gradients[0] : null;
+    var fillColor = gradient ? pickGradientBaseColor(gradient) : getEffectiveBackgroundColor(node.style);
     applyCssColorProperty(fill.property("Color"), fillColor, comp.name);
 
     // Position: shapes have their own Transform inside group; easiest: layer position to bbox center
     setLayerTransform(layer, localBBox);
     setLayerAnchorCenter(layer);
     applyOpacity(layer, null, parseCssAlpha(fillColor));
+    if (gradient) {
+      applyBackgroundGradients(layer, node.style, localBBox);
+    }
 
     return layer;
   }

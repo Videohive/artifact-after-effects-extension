@@ -234,8 +234,119 @@
     return null;
   }
 
+  function parseGradientStopPosition(value) {
+    if (value === null || typeof value === "undefined") return null;
+    if (typeof value === "number") {
+      if (!isFinite(value)) return null;
+      if (value > 1) return clamp01(value / 100);
+      return clamp01(value);
+    }
+    var s = String(value).trim();
+    if (!s) return null;
+    if (s.indexOf("%") !== -1) {
+      var pct = parseFloat(s);
+      if (!isFinite(pct)) return null;
+      return clamp01(pct / 100);
+    }
+    var n = parseFloat(s);
+    if (!isFinite(n)) return null;
+    if (n > 1) return clamp01(n / 100);
+    return clamp01(n);
+  }
+
+  function parseLinearGradientAngle(raw) {
+    if (!raw) return 180;
+    var s = String(raw).toLowerCase();
+    var degMatch = s.match(/linear-gradient\(\s*([-\d.]+)deg/);
+    if (degMatch && degMatch[1]) {
+      var deg = parseFloat(degMatch[1]);
+      if (isFinite(deg)) return deg;
+    }
+
+    var toMatch = s.match(/linear-gradient\(\s*to\s+([a-z\s]+)/);
+    if (toMatch && toMatch[1]) {
+      var dir = toMatch[1].replace(/,/g, " ").replace(/\s+/g, " ").trim();
+      var hasTop = dir.indexOf("top") !== -1;
+      var hasBottom = dir.indexOf("bottom") !== -1;
+      var hasLeft = dir.indexOf("left") !== -1;
+      var hasRight = dir.indexOf("right") !== -1;
+      if (hasTop && hasRight) return 45;
+      if (hasBottom && hasRight) return 135;
+      if (hasBottom && hasLeft) return 225;
+      if (hasTop && hasLeft) return 315;
+      if (hasTop) return 0;
+      if (hasRight) return 90;
+      if (hasBottom) return 180;
+      if (hasLeft) return 270;
+    }
+
+    return 180;
+  }
+
+  function normalizeGradientStops(stops) {
+    if (!stops || !stops.length) return [];
+    var out = [];
+    for (var i = 0; i < stops.length; i++) {
+      var st = stops[i];
+      if (!st || !st.color) continue;
+      out.push({
+        color: st.color,
+        position: parseGradientStopPosition(st.position),
+      });
+    }
+    if (!out.length) return out;
+    var hasMissing = false;
+    for (var j = 0; j < out.length; j++) {
+      if (out[j].position === null) {
+        hasMissing = true;
+        break;
+      }
+    }
+    if (hasMissing) {
+      var count = out.length;
+      for (var k = 0; k < count; k++) {
+        out[k].position = count === 1 ? 0 : k / (count - 1);
+      }
+    }
+    out.sort(function (a, b) {
+      return a.position - b.position;
+    });
+    return out;
+  }
+
+  function getBackgroundGradients(style) {
+    if (!style || style.backgroundGrid) return [];
+    var grads = style.backgroundGradients;
+    if (!grads || !grads.length) return [];
+    var out = [];
+    for (var i = 0; i < grads.length; i++) {
+      var grad = grads[i];
+      if (!grad || !grad.stops || !grad.stops.length) continue;
+      var stops = normalizeGradientStops(grad.stops);
+      if (!stops.length) continue;
+      var type = grad.type ? String(grad.type).toLowerCase() : "linear";
+      var angle = type === "linear" ? parseLinearGradientAngle(grad.raw) : 0;
+      out.push({ type: type, angle: angle, stops: stops });
+    }
+    return out;
+  }
+
+  function getBackgroundGradient(style) {
+    var grads = getBackgroundGradients(style);
+    return grads.length ? grads[0] : null;
+  }
+
+  function pickGradientBaseColor(gradient) {
+    if (!gradient || !gradient.stops || !gradient.stops.length) return null;
+    for (var i = 0; i < gradient.stops.length; i++) {
+      var c = gradient.stops[i].color;
+      if (c && !isTransparentColor(c) && parseCssAlpha(c) > 0) return c;
+    }
+    return gradient.stops[0].color;
+  }
+
   function hasEffectiveBackground(style) {
-    return !!getEffectiveBackgroundColor(style);
+    return !!getEffectiveBackgroundColor(style) || getBackgroundGradients(style).length > 0;
   }
 
   function safeName(n) {
@@ -551,7 +662,17 @@
     if (!easeStr) return "function(t){return t;}";
     var raw = String(easeStr).trim();
     if (!raw) return "function(t){return t;}";
-    if (raw.indexOf("function") === 0) return raw;
+    if (raw.indexOf("function") === 0) {
+      // If r is used but not defined, inject a default exponent.
+      if (
+        /Math\.pow\(\s*1\s*-\s*t\s*,\s*r\s*\)/.test(raw) &&
+        !/\br\s*=/.test(raw) &&
+        !/\bvar\s+r\b/.test(raw)
+      ) {
+        return raw.replace(/function\s*\(\s*t\s*\)\s*\{/, "function(t){var r=2;");
+      }
+      return raw;
+    }
 
     var s = raw.toLowerCase();
     if (s === "linear" || s === "none") return "function(t){return t;}";

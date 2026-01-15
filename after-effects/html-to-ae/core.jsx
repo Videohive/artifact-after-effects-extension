@@ -98,12 +98,20 @@
     // ----------------------------
     if (isRoot && CFG.createBackgroundFromRoot && !(node.style && node.style.backgroundGrid)) {
       var bgColor = node.style ? getEffectiveBackgroundColor(node.style) : null;
+      var bgGradients = node.style ? getBackgroundGradients(node.style) : [];
+      var bgGradient = bgGradients.length ? bgGradients[0] : null;
+      if (!bgColor && bgGradient) {
+        bgColor = pickGradientBaseColor(bgGradient);
+      }
       var fillsComp =
         node.bbox &&
         Math.round(node.bbox.w) >= comp.width &&
         Math.round(node.bbox.h) >= comp.height;
-      if (bgColor && fillsComp && !needsPrecomp) {
-        createSolidBackground(comp, bgColor, comp.width, comp.height, "Background");
+      if ((bgColor || bgGradient) && fillsComp && !needsPrecomp) {
+        var bgLayer = createSolidBackground(comp, bgColor || "rgb(0, 0, 0)", comp.width, comp.height, "Background");
+        if (bgLayer && bgGradient) {
+          applyBackgroundGradients(bgLayer, node.style, { x: 0, y: 0, w: comp.width, h: comp.height });
+        }
       }
     }
 

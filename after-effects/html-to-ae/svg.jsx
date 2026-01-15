@@ -1493,7 +1493,7 @@
           }
           if (!isNaN(dashOffset) && dashOffset !== 0) {
             var offsetProp = dashes.property("ADBE Vector Stroke Offset");
-            if (offsetProp) offsetProp.setValue(dashOffset);
+            if (offsetProp && dashOffset.canSetExpression) offsetProp.setValue(dashOffset);
           }
         }
       }

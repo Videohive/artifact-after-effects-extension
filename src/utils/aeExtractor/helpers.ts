@@ -420,6 +420,149 @@ const parseSvgPoints = (
   return points;
 };
 
+const parseSimplePathPoints = (
+  d: string
+): { points: { x: number; y: number }[]; closed: boolean } | null => {
+  if (!d) return null;
+  const tokens = d.match(/[a-zA-Z]|-?\d*\.?\d+(?:e[-+]?\d+)?/g);
+  if (!tokens || !tokens.length) return null;
+
+  const isLetter = (token: string) => /^[a-zA-Z]$/.test(token);
+  const points: { x: number; y: number }[] = [];
+  let cmd = '';
+  let x = 0;
+  let y = 0;
+  let startX = 0;
+  let startY = 0;
+  let closed = false;
+  let sawMove = false;
+
+  const readNum = (iRef: { i: number }) => {
+    if (iRef.i >= tokens.length) return null;
+    const raw = tokens[iRef.i++];
+    if (isLetter(raw)) return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const iRef = { i: 0 };
+  while (iRef.i < tokens.length) {
+    const token = tokens[iRef.i];
+    if (isLetter(token)) {
+      cmd = token;
+      iRef.i += 1;
+    } else if (!cmd) {
+      return null;
+    }
+
+    if (cmd === 'M' || cmd === 'm') {
+      while (iRef.i < tokens.length && !isLetter(tokens[iRef.i])) {
+        const nx = readNum(iRef);
+        const ny = readNum(iRef);
+        if (nx === null || ny === null) return null;
+        if (cmd === 'm') {
+          x += nx;
+          y += ny;
+        } else {
+          x = nx;
+          y = ny;
+        }
+        if (!sawMove) {
+          startX = x;
+          startY = y;
+          sawMove = true;
+        }
+        points.push({ x, y });
+      }
+      cmd = cmd === 'm' ? 'l' : 'L';
+      continue;
+    }
+
+    if (cmd === 'L' || cmd === 'l') {
+      while (iRef.i < tokens.length && !isLetter(tokens[iRef.i])) {
+        const nx = readNum(iRef);
+        const ny = readNum(iRef);
+        if (nx === null || ny === null) return null;
+        if (cmd === 'l') {
+          x += nx;
+          y += ny;
+        } else {
+          x = nx;
+          y = ny;
+        }
+        points.push({ x, y });
+      }
+      continue;
+    }
+
+    if (cmd === 'H' || cmd === 'h') {
+      while (iRef.i < tokens.length && !isLetter(tokens[iRef.i])) {
+        const nx = readNum(iRef);
+        if (nx === null) return null;
+        if (cmd === 'h') {
+          x += nx;
+        } else {
+          x = nx;
+        }
+        points.push({ x, y });
+      }
+      continue;
+    }
+
+    if (cmd === 'V' || cmd === 'v') {
+      while (iRef.i < tokens.length && !isLetter(tokens[iRef.i])) {
+        const ny = readNum(iRef);
+        if (ny === null) return null;
+        if (cmd === 'v') {
+          y += ny;
+        } else {
+          y = ny;
+        }
+        points.push({ x, y });
+      }
+      continue;
+    }
+
+    if (cmd === 'Z' || cmd === 'z') {
+      closed = true;
+      x = startX;
+      y = startY;
+      continue;
+    }
+
+    return null;
+  }
+
+  if (!points.length || !sawMove) return null;
+  return { points, closed };
+};
+
+const isSimplePathOnly = (d: string) => {
+  if (!d) return false;
+  const tokens = d.match(/[a-zA-Z]/g);
+  if (!tokens) return false;
+  for (const token of tokens) {
+    const t = token.toUpperCase();
+    if (t !== 'M' && t !== 'L' && t !== 'H' && t !== 'V' && t !== 'Z') return false;
+  }
+  return true;
+};
+
+const SIMPLE_PATH_CACHE: Record<
+  string,
+  { points: { x: number; y: number }[]; closed: boolean } | null
+> = {};
+
+const getSimplePathPoints = (d: string) => {
+  if (!d) return null;
+  if (Object.prototype.hasOwnProperty.call(SIMPLE_PATH_CACHE, d)) {
+    return SIMPLE_PATH_CACHE[d];
+  }
+  const parsed = parseSimplePathPoints(d);
+  SIMPLE_PATH_CACHE[d] = parsed;
+  return parsed;
+};
+
 const mapClipValue = (
   value: string | null,
   reference: number,
@@ -733,6 +876,17 @@ const resolveSvgClipPath = (
     }
     if (tag === 'path') {
       const pathEl = child as SVGPathElement;
+      const d = pathEl.getAttribute('d') || '';
+      if (isSimplePathOnly(d)) {
+        const simple = getSimplePathPoints(d);
+        if (simple && simple.points.length >= 3) {
+          const mapped = simple.points.map(point =>
+            mapClipPoint(point, elementBox, units, scale, userScale)
+          );
+          shapes.push(buildPointShape(mapped, simple.closed));
+          continue;
+        }
+      }
       const sampled = sampleSvgPath(pathEl, elementBox, units, scale, userScale);
       if (sampled) shapes.push(sampled);
       continue;

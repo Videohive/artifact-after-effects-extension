@@ -581,6 +581,75 @@ const collectSvgChildIds = (content?: string): Set<string> => {
   return ids;
 };
 
+const normalizeSvgMotionTargets = (doc: Document, tweens?: AEMotionTween[]) => {
+  if (!doc || !tweens || tweens.length === 0) return;
+
+  const normalizeIdToken = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+  const ensureUniqueId = (base: string) => {
+    let id = base;
+    let index = 1;
+    while (doc.getElementById(id)) {
+      id = `${base}-${index}`;
+      index += 1;
+    }
+    return id;
+  };
+
+  for (const tween of tweens) {
+    if (!tween || !tween.targets || tween.targets.length === 0) continue;
+    const nextTargets: string[] = [];
+    for (const target of tween.targets) {
+      if (!target || typeof target !== 'string') {
+        if (target) nextTargets.push(String(target));
+        continue;
+      }
+      const trimmed = target.trim();
+      if (!trimmed) continue;
+      if (trimmed[0] === '#' || trimmed[0] === '.') {
+        nextTargets.push(trimmed);
+        continue;
+      }
+
+      let el: Element | null = null;
+      try {
+        el = doc.querySelector(trimmed);
+      } catch {
+        el = null;
+      }
+      if (!el) {
+        nextTargets.push(trimmed);
+        continue;
+      }
+
+      const isSvgRoot = el.tagName.toLowerCase() === 'svg';
+      const svgOwner = (el as SVGElement).ownerSVGElement;
+      if (!isSvgRoot && !svgOwner) {
+        nextTargets.push(trimmed);
+        continue;
+      }
+
+      if (el.id) {
+        nextTargets.push(`#${el.id}`);
+        continue;
+      }
+
+      const svgRoot = isSvgRoot ? (el as SVGElement) : svgOwner;
+      const svgId = svgRoot && svgRoot.id ? svgRoot.id : 'svg';
+      const base = normalizeIdToken(`ae2-${svgId}-${el.tagName.toLowerCase()}`) || 'ae2-svg';
+      const id = ensureUniqueId(base);
+      el.setAttribute('id', id);
+      nextTargets.push(`#${id}`);
+    }
+    tween.targets = nextTargets;
+  }
+};
+
 const attachMotionToNodes = (
   root: AENode,
   tweens?: AEMotionTween[],
@@ -1225,6 +1294,7 @@ export const extractSlideLayout = async (
 
   const motionKeyMap = new Map<string, AENode>();
 
+  normalizeSvgMotionTargets(win.document, options.motionCapture);
 
   const process = (el: Element): AENode | null => {
     const style = win.getComputedStyle(el);

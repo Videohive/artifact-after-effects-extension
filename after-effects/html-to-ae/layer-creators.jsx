@@ -141,15 +141,7 @@
       precomp.parentFolder = SLIDE_FOLDER;
     }
 
-    // Optional labeling
-    if (CFG.labelPrecomps) {
-      precomp.comment =
-        "Created from JSON node: " +
-        (node.name || "") +
-        " (" +
-        (rootData.artifactId || rootData.slideId || "") +
-        ")";
-    }
+    // Optional labeling disabled by request (no comments on created items).
 
     var layer = parentComp.layers.add(precomp);
     layer.name = preName;
@@ -1014,8 +1006,7 @@
     );
     setLayerTransform(layer, localBBox);
 
-    // Store URL/path in Comment
-    if (node.src) layer.comment = "SRC: " + node.src;
+    // Comment writes disabled by request.
 
     return { layer: layer, placeholderAlpha: placeholderAlpha, isPlaceholder: isPlaceholder };
   }

@@ -148,8 +148,7 @@
   var projectFolders = null;
   var isProjectJson = data && data.artifacts && data.artifacts instanceof Array;
   if (isProjectJson) {
-    var projectName = safeName(data.name || "Project");
-    projectFolder = app.project.items.addFolder(projectName);
+    projectFolder = app.project.rootFolder;
     projectFolders = createBaseProjectFolders(projectFolder, data && data.placeholders);
   } else if (slides.length > 1) {
     projectFolder = app.project.items.addFolder("Slides");

@@ -439,6 +439,10 @@
   // MOTION -> EXPRESSIONS
   // -----------------------
 
+  function buildExprTimeVar() {
+    return "var t=time - inPoint;\n";
+  }
+
   function parseMotionNumber(value) {
     if (value === null || typeof value === "undefined") return null;
     if (typeof value === "number") return isFinite(value) ? value : null;
@@ -655,7 +659,7 @@
   }
 
   function buildSegmentedScalarExpression(segments, baseValue) {
-    return "var t=time;\nvar base=value;\n" + buildSegmentedVarExpr(segments, "v", "base") + "v;";
+    return buildExprTimeVar() + "var base=value;\n" + buildSegmentedVarExpr(segments, "v", "base") + "v;";
   }
 
   function buildEaseFunctionSource(easeStr) {
@@ -801,7 +805,7 @@
   function buildTweenExpression(t0, t1, v0, v1, easeStr, suffix) {
     var easeFn = buildEaseFunctionSource(easeStr);
     var expr =
-      "var t=time;\n" +
+      buildExprTimeVar() +
       "var t0=" + t0 + ";\n" +
       "var t1=" + t1 + ";\n" +
       "var v0=" + v0 + ";\n" +
@@ -817,7 +821,8 @@
   function buildTweenValueExpr(t0, t1, v0, v1, easeStr, varName) {
     var easeFn = buildEaseFunctionSource(easeStr);
     return (
-      "var t=time; var t0=" +
+      buildExprTimeVar().replace("\n", " ") +
+      "var t0=" +
       t0 +
       "; var t1=" +
       t1 +
@@ -1118,7 +1123,7 @@
     if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
       var expr =
         "var base=value;\n" +
-        "var t=time;\n" +
+        buildExprTimeVar() +
         buildSegmentedVarExpr(xSegments, "tx", 0) +
         buildSegmentedVarExpr(ySegments, "ty", 0) +
         buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
@@ -1204,7 +1209,7 @@
     ) {
       var expr =
         "var base=value;\n" +
-        "var t=time;\n" +
+        buildExprTimeVar() +
         "var sx=base[0]; var sy=base[1];\n" +
         "var s=" +
         baseScale[0] +
@@ -1600,7 +1605,7 @@
       if (mode === "polygon") {
         var polySegs = buildClipPathPolygonSegments(node.motion, bbox);
         if (polySegs.count) {
-          var exprPoly = "var t=time;\n";
+          var exprPoly = buildExprTimeVar();
           var ptsExpr = "[";
           for (var p = 0; p < polySegs.count; p++) {
             exprPoly += buildSegmentedVarExpr(polySegs.points[p].x, "px" + p, 0);
@@ -1623,7 +1628,7 @@
 
       var insetSegs = buildClipPathInsetSegments(node.motion, bbox);
       var expr =
-        "var t=time;\n" +
+        buildExprTimeVar() +
         "var top=0; var right=0; var bottom=0; var left=0; var rx=0; var ry=0;\n" +
         buildSegmentedVarExpr(insetSegs.top, "top", 0) +
         buildSegmentedVarExpr(insetSegs.right, "right", 0) +

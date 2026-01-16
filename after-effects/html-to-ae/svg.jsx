@@ -1773,7 +1773,7 @@
       if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
         var expr =
           "var base=value;\n" +
-          "var t=time;\n" +
+          buildExprTimeVar() +
           buildSegmentedVarExpr(xSegments, "tx", 0) +
           buildSegmentedVarExpr(ySegments, "ty", 0) +
           buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
@@ -1791,7 +1791,7 @@
       if (scaleSegments.length || sxSegments.length || sySegments.length) {
         var exprScale =
           "var base=value;\n" +
-          "var t=time;\n" +
+          buildExprTimeVar() +
           "var sx=1; var sy=1;\n" +
           "var s=1;\n" +
           (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", 1) + "sx=s; sy=s;\n" : "") +
@@ -1846,7 +1846,7 @@
 
     var useUniform = hasR && (!hasRx || !hasRy);
 
-    var expr = "var base=value;\nvar t=time;\n";
+    var expr = "var base=value;\n" + buildExprTimeVar();
     if (useUniform) {
       expr += buildSegmentedVarExpr(rSegments, "r", baseRx);
       expr += "var d=r*2;\n[d,d];";

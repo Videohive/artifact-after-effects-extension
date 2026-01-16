@@ -94,6 +94,12 @@ export interface AEMotionTime {
   stagger?: number;
 }
 
+export interface AEMotionTimelineDefaults {
+  ease?: string;
+  duration?: number;
+  delay?: number;
+}
+
 export interface AEMotionValue {
   type?: 'function';
   value: any;
@@ -105,6 +111,8 @@ export interface AEMotionTween {
   time: AEMotionTime;
   props: Record<string, { from?: AEMotionValue; to?: AEMotionValue }>;
   splitText?: 'lines' | 'words' | 'chars';
+  timelineId?: string;
+  timelineDefaults?: AEMotionTimelineDefaults;
 }
 
 export interface AEExportSettings {

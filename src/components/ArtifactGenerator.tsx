@@ -183,7 +183,8 @@ const MOTION_CAPTURE_SCRIPT = `
     if (window.__ae2MotionCaptureInstalled) return;
     window.__ae2MotionCaptureInstalled = true;
 
-    var store = window.__ae2MotionCapture = { tweens: [], ready: false };
+    var store = window.__ae2MotionCapture = { tweens: [], timelines: [], ready: false };
+    var timelineCount = 0;
 
     function parseSplitTypes(vars) {
       var raw = '';
@@ -517,11 +518,38 @@ const MOTION_CAPTURE_SCRIPT = `
       return out;
     }
 
-    function recordTween(tween, type, targets, fromVars, toVars) {
+    function normalizeEaseValue(value) {
+      if (value == null) return null;
+      if (typeof value === 'string') return value;
+      try {
+        return String(value);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function extractTimelineDefaults(vars) {
+      if (!vars || typeof vars !== 'object') return null;
+      var defaults = vars.defaults;
+      if (!defaults || typeof defaults !== 'object') return null;
+      var out = {};
+      if (defaults.ease != null) out.ease = normalizeEaseValue(defaults.ease);
+      if (typeof defaults.duration === 'number' && isFinite(defaults.duration)) {
+        out.duration = defaults.duration;
+      }
+      if (typeof defaults.delay === 'number' && isFinite(defaults.delay)) {
+        out.delay = defaults.delay;
+      }
+      return Object.keys(out).length ? out : null;
+    }
+
+    function recordTween(tween, type, targets, fromVars, toVars, context) {
       var normalized = normalizeTargets(targets);
       var targetList = normalized.keys;
       if (!targetList.length) return;
       var splitCount = normalized.splitCount || 0;
+      var timelineDefaults = context && context.defaults ? context.defaults : null;
+      var timelineId = context && context.id ? context.id : null;
       var duration = 0;
       if (tween && typeof tween.duration === 'function') {
         duration = tween.duration();
@@ -533,10 +561,19 @@ const MOTION_CAPTURE_SCRIPT = `
         start = tween.startTime();
       }
       var delay = 0;
-      if (toVars && typeof toVars.delay === 'number') {
+      if (tween && typeof tween.delay === 'function') {
+        delay = tween.delay();
+      } else if (toVars && typeof toVars.delay === 'number') {
         delay = toVars.delay;
       }
-      var ease = (toVars && toVars.ease) || (fromVars && fromVars.ease) || 'none';
+      var ease = (toVars && toVars.ease) || (fromVars && fromVars.ease);
+      if (ease == null && tween && tween.vars && tween.vars.ease != null) {
+        ease = tween.vars.ease;
+      }
+      if (ease == null && timelineDefaults && timelineDefaults.ease != null) {
+        ease = timelineDefaults.ease;
+      }
+      if (ease == null) ease = 'none';
       var stagger = (toVars && toVars.stagger) || (fromVars && fromVars.stagger);
       var staggerTargets = stagger ? resolveStaggerTargets(targets) : null;
       var staggerDelays = staggerTargets ? getStaggerDelays(stagger, staggerTargets) : null;
@@ -557,6 +594,8 @@ const MOTION_CAPTURE_SCRIPT = `
         if (Number(opVal) === 0) return;
       }
       var baseEntry = {
+        timelineId: timelineId || undefined,
+        timelineDefaults: timelineDefaults || undefined,
         splitText: normalized.splitText || undefined,
         type: type,
         time: {
@@ -576,6 +615,8 @@ const MOTION_CAPTURE_SCRIPT = `
             ? staggerDelays[i]
             : getStaggerDelay(stagger, i, targetList.length);
           store.tweens.push({
+            timelineId: baseEntry.timelineId,
+            timelineDefaults: baseEntry.timelineDefaults,
             targets: [targetList[i]],
             splitText: baseEntry.splitText,
             type: baseEntry.type,
@@ -591,6 +632,8 @@ const MOTION_CAPTURE_SCRIPT = `
         return;
       }
       store.tweens.push({
+        timelineId: baseEntry.timelineId,
+        timelineDefaults: baseEntry.timelineDefaults,
         targets: targetList,
         splitText: baseEntry.splitText,
         type: baseEntry.type,
@@ -638,6 +681,13 @@ const MOTION_CAPTURE_SCRIPT = `
       gsap.timeline = function () {
         var tl = origTimeline.apply(gsap, arguments);
         if (!tl) return tl;
+        var timelineDefaults = extractTimelineDefaults(arguments[0]);
+        var timelineId = 'tl-' + (++timelineCount);
+        tl.__ae2TimelineId = timelineId;
+        tl.__ae2Defaults = timelineDefaults;
+        if (timelineDefaults) {
+          store.timelines.push({ id: timelineId, defaults: timelineDefaults });
+        }
         function resolveTween() {
           if (!tl.getChildren) return null;
           var children = tl.getChildren(true, true, true);
@@ -661,11 +711,12 @@ const MOTION_CAPTURE_SCRIPT = `
           tl[method] = function (targets, vars, position) {
             var tween;
             var before = snapshotChildren();
+            var ctx = tl.__ae2TimelineId ? { id: tl.__ae2TimelineId, defaults: tl.__ae2Defaults } : null;
             if (method === 'fromTo') {
               tween = orig.apply(tl, arguments);
               var after = snapshotChildren();
               var added = findAddedTween(before, after) || resolveTween();
-              recordTween(added || tween, method, targets, arguments[1], arguments[2]);
+              recordTween(added || tween, method, targets, arguments[1], arguments[2], ctx);
               return tween;
             }
             tween = orig.apply(tl, arguments);
@@ -676,7 +727,8 @@ const MOTION_CAPTURE_SCRIPT = `
               method,
               targets,
               method === 'from' ? vars : null,
-              method === 'to' ? vars : null
+              method === 'to' ? vars : null,
+              ctx
             );
             return tween;
           };
@@ -685,7 +737,8 @@ const MOTION_CAPTURE_SCRIPT = `
           var origTlSet = tl.set;
           tl.set = function (targets, vars, position) {
             var tween = origTlSet.apply(tl, arguments);
-            recordTween(resolveTween() || tween, 'to', targets, null, vars);
+            var ctx = tl.__ae2TimelineId ? { id: tl.__ae2TimelineId, defaults: tl.__ae2Defaults } : null;
+            recordTween(resolveTween() || tween, 'to', targets, null, vars, ctx);
             return tween;
           };
         }

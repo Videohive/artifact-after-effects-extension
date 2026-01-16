@@ -498,8 +498,8 @@
       var toName = safeName(baseName + " To");
       ensureSliderControl(layer, fromName, seg.v0);
       ensureSliderControl(layer, toName, seg.v1);
-      var fromExpr = 'effect("' + fromName + '")("Slider")';
-      var toExpr = 'effect("' + toName + '")("Slider")';
+      var fromExpr = 'effect("' + fromName + '")(1)';
+      var toExpr = 'effect("' + toName + '")(1)';
       if (exprTransform) {
         fromExpr = exprTransform(fromExpr);
         toExpr = exprTransform(toExpr);

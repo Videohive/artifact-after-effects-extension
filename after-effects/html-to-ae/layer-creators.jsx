@@ -852,6 +852,13 @@
       if (moreOptions) {
         var anchorAlign = moreOptions.property("ADBE Text Anchor Point Align");
         if (anchorAlign) anchorAlign.setValue([0, -40]);
+        var anchorOption = moreOptions.property("ADBE Text Anchor Point Option");
+        var splitType = getTextSplitTypeFromMotion(node ? node.motion : null);
+        if (anchorOption && splitType) {
+          if (splitType === "words") anchorOption.setValue(2);
+          else if (splitType === "lines") anchorOption.setValue(3);
+          else anchorOption.setValue(1);
+        }
       }
     } catch (e) {}
 

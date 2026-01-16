@@ -845,13 +845,60 @@
     return 1; // chars
   }
 
-  function findSplitTween(motionList) {
+  function hasSplitAnimatorProps(props) {
+    if (!props) return false;
+    return (
+      props.opacity ||
+      props.x ||
+      props.y ||
+      props.xPercent ||
+      props.yPercent ||
+      props.scale ||
+      props.scaleX ||
+      props.scaleY ||
+      props.rotation ||
+      props.rotate ||
+      props.rotateX ||
+      props.rotateY ||
+      props.skewY
+    );
+  }
+
+  function getTextSplitTypeFromMotion(motionList) {
+    if (!motionList || !motionList.length) return null;
+    var splitType = null;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.splitText) continue;
+      splitType = String(entry.splitText).toLowerCase();
+      break;
+    }
+    if (!splitType) {
+      for (var j = 0; j < motionList.length; j++) {
+        var entry2 = motionList[j];
+        if (!entry2 || !entry2.props) continue;
+        if (hasSplitAnimatorProps(entry2.props)) {
+          splitType = "lines";
+          break;
+        }
+      }
+    }
+    if (!splitType) return null;
+    if (splitType !== "lines" && splitType !== "words" && splitType !== "chars") {
+      splitType = "chars";
+    }
+    return splitType;
+  }
+
+  function findSplitTween(motionList, useImplicitSplit) {
     if (!motionList || !motionList.length) return null;
     var best = null;
     var bestTime = null;
     for (var i = 0; i < motionList.length; i++) {
       var entry = motionList[i];
-      if (!entry || !entry.splitText) continue;
+      if (!entry) continue;
+      if (!useImplicitSplit && !entry.splitText) continue;
+      if (useImplicitSplit && !hasSplitAnimatorProps(entry.props)) continue;
       var start = getMotionStart(entry);
       if (bestTime === null || start < bestTime) {
         best = entry;
@@ -889,13 +936,25 @@
     var hasRotation3d = false;
     var hasSkewY = false;
     var firstSplitProps = null;
+    var explicitSplit = false;
     for (var i = 0; i < motionList.length; i++) {
       var entry = motionList[i];
-      if (!entry || !entry.splitText) continue;
-      if (!splitType) splitType = String(entry.splitText).toLowerCase();
-      var props = entry.props || null;
-      if (!firstSplitProps && props) firstSplitProps = props;
-      if (!props) continue;
+      if (!entry) continue;
+      if (entry.splitText && !explicitSplit) {
+        splitType = String(entry.splitText).toLowerCase();
+        explicitSplit = true;
+      }
+    }
+    if (!explicitSplit) splitType = "lines";
+    var useImplicitSplit = !explicitSplit;
+
+    for (var j = 0; j < motionList.length; j++) {
+      var entry2 = motionList[j];
+      if (!entry2) continue;
+      if (!useImplicitSplit && !entry2.splitText) continue;
+      var props = entry2.props || null;
+      if (!props || !hasSplitAnimatorProps(props)) continue;
+      if (!firstSplitProps) firstSplitProps = props;
       if (props.opacity) hasOpacity = true;
       if (props.x || props.y || props.xPercent || props.yPercent) hasPosition = true;
       if (props.scale || props.scaleX || props.scaleY) hasScale = true;
@@ -903,7 +962,7 @@
       if (props.rotateX || props.rotateY) hasRotation3d = true;
       if (props.skewY) hasSkewY = true;
     }
-    if (!splitType) return;
+    if (!firstSplitProps) return;
     if (splitType !== "lines" && splitType !== "words" && splitType !== "chars") {
       splitType = "chars";
     }
@@ -970,6 +1029,8 @@
         }
       }
       if (hasSkewY) {
+        var skewAxisProp = animatorProps.addProperty("ADBE Text Skew Axis");
+        if (skewAxisProp) skewAxisProp.setValue(90);
         var skewProp = animatorProps.addProperty("ADBE Text Skew");
         if (skewProp && firstSplitProps) {
           var skewStart = getSplitStartValue(firstSplitProps, "skewY", null);
@@ -997,7 +1058,7 @@
     }
 
     var offsetProp = selector.property("ADBE Text Percent Offset");
-    var splitTween = findSplitTween(motionList);
+    var splitTween = findSplitTween(motionList, useImplicitSplit);
     if (offsetProp && splitTween && offsetProp.canSetExpression) {
       var t0 = getMotionStart(splitTween);
       var dur = splitTween.time && isFinite(splitTween.time.duration) ? splitTween.time.duration : 0;

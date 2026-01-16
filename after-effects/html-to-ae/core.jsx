@@ -110,6 +110,11 @@
       var rootH = Math.round(node.bbox.h);
       allowRootPrecomp = rootW < comp.width || rootH < comp.height;
     }
+    if (isRoot && wantsPrecomp) {
+      var hasRootMotion = node.motion && node.motion.length;
+      var hasRootClip = node.clip && node.clip.enabled;
+      if (hasRootMotion || hasRootClip) allowRootPrecomp = true;
+    }
     var needsPrecomp = (!isRoot || allowRootPrecomp) && wantsPrecomp;
 
     // ----------------------------

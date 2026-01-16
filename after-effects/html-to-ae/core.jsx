@@ -36,7 +36,7 @@
     return comp;
   }
 
-  function createTimelineComp(slideComps, parentFolder) {
+  function createTimelineComp(slideComps, parentFolder, slideHasText) {
     var first = slideComps[0];
     var totalDur = 0;
     for (var i = 0; i < slideComps.length; i++) {
@@ -60,6 +60,9 @@
     for (var j = 0; j < slideComps.length; j++) {
       var slideComp = slideComps[j];
       var layer = comp.layers.add(slideComp);
+      if (slideHasText && slideHasText[j]) {
+        layer.collapseTransformation = true;
+      }
       layer.startTime = t;
       layer.inPoint = t;
       layer.outPoint = t + slideComp.duration;
@@ -67,6 +70,22 @@
     }
 
     return comp;
+  }
+
+  function nodeContainsText(node) {
+    if (!node) return false;
+    if (node.type === "text") return true;
+    if (node.type === "svg") {
+      if (node.svgData && node.svgData.textElements && node.svgData.textElements.length) return true;
+      var content = String(node.content || "");
+      if (/<text\b/i.test(content)) return true;
+    }
+    if (node.children && node.children.length) {
+      for (var i = 0; i < node.children.length; i++) {
+        if (nodeContainsText(node.children[i])) return true;
+      }
+    }
+    return false;
   }
 
   /**

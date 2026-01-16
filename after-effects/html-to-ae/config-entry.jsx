@@ -156,6 +156,7 @@
   }
 
   var slideComps = [];
+  var slideHasText = [];
 
   for (var s = 0; s < slides.length; s++) {
     var slideData = slides[s];
@@ -174,12 +175,13 @@
     }
 
     slideComps.push(slideComp);
+    slideHasText.push(nodeContainsText(slideData.root));
   }
 
   if (slideComps.length > 1) {
     var timelineParentFolder =
       projectFolders && projectFolders.finalComp ? projectFolders.finalComp : projectFolder;
-    ROOT_COMP = createTimelineComp(slideComps, timelineParentFolder);
+    ROOT_COMP = createTimelineComp(slideComps, timelineParentFolder, slideHasText);
   } else if (slideComps.length === 1) {
     ROOT_COMP = slideComps[0];
   }

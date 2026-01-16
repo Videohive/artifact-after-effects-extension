@@ -1985,6 +1985,119 @@
     return out;
   }
 
+  function hasPercentMotionProp(motionList, propName) {
+    if (!motionList || !motionList.length) return false;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.props || !entry.props[propName]) continue;
+      if (typeof isPercentMotionEntry === "function" && isPercentMotionEntry(entry, propName)) return true;
+    }
+    return false;
+  }
+
+  function normalizeDrawSvgValue(value, usePercent) {
+    if (value === null || typeof value === "undefined") return value;
+    if (usePercent) return value;
+    if (value >= 0 && value <= 1) return value * 100;
+    return value;
+  }
+
+  function parseDrawSvgPair(value) {
+    if (value === null || typeof value === "undefined") return null;
+    var list = [];
+    if (value instanceof Array) {
+      for (var i = 0; i < value.length; i++) list.push(value[i]);
+    } else if (typeof value === "string") {
+      var matches = String(value).match(/-?\d*\.?\d+(?:e[-+]?\d+)?%?/gi);
+      if (matches && matches.length) list = matches;
+    } else {
+      list = [value];
+    }
+    if (!list.length) return null;
+    var nums = [];
+    for (var j = 0; j < list.length && j < 2; j++) {
+      var raw = list[j];
+      var num = parseMotionNumber(raw);
+      if (num === null) continue;
+      nums.push({ value: num, hasPercent: typeof raw === "string" && raw.indexOf("%") !== -1 });
+    }
+    if (!nums.length) return null;
+    if (nums.length === 1) {
+      return { start: null, end: nums[0].value };
+    }
+    return { start: nums[0].value, end: nums[1].value };
+  }
+
+  function buildDrawSvgSegments(motionList, baseStart, baseEnd, usePercent, which) {
+    var entries = collectMotionSegments(motionList, "drawSVG");
+    if (!entries.length) return [];
+    entries.sort(function (a, b) {
+      var ta = getMotionStart(a.tween);
+      var tb = getMotionStart(b.tween);
+      if (ta < tb) return -1;
+      if (ta > tb) return 1;
+      return a.index - b.index;
+    });
+    var segments = [];
+    var prevStart = baseStart;
+    var prevEnd = baseEnd;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i].tween;
+      var props = entry.props.drawSVG;
+      var fromMeta = props && props.from ? props.from : null;
+      var toMeta = props && props.to ? props.to : null;
+      var fromPair = parseDrawSvgPair(fromMeta ? fromMeta.value : null);
+      var toPair = parseDrawSvgPair(toMeta ? toMeta.value : null);
+
+      var fromStart = fromPair && fromPair.start !== null ? fromPair.start : prevStart;
+      var fromEnd = fromPair && fromPair.end !== null ? fromPair.end : prevEnd;
+
+      var toStart = null;
+      var toEnd = null;
+      if (toPair) {
+        toStart = toPair.start !== null ? toPair.start : fromStart;
+        toEnd = toPair.end !== null ? toPair.end : fromEnd;
+      } else if (toMeta && toMeta.type === "function") {
+        toStart = fromStart;
+        toEnd = fromEnd;
+      } else {
+        toStart = fromStart;
+        toEnd = fromEnd;
+      }
+
+      fromStart = normalizeDrawSvgValue(fromStart, usePercent);
+      fromEnd = normalizeDrawSvgValue(fromEnd, usePercent);
+      toStart = normalizeDrawSvgValue(toStart, usePercent);
+      toEnd = normalizeDrawSvgValue(toEnd, usePercent);
+
+      var t0 = getMotionStart(entry);
+      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+      var v0 = which === "start" ? fromStart : fromEnd;
+      var v1 = which === "start" ? toStart : toEnd;
+      var seg = {
+        t0: t0,
+        t1: t1,
+        v0: v0,
+        v1: v1,
+        ease: entry.time && entry.time.ease ? entry.time.ease : null,
+      };
+      var last = segments.length ? segments[segments.length - 1] : null;
+      if (
+        !last ||
+        last.t0 !== seg.t0 ||
+        last.t1 !== seg.t1 ||
+        last.v0 !== seg.v0 ||
+        last.v1 !== seg.v1 ||
+        String(last.ease || "") !== String(seg.ease || "")
+      ) {
+        segments.push(seg);
+      }
+      prevStart = toStart;
+      prevEnd = toEnd;
+    }
+    return segments;
+  }
+
   function applySvgStrokeDashMotion(layers, motionList) {
     if (!layers || !layers.length || !motionList || !motionList.length) return;
     for (var i = 0; i < layers.length; i++) {
@@ -1994,9 +2107,36 @@
       if (!layerMotion.length) continue;
       var hasDashArray = collectMotionSegments(layerMotion, "strokeDasharray").length > 0;
       var hasDashOffset = collectMotionSegments(layerMotion, "strokeDashoffset").length > 0;
-      if (!hasDashArray && !hasDashOffset) continue;
+      var hasDrawSvg = collectMotionSegments(layerMotion, "drawSVG").length > 0;
+      if (!hasDashArray && !hasDashOffset && !hasDrawSvg) continue;
       var contents = layer.property("Contents");
       if (!contents) continue;
+
+      if (hasDrawSvg) {
+        var trim = getOrAddTrimPaths(contents);
+        if (!trim) continue;
+        var startProp = trim.property("ADBE Vector Trim Start");
+        var endProp = trim.property("ADBE Vector Trim End");
+        var baseStart = startProp ? startProp.value : 0;
+        var baseEnd = endProp ? endProp.value : 100;
+        var usePercent = hasPercentMotionProp(layerMotion, "drawSVG");
+        if (startProp && startProp.canSetExpression) {
+          var startSegments = buildDrawSvgSegments(layerMotion, baseStart, baseEnd, usePercent, "start");
+          attachMotionControls(startSegments, layer, "Trim Start", null);
+          if (startSegments.length) {
+            startProp.expression = buildSegmentedScalarExpression(startSegments, baseStart);
+          }
+        }
+        if (endProp && endProp.canSetExpression) {
+          var baseEnd = endProp.value;
+          var endSegments = buildDrawSvgSegments(layerMotion, baseStart, baseEnd, usePercent, "end");
+          attachMotionControls(endSegments, layer, "Trim End", null);
+          if (endSegments.length) {
+            endProp.expression = buildSegmentedScalarExpression(endSegments, baseEnd);
+          }
+        }
+        continue;
+      }
 
       if (hasDashOffset) {
         var animatedOffset = filterAnimatedDashOffset(layerMotion);

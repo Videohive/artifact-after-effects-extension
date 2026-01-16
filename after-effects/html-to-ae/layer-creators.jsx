@@ -153,6 +153,9 @@
 
     var layer = parentComp.layers.add(precomp);
     layer.name = preName;
+    if (typeof nodeContainsText === "function" && nodeContainsText(node)) {
+      layer.collapseTransformation = true;
+    }
 
     // Position precomp layer in parent comp to match node bbox
     setLayerTransform(layer, localBBox);

@@ -321,6 +321,53 @@
 
     var contents = layer.property("Contents");
 
+    function isUniformRadius(radius) {
+      if (!radius) return true;
+      var v = Number(radius.topLeft && radius.topLeft.x) || 0;
+      var vals = [
+        v,
+        Number(radius.topLeft && radius.topLeft.y) || 0,
+        Number(radius.topRight && radius.topRight.x) || 0,
+        Number(radius.topRight && radius.topRight.y) || 0,
+        Number(radius.bottomRight && radius.bottomRight.x) || 0,
+        Number(radius.bottomRight && radius.bottomRight.y) || 0,
+        Number(radius.bottomLeft && radius.bottomLeft.x) || 0,
+        Number(radius.bottomLeft && radius.bottomLeft.y) || 0,
+      ];
+      for (var i = 1; i < vals.length; i++) {
+        if (Math.abs(vals[i] - v) > 0.0001) return false;
+      }
+      return true;
+    }
+
+    function offsetShapeVertices(shape, dx, dy) {
+      if (!shape || !shape.vertices) return shape;
+      for (var i = 0; i < shape.vertices.length; i++) {
+        shape.vertices[i][0] += dx;
+        shape.vertices[i][1] += dy;
+      }
+      return shape;
+    }
+
+    function buildPerCornerBorderPath(w, h, radius, inset) {
+      if (!radius) return null;
+      var radii = getClipRadii({ borderRadius: radius }, w, h);
+      if (!radii || !radii.hasAny) return null;
+      var shrink = inset / 2;
+      if (!isFinite(shrink) || shrink < 0) shrink = 0;
+      radii.tl.rx = Math.max(0, radii.tl.rx - shrink);
+      radii.tl.ry = Math.max(0, radii.tl.ry - shrink);
+      radii.tr.rx = Math.max(0, radii.tr.rx - shrink);
+      radii.tr.ry = Math.max(0, radii.tr.ry - shrink);
+      radii.br.rx = Math.max(0, radii.br.rx - shrink);
+      radii.br.ry = Math.max(0, radii.br.ry - shrink);
+      radii.bl.rx = Math.max(0, radii.bl.rx - shrink);
+      radii.bl.ry = Math.max(0, radii.bl.ry - shrink);
+      clampRadii(radii, w, h);
+      var shape = roundedRectShapePerCorner(w, h, radii);
+      return offsetShapeVertices(shape, -w / 2, -h / 2);
+    }
+
     if (border.isUniform && isVisibleBorderSide(border.sides ? border.sides.top : null)) {
       var strokeWidth = Number(border.widthPx) || 0;
       var inset = strokeWidth > 0 ? strokeWidth : 0;
@@ -331,12 +378,26 @@
       grp.name = "Border";
 
       var grpContents = grp.property("Contents");
-      var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
-      rect.property("Size").setValue([innerW, innerH]);
-      if (border.radiusPx && border.radiusPx > 0)
-        rect.property("Roundness").setValue(
-          clampRoundnessValue(Math.max(0, border.radiusPx - inset / 2), innerW, innerH)
-        );
+      var usePerCorner = border.radius && !isUniformRadius(border.radius);
+      var appliedPerCorner = false;
+      if (usePerCorner) {
+        var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
+        var shape = buildPerCornerBorderPath(innerW, innerH, border.radius, inset);
+        if (shape) {
+          pathProp.property("Path").setValue(shape);
+          appliedPerCorner = true;
+        } else {
+          var rectFallback = grpContents.addProperty("ADBE Vector Shape - Rect");
+          rectFallback.property("Size").setValue([innerW, innerH]);
+        }
+      } else {
+        var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
+        rect.property("Size").setValue([innerW, innerH]);
+        if (border.radiusPx && border.radiusPx > 0)
+          rect.property("Roundness").setValue(
+            clampRoundnessValue(Math.max(0, border.radiusPx - inset / 2), innerW, innerH)
+          );
+      }
 
       var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
       applyCssColorProperty(stroke.property("Color"), border.color, comp.name);
@@ -349,6 +410,7 @@
 
       setLayerTransform(layer, localBBox);
       setLayerAnchorCenter(layer);
+      setLayerTransform(layer, localBBox);
       return layer;
     }
 

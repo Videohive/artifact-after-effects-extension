@@ -145,9 +145,6 @@
 
     var layer = parentComp.layers.add(precomp);
     layer.name = preName;
-    if (typeof nodeContainsText === "function" && nodeContainsText(node)) {
-      layer.collapseTransformation = true;
-    }
 
     // Position precomp layer in parent comp to match node bbox
     setLayerTransform(layer, localBBox);
@@ -582,6 +579,7 @@
     var align = node.font && node.font.textAlign ? String(node.font.textAlign).toLowerCase() : "";
     var writingMode = node.font && node.font.writingMode ? String(node.font.writingMode) : "";
     var isVerticalText = writingMode.toLowerCase().indexOf("vertical") === 0;
+    var isRightAlign = align === "right" || align === "end";
     var ignoreX = align === "center" || align === "centre" || isVerticalText;
 
     for (var i = 0; i < ranges.length; i++) {
@@ -614,13 +612,24 @@
     var baseStyleNorm = "";
 
     var baseX = 0;
-    if (hasX && baseRange && typeof baseRange.x !== "undefined" && isFinite(baseRange.x)) {
+    var baseXSet = false;
+    if (hasX && isRightAlign && node && node.textLines && node.textLines.length) {
+      var baseIndex = baseRange && typeof baseRange.lineIndex !== "undefined" ? baseRange.lineIndex : 0;
+      var baseLine = node.textLines[baseIndex];
+      if (baseLine && isFinite(baseLine.x) && isFinite(baseLine.w)) {
+        baseX = Number(baseLine.x) + Number(baseLine.w);
+        baseXSet = true;
+      }
+    }
+    if (hasX && !baseXSet && baseRange && typeof baseRange.x !== "undefined" && isFinite(baseRange.x)) {
       baseX = Number(baseRange.x);
-    } else if (hasX && node.textLines && node.textLines.length) {
+      baseXSet = true;
+    } else if (hasX && !isRightAlign && node.textLines && node.textLines.length) {
       for (var bx = 0; bx < node.textLines.length; bx++) {
         var bLine = node.textLines[bx];
         if (bLine && isFinite(bLine.x)) {
           baseX = Number(bLine.x);
+          baseXSet = true;
           break;
         }
       }
@@ -644,7 +653,16 @@
       var dStyleNorm = baseStyleNorm;
       var dOffsetX = 0;
       if (hasX && typeof dr.x !== "undefined" && isFinite(dr.x)) {
-        dOffsetX = Number(dr.x) - baseX;
+        if (isRightAlign && node && node.textLines && node.textLines.length > dr.lineIndex) {
+          var dLine = node.textLines[dr.lineIndex];
+          if (dLine && isFinite(dLine.x) && isFinite(dLine.w)) {
+            dOffsetX = Number(dLine.x) + Number(dLine.w) - baseX;
+          } else {
+            dOffsetX = Number(dr.x) - baseX;
+          }
+        } else {
+          dOffsetX = Number(dr.x) - baseX;
+        }
       }
 
       if (
@@ -690,7 +708,16 @@
 
       var offsetX = 0;
       if (hasX && typeof range.x !== "undefined" && isFinite(range.x)) {
-        offsetX = Number(range.x) - baseX;
+        if (isRightAlign && node && node.textLines && node.textLines.length > range.lineIndex) {
+          var rLine = node.textLines[range.lineIndex];
+          if (rLine && isFinite(rLine.x) && isFinite(rLine.w)) {
+            offsetX = Number(rLine.x) + Number(rLine.w) - baseX;
+          } else {
+            offsetX = Number(range.x) - baseX;
+          }
+        } else {
+          offsetX = Number(range.x) - baseX;
+        }
       }
 
       var colorDiff = hasColor && lineColor && baseColor && lineColor !== baseColor;

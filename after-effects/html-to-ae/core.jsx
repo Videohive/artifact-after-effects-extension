@@ -88,6 +88,18 @@
     return false;
   }
 
+  function compHasDirectText(comp) {
+    if (!comp || !comp.layers) return false;
+    for (var i = 1; i <= comp.layers.length; i++) {
+      var layer = comp.layers[i];
+      if (!layer) continue;
+      try {
+        if (layer.property("Text")) return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
   /**
    * Recursively builds layers into comp from node.
    * @param {Object} node
@@ -199,6 +211,10 @@
           for (var i = 0; i < orderedChildren.length; i++) {
             buildNode(orderedChildren[i], childComp, null, childOrigin, rootData, node.style);
           }
+        }
+
+        if (typeof compHasDirectText === "function" && compHasDirectText(childComp)) {
+          layer.collapseTransformation = true;
         }
 
         // 7. clip shape - � ��� �� COMP, ��� � PRECOMP LAYER
@@ -379,6 +395,9 @@
         h: childComp.height,
       };
       createSvgShapeLayers(childComp, node, childBBox, rootData);
+      if (typeof compHasDirectText === "function" && compHasDirectText(childComp)) {
+        layer.collapseTransformation = true;
+      }
       return layer;
     }
     // ============================================================

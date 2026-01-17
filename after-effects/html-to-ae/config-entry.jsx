@@ -174,7 +174,8 @@
     }
 
     slideComps.push(slideComp);
-    slideHasText.push(nodeContainsText(slideData.root));
+    var hasDirectText = typeof compHasDirectText === "function" ? compHasDirectText(slideComp) : nodeContainsText(slideData.root);
+    slideHasText.push(hasDirectText);
   }
 
   if (slideComps.length > 1) {

@@ -443,6 +443,7 @@
         widthRaw: styledAttrs.width || attrs.width || "0",
         heightRaw: styledAttrs.height || attrs.height || "0",
         units: String(styledAttrs.patternUnits || attrs.patternUnits || "objectBoundingBox"),
+        transform: parseSvgTransform(styledAttrs.patternTransform || attrs.patternTransform || ""),
         elements: []
       };
 
@@ -676,6 +677,8 @@
     var copiesY = Math.ceil((rect.y + rect.h - start.y) / tileH);
     if (!isFinite(copiesX) || copiesX < 1) copiesX = 1;
     if (!isFinite(copiesY) || copiesY < 1) copiesY = 1;
+    copiesX += 1;
+    copiesY += 1;
 
     var grp = parentContents.addProperty("ADBE Vector Group");
     grp.name = "PatternFill_" + pattern.id;
@@ -685,19 +688,44 @@
     tileGroup.name = "PatternTile";
     var tileContents = tileGroup.property("Contents");
 
+    var patternGroup = tileContents.addProperty("ADBE Vector Group");
+    patternGroup.name = "PatternTileTransform";
+    var patternContents = patternGroup.property("Contents");
+
     var patternSvgData = {
       minX: 0,
       minY: 0,
       width: tileW,
       height: tileH,
-      preserveAspectRatio: "none"
+      preserveAspectRatio: "none",
+      oversizeLineLength: 0
     };
-    addSvgPatternElements(tileContents, pattern, patternSvgData, compName);
+    if (pattern.transform) {
+      var diag = Math.sqrt(tileW * tileW + tileH * tileH);
+      patternSvgData.oversizeLineLength = diag > 0 ? diag * 2 : 0;
+    }
+    addSvgPatternElements(patternContents, pattern, patternSvgData, compName);
+    var patternStart = { x: start.x, y: start.y };
+    if (pattern.transform) {
+      var linear = [
+        pattern.transform[0],
+        pattern.transform[1],
+        pattern.transform[2],
+        pattern.transform[3],
+        0,
+        0
+      ];
+      applySvgMatrixToGroupTransform(patternGroup, linear);
+      patternStart = {
+        x: start.x + (pattern.transform[4] || 0),
+        y: start.y + (pattern.transform[5] || 0)
+      };
+    }
 
     var tileTr = tileGroup.property("Transform");
     if (tileTr) {
       tileTr.property("Anchor Point").setValue([0, 0]);
-      tileTr.property("Position").setValue([start.x, start.y]);
+      tileTr.property("Position").setValue([patternStart.x, patternStart.y]);
     }
 
     var repX = grpContents.addProperty("ADBE Vector Filter - Repeater");
@@ -757,6 +785,23 @@
     var y1 = parseSvgLength(attrs.y1, svgData.height, 0);
     var x2 = parseSvgLength(attrs.x2, svgData.width, 0);
     var y2 = parseSvgLength(attrs.y2, svgData.height, 0);
+    if (svgData && svgData.oversizeLineLength) {
+      var dx = x2 - x1;
+      var dy = y2 - y1;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      var target = Math.max(len, svgData.oversizeLineLength);
+      if (isFinite(len) && len > 0 && target > len) {
+        var mx = x1 + dx / 2;
+        var my = y1 + dy / 2;
+        var scale = target / len;
+        var hx = (dx * scale) / 2;
+        var hy = (dy * scale) / 2;
+        x1 = mx - hx;
+        y1 = my - hy;
+        x2 = mx + hx;
+        y2 = my + hy;
+      }
+    }
 
     var grp = parentContents.addProperty("ADBE Vector Group");
     grp.name = attrs && attrs.id ? attrs.id : "Line";
@@ -2520,6 +2565,28 @@
 
   function applySvgMatrixToVector(v, m) {
     return [m[0] * v[0] + m[2] * v[1], m[1] * v[0] + m[3] * v[1]];
+  }
+
+  function applySvgMatrixToGroupTransform(group, m) {
+    if (!group || !m || m.length < 6) return;
+    var tr = group.property("Transform");
+    if (!tr) return;
+    var a = m[0],
+      b = m[1],
+      c = m[2],
+      d = m[3],
+      e = m[4],
+      f = m[5];
+    var scaleX = Math.sqrt(a * a + b * b);
+    if (!isFinite(scaleX) || scaleX === 0) scaleX = 1;
+    var det = a * d - b * c;
+    var scaleY = det / scaleX;
+    if (!isFinite(scaleY) || scaleY === 0) scaleY = 1;
+    var rotation = Math.atan2(b, a) * (180 / Math.PI);
+    tr.property("Anchor Point").setValue([0, 0]);
+    tr.property("Position").setValue([e, f]);
+    tr.property("Scale").setValue([scaleX * 100, scaleY * 100]);
+    tr.property("Rotation").setValue(rotation);
   }
 
   function applyTransformToSubpath(sp, m) {

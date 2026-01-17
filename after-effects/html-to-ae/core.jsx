@@ -72,6 +72,63 @@
     return comp;
   }
 
+  function getBorderSideWidth(border, sideKey) {
+    if (!border) return 0;
+    if (border.sides && border.sides[sideKey]) {
+      var sw = Number(border.sides[sideKey].widthPx) || 0;
+      return sw > 0 ? sw : 0;
+    }
+    return Number(border.widthPx) || 0;
+  }
+
+  function getBorderPadding(border) {
+    if (!border) return { top: 0, right: 0, bottom: 0, left: 0 };
+    var topW = getBorderSideWidth(border, "top") / 2;
+    var rightW = getBorderSideWidth(border, "right") / 2;
+    var bottomW = getBorderSideWidth(border, "bottom") / 2;
+    var leftW = getBorderSideWidth(border, "left") / 2;
+    return {
+      top: Math.max(0, topW),
+      right: Math.max(0, rightW),
+      bottom: Math.max(0, bottomW),
+      left: Math.max(0, leftW),
+    };
+  }
+
+  function getShadowPadding(style) {
+    var pad = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (!style || !style.boxShadow || !style.boxShadow.length) return pad;
+    for (var i = 0; i < style.boxShadow.length; i++) {
+      var sh = style.boxShadow[i];
+      if (!sh || sh.inset) continue;
+      var dx = Number(sh.offsetX) || 0;
+      var dy = Number(sh.offsetY) || 0;
+      var blur = Number(sh.blurRadius) || 0;
+      var spread = Number(sh.spreadRadius) || 0;
+      var extent = Math.max(0, blur + spread);
+      var left = extent + Math.max(0, -dx);
+      var right = extent + Math.max(0, dx);
+      var top = extent + Math.max(0, -dy);
+      var bottom = extent + Math.max(0, dy);
+      if (left > pad.left) pad.left = left;
+      if (right > pad.right) pad.right = right;
+      if (top > pad.top) pad.top = top;
+      if (bottom > pad.bottom) pad.bottom = bottom;
+    }
+    return pad;
+  }
+
+  function getDecorationPadding(node) {
+    var borderPad = getBorderPadding(node && node.border ? node.border : null);
+    var outlinePad = getBorderPadding(node && node.outline ? node.outline : null);
+    return {
+      top: borderPad.top + outlinePad.top,
+      right: borderPad.right + outlinePad.right,
+      bottom: borderPad.bottom + outlinePad.bottom,
+      left: borderPad.left + outlinePad.left,
+    };
+  }
+
   function nodeContainsText(node) {
     if (!node) return false;
     if (node.type === "text") return true;
@@ -158,12 +215,37 @@
       if (needsPrecomp) {
         // 1. ������ precomp layer � PARENT comp
         var preBBox = getLocalBBox(node, origin);
-        layer = createPrecompLayer(node, comp, preBBox, rootData);
+        var pad = getDecorationPadding(node);
+        var hasPad =
+          pad &&
+          (pad.top > 0.001 || pad.right > 0.001 || pad.bottom > 0.001 || pad.left > 0.001);
+        var preBBoxExpanded = hasPad
+          ? {
+              x: preBBox.x - pad.left,
+              y: preBBox.y - pad.top,
+              w: preBBox.w + pad.left + pad.right,
+              h: preBBox.h + pad.top + pad.bottom,
+            }
+          : preBBox;
+        layer = createPrecompLayer(node, comp, preBBoxExpanded, rootData);
 
         // 2. ��������� ����� � precomp layer
         applyOpacity(layer, node.style);
         applyBlendMode(layer, node.style);
-        applyTransform(layer, node.style, preBBox, null);
+        var styleForTransform = node.style || {};
+        if (hasPad && typeof resolveTransformOrigin === "function") {
+          var originOffset = resolveTransformOrigin(styleForTransform, preBBox);
+          if (styleForTransform === node.style) {
+            var cloned = {};
+            for (var key in styleForTransform) cloned[key] = styleForTransform[key];
+            styleForTransform = cloned;
+          }
+          if (originOffset) {
+            styleForTransform.transformOrigin =
+              Math.round(originOffset.x + pad.left) + "px " + Math.round(originOffset.y + pad.top) + "px";
+          }
+        }
+        applyTransform(layer, styleForTransform, preBBoxExpanded, null);
         applyDropShadow(layer, node.style);
         applyMotion(layer, node, preBBox);
 
@@ -175,35 +257,27 @@
 
         // ?? ����� ������� ���������
         var childOrigin = {
-          x: node.bbox.x,
-          y: node.bbox.y,
+          x: node.bbox.x - (hasPad ? pad.left : 0),
+          y: node.bbox.y - (hasPad ? pad.top : 0),
+        };
+
+        var contentBBox = {
+          x: hasPad ? pad.left : 0,
+          y: hasPad ? pad.top : 0,
+          w: preBBox.w,
+          h: preBBox.h,
         };
 
         // 5. ��� ������ (���� ����)
         if (CFG.makeShapeForGroupsWithBg && node.style && hasEffectiveBackground(node.style)) {
-          var bgShape = createRectShape(childComp, node, {
-            x: 0,
-            y: 0,
-            w: childComp.width,
-            h: childComp.height,
-          });
+          var bgShape = createRectShape(childComp, node, contentBBox);
           if (bgShape) bgShape.moveToEnd();
         }
         if (node.style && node.style.backgroundGrid) {
-          createGridLayer(childComp, node, {
-            x: 0,
-            y: 0,
-            w: childComp.width,
-            h: childComp.height,
-          });
+          createGridLayer(childComp, node, contentBBox);
         }
         if (hasBorder(node.border)) {
-          var borderShape = createBorderShape(childComp, node, {
-            x: 0,
-            y: 0,
-            w: childComp.width,
-            h: childComp.height,
-          });
+          var borderShape = createBorderShape(childComp, node, contentBBox);
         }
         // 6. ����
         if (node.children && node.children.length) {

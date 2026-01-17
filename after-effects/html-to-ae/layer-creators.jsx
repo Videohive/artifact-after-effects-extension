@@ -368,35 +368,170 @@
       return offsetShapeVertices(shape, -w / 2, -h / 2);
     }
 
+    function buildUniformRadius(value) {
+      var v = Number(value) || 0;
+      return {
+        topLeft: { x: v, y: v },
+        topRight: { x: v, y: v },
+        bottomRight: { x: v, y: v },
+        bottomLeft: { x: v, y: v },
+      };
+    }
+
+    function buildRoundedBorderShapeTopLeft(w, h, radius, inset) {
+      if (!radius) return null;
+      var shrink = inset / 2;
+      if (!isFinite(shrink) || shrink < 0) shrink = 0;
+      var innerW = Math.max(0, w - inset);
+      var innerH = Math.max(0, h - inset);
+      if (innerW <= 0 || innerH <= 0) return null;
+
+      var radii = getClipRadii({ borderRadius: radius }, w, h);
+      if (!radii) return null;
+      radii.tl.rx = Math.max(0, radii.tl.rx - shrink);
+      radii.tl.ry = Math.max(0, radii.tl.ry - shrink);
+      radii.tr.rx = Math.max(0, radii.tr.rx - shrink);
+      radii.tr.ry = Math.max(0, radii.tr.ry - shrink);
+      radii.br.rx = Math.max(0, radii.br.rx - shrink);
+      radii.br.ry = Math.max(0, radii.br.ry - shrink);
+      radii.bl.rx = Math.max(0, radii.bl.rx - shrink);
+      radii.bl.ry = Math.max(0, radii.bl.ry - shrink);
+      clampRadii(radii, innerW, innerH);
+
+      var shape = roundedRectShapePerCorner(innerW, innerH, radii);
+      return offsetShapeVertices(shape, shrink, shrink);
+    }
+
+    function quarterEllipseLength(rx, ry) {
+      if (!isFinite(rx) || !isFinite(ry)) return 0;
+      if (rx <= 0 || ry <= 0) return 0;
+      var a = rx;
+      var b = ry;
+      var h = Math.pow(a - b, 2) / Math.pow(a + b, 2);
+      var perimeter =
+        Math.PI *
+        (a + b) *
+        (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)));
+      return perimeter / 4;
+    }
+
+    function buildRoundedBorderPathInfo(w, h, radius, insets) {
+      if (!radius) return null;
+      var leftInset = (insets && insets.left) || 0;
+      var rightInset = (insets && insets.right) || 0;
+      var topInset = (insets && insets.top) || 0;
+      var bottomInset = (insets && insets.bottom) || 0;
+
+      var innerW = Math.max(0, w - leftInset - rightInset);
+      var innerH = Math.max(0, h - topInset - bottomInset);
+      if (innerW <= 0 || innerH <= 0) return null;
+
+      var radii = getClipRadii({ borderRadius: radius }, w, h);
+      if (!radii || !radii.hasAny) return null;
+
+      radii.tl.rx = Math.max(0, radii.tl.rx - leftInset);
+      radii.tl.ry = Math.max(0, radii.tl.ry - topInset);
+      radii.tr.rx = Math.max(0, radii.tr.rx - rightInset);
+      radii.tr.ry = Math.max(0, radii.tr.ry - topInset);
+      radii.br.rx = Math.max(0, radii.br.rx - rightInset);
+      radii.br.ry = Math.max(0, radii.br.ry - bottomInset);
+      radii.bl.rx = Math.max(0, radii.bl.rx - leftInset);
+      radii.bl.ry = Math.max(0, radii.bl.ry - bottomInset);
+
+      clampRadii(radii, innerW, innerH);
+
+      var shape = roundedRectShapePerCorner(innerW, innerH, radii);
+      shape = offsetShapeVertices(shape, leftInset, topInset);
+
+      var topEdge = Math.max(0, innerW - radii.tl.rx - radii.tr.rx);
+      var rightEdge = Math.max(0, innerH - radii.tr.ry - radii.br.ry);
+      var bottomEdge = Math.max(0, innerW - radii.br.rx - radii.bl.rx);
+      var leftEdge = Math.max(0, innerH - radii.bl.ry - radii.tl.ry);
+
+      var arcTR = quarterEllipseLength(radii.tr.rx, radii.tr.ry);
+      var arcBR = quarterEllipseLength(radii.br.rx, radii.br.ry);
+      var arcBL = quarterEllipseLength(radii.bl.rx, radii.bl.ry);
+      var arcTL = quarterEllipseLength(radii.tl.rx, radii.tl.ry);
+
+      var lenTop = topEdge;
+      var lenTR = lenTop + arcTR;
+      var lenRight = lenTR + rightEdge;
+      var lenBR = lenRight + arcBR;
+      var lenBottom = lenBR + bottomEdge;
+      var lenBL = lenBottom + arcBL;
+      var lenLeft = lenBL + leftEdge;
+      var total = lenLeft + arcTL;
+
+      if (total <= 0) return null;
+
+      return {
+        shape: shape,
+        lengths: {
+          lenTop: lenTop,
+          lenTR: lenTR,
+          lenRight: lenRight,
+          lenBR: lenBR,
+          lenBottom: lenBottom,
+          lenBL: lenBL,
+          lenLeft: lenLeft,
+          total: total,
+          arcTL: arcTL,
+        },
+      };
+    }
+
+    function addTrimmedSideGroup(name, side, pathInfo, startLen, endLen) {
+      if (!isVisibleBorderSide(side)) return;
+      if (!pathInfo || !pathInfo.shape || !pathInfo.lengths) return;
+      var total = pathInfo.lengths.total;
+      if (!isFinite(total) || total <= 0) return;
+      var startPct = (startLen / total) * 100;
+      var endPct = (endLen / total) * 100;
+      if (!isFinite(startPct) || !isFinite(endPct)) return;
+      if (endPct <= startPct) return;
+
+      var grp = contents.addProperty("ADBE Vector Group");
+      grp.name = "Border_" + name;
+      var grpContents = grp.property("Contents");
+
+      var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
+      pathProp.property("Path").setValue(pathInfo.shape);
+
+      var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
+      applyCssColorProperty(stroke.property("Color"), side.color, comp.name);
+      stroke.property("Stroke Width").setValue(Number(side.widthPx) || 0);
+      var opacityProp = stroke.property("ADBE Vector Stroke Opacity");
+      if (opacityProp) opacityProp.setValue(Math.round(parseCssAlpha(side.color) * 100));
+
+      var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
+      fill.enabled = false;
+
+      var trim = grpContents.addProperty("ADBE Vector Filter - Trim");
+      trim.property("Start").setValue(startPct);
+      trim.property("End").setValue(endPct);
+    }
+
     if (border.isUniform && isVisibleBorderSide(border.sides ? border.sides.top : null)) {
       var strokeWidth = Number(border.widthPx) || 0;
       var inset = strokeWidth > 0 ? strokeWidth : 0;
-      var innerW = Math.max(0, localBBox.w - inset);
-      var innerH = Math.max(0, localBBox.h - inset);
 
       var grp = contents.addProperty("ADBE Vector Group");
       grp.name = "Border";
 
       var grpContents = grp.property("Contents");
-      var usePerCorner = border.radius && !isUniformRadius(border.radius);
-      var appliedPerCorner = false;
-      if (usePerCorner) {
-        var pathProp = grpContents.addProperty("ADBE Vector Shape - Group");
-        var shape = buildPerCornerBorderPath(innerW, innerH, border.radius, inset);
-        if (shape) {
-          pathProp.property("Path").setValue(shape);
-          appliedPerCorner = true;
-        } else {
-          var rectFallback = grpContents.addProperty("ADBE Vector Shape - Rect");
-          rectFallback.property("Size").setValue([innerW, innerH]);
-        }
+      var radiusObj = border.radius || (border.radiusPx ? buildUniformRadius(border.radiusPx) : null);
+      var pathShape = radiusObj
+        ? buildRoundedBorderShapeTopLeft(localBBox.w, localBBox.h, radiusObj, inset)
+        : null;
+      var rectPath = grpContents.addProperty("ADBE Vector Shape - Group");
+      if (pathShape) {
+        rectPath.property("Path").setValue(pathShape);
       } else {
-        var rect = grpContents.addProperty("ADBE Vector Shape - Rect");
-        rect.property("Size").setValue([innerW, innerH]);
-        if (border.radiusPx && border.radiusPx > 0)
-          rect.property("Roundness").setValue(
-            clampRoundnessValue(Math.max(0, border.radiusPx - inset / 2), innerW, innerH)
-          );
+        var fallbackRect = rectPath.property("Path");
+        var rawRect = rectShape(Math.max(0, localBBox.w - inset), Math.max(0, localBBox.h - inset));
+        if (rawRect) {
+          fallbackRect.setValue(offsetShapeVertices(rawRect, inset / 2, inset / 2));
+        }
       }
 
       var stroke = grpContents.addProperty("ADBE Vector Graphic - Stroke");
@@ -408,13 +543,50 @@
       var fill = grpContents.addProperty("ADBE Vector Graphic - Fill");
       fill.enabled = false
 
-      setLayerTransform(layer, localBBox);
-      setLayerAnchorCenter(layer);
-      setLayerTransform(layer, localBBox);
+      setLayerTopLeft(layer, localBBox);
       return layer;
     }
 
     var sides = border.sides || {};
+
+    var hasRadius =
+      (border.radiusPx && border.radiusPx > 0) ||
+      (border.radius && !isUniformRadius(border.radius));
+    if (hasRadius) {
+      var insets = {
+        top: (Number(sides.top && sides.top.widthPx) || 0) / 2,
+        right: (Number(sides.right && sides.right.widthPx) || 0) / 2,
+        bottom: (Number(sides.bottom && sides.bottom.widthPx) || 0) / 2,
+        left: (Number(sides.left && sides.left.widthPx) || 0) / 2,
+      };
+      var pathInfo = buildRoundedBorderPathInfo(
+        localBBox.w,
+        localBBox.h,
+        border.radius,
+        insets
+      );
+      if (pathInfo && pathInfo.lengths) {
+        var len = pathInfo.lengths;
+        if (isVisibleBorderSide(sides.right)) {
+          addTrimmedSideGroup("Right", sides.right, pathInfo, len.lenTop, len.lenBR);
+        }
+        if (isVisibleBorderSide(sides.bottom)) {
+          addTrimmedSideGroup("Bottom", sides.bottom, pathInfo, len.lenRight, len.lenBL);
+        }
+        if (isVisibleBorderSide(sides.left)) {
+          addTrimmedSideGroup("Left", sides.left, pathInfo, len.lenBottom, len.total);
+        }
+        if (isVisibleBorderSide(sides.top)) {
+          addTrimmedSideGroup("Top", sides.top, pathInfo, 0, len.lenTR);
+          if (len.arcTL > 0) {
+            addTrimmedSideGroup("Top_Arc", sides.top, pathInfo, len.lenLeft, len.total);
+          }
+        }
+
+        setLayerTopLeft(layer, localBBox);
+        return layer;
+      }
+    }
 
     function addSide(name, x1, y1, x2, y2, side) {
       if (!isVisibleBorderSide(side)) return;

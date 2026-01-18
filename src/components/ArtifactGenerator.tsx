@@ -518,9 +518,29 @@ const MOTION_CAPTURE_SCRIPT = `
     function normalizeEaseValue(value) {
       if (value == null) return null;
       if (typeof value === 'string') return value;
+      if (typeof value === 'function') {
+        try {
+          if (value.custom) {
+            var steps = 60;
+            var samples = [];
+            for (var i = 0; i <= steps; i += 1) {
+              var p = i / steps;
+              var y = value(p);
+              if (!isFinite(y)) y = 0;
+              samples.push(Math.round(y * 1000000) / 1000000);
+            }
+            return 'ae2custom:' + samples.join(',');
+          }
+        } catch (e1) {}
+        try {
+          return String(value);
+        } catch (e2) {
+          return null;
+        }
+      }
       try {
         return String(value);
-      } catch (e) {
+      } catch (e3) {
         return null;
       }
     }
@@ -570,6 +590,7 @@ const MOTION_CAPTURE_SCRIPT = `
       if (ease == null && timelineDefaults && timelineDefaults.ease != null) {
         ease = timelineDefaults.ease;
       }
+      ease = normalizeEaseValue(ease);
       if (ease == null) ease = 'none';
       var stagger = (toVars && toVars.stagger) || (fromVars && fromVars.stagger);
       var staggerTargets = stagger ? resolveStaggerTargets(targets) : null;

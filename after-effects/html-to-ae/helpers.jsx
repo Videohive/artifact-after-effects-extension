@@ -666,6 +666,18 @@
     if (!easeStr) return "function(t){return t;}";
     var raw = String(easeStr).trim();
     if (!raw) return "function(t){return t;}";
+    var customPrefix = "ae2custom:";
+    if (raw.indexOf(customPrefix) === 0) {
+      var data = raw.slice(customPrefix.length);
+      if (!data) return "function(t){return t;}";
+      return (
+        "function(t){var a=[" +
+        data +
+        "]; if (!a.length) return t; if (t<=0) return a[0]; if (t>=1) return a[a.length-1];" +
+        " var i=t*(a.length-1); var idx=Math.floor(i); var f=i-idx;" +
+        " var v0=a[idx]; var v1=a[idx+1>=a.length?a.length-1:idx+1]; return v0+(v1-v0)*f;}"
+      );
+    }
     if (raw.indexOf("function") === 0) {
       // If r is used but not defined, inject a default exponent.
       if (

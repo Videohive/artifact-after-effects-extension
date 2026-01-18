@@ -1797,6 +1797,111 @@ If any check fails:
 
 ---
 
+## 11A. EASE FIELD — FLOW PRESERVATION (MANDATORY)
+
+Easing is a continuous motion field.
+If easing changes feel arbitrary, the animation is invalid.
+
+### 11A.1 Ease Lock (MANDATORY)
+
+Before building any timeline, infer Motion Signature and LOCK a small EASE_FIELD of 3–5 eases:
+
+- base (primary field)
+- settle (final convergence)
+- snap (small fast actions)
+- micro (optional; may equal snap)
+- overshoot (optional; only if physically justified)
+
+After EASE_FIELD is locked:
+- Reuse it across the entire animation.
+- Do NOT pick new eases per tween.
+- Variation must come primarily from duration, decay, and resolution time.
+
+Default easing is forbidden ONLY if it is implicit.
+Explicit easing via timeline defaults is allowed and recommended.
+
+### 11A.2 Ease Field Defaults (MANDATORY)
+
+Timeline MUST set defaults:
+- tl = gsap.timeline({ defaults: { ease: EASE_FIELD.base } })
+
+Most transforms should inherit base.
+Only override ease when role requires it (settle/snap/micro/overshoot).
+
+### 11A.3 Candidate Sets (MANDATORY)
+
+Pick EASE_FIELD values ONLY from these palette IDs:
+
+BASE_CANDIDATES:
+- ce_standard, ce_cubic, ce_quad, ce_quart, ce_quint
+- ce_smooth_operator, ce_endless_bummer, ce_electric_slide, ce_noice, ce_expo
+
+SETTLE_CANDIDATES:
+- ce_deceleration, ce_smooth_operator, ce_endless_bummer, ce_noice, ce_electric_slide, ce_circ
+
+SNAP_CANDIDATES:
+- ce_lightswitch, ce_lever_2000, ce_velcro, ce_teleport, ce_oh_snap, ce_clink, ce_zip
+
+OVERSHOOT_SOFT (optional and rare):
+- ce_bolt_action, ce_gb_overshoot, ce_daniel, ce_back
+
+If inference is uncertain, use this safe template-like fallback:
+- base: ce_standard
+- settle: ce_deceleration
+- snap: ce_lightswitch
+- micro: ce_velcro
+- overshoot: ce_bolt_action (only when justified)
+
+### 11A.4 Hard Restrictions (CRITICAL)
+
+Text readability has priority over style.
+
+### 11A.5 Duration–Ease Coupling (MANDATORY)
+
+Ease must match duration and travel:
+
+- base: medium durations; avoid twitch (flow-first)
+- settle: longer durations to land cleanly
+- snap/micro: shorter durations and limited travel
+- overshoot: longer durations with smaller travel (subtle physical settlement)
+
+If motion feels bad:
+1) reduce ease variety FIRST (collapse to EASE_FIELD)
+2) increase duration / reduce travel SECOND
+3) remove overshoot THIRD
+
+### 11A.6 Ease Field Cohesion (MANDATORY)
+
+Within a single logical group:
+- Prefer the same ease (base) for siblings.
+- If differentiation is needed, vary duration/resolution time first.
+- Ease variation is allowed only within the SAME family (base ↔ settle),
+  not by switching to unrelated mechanical/overshoot curves.
+
+### 11A.7 Internal Easing Lint (MANDATORY)
+
+Before output:
+
+- Count distinct ease IDs used.
+  If > 5: collapse all to EASE_FIELD only.
+
+- If any overshoot/recoil is applied to text or primary containers: remove it.
+
+- If siblings feel disconnected: unify their ease to base and vary only timing.
+
+### 11A.8 CustomEase Setup (MANDATORY)
+
+- If CustomEase exists:
+  - gsap.registerPlugin(CustomEase)
+  - Define CUSTOM_EASE_PALETTE once
+  - Create ONLY eases that are actually used (EASE_FIELD + any explicit overrides)
+
+- If CustomEase does not exist:
+  - Fall back to built-in eases but keep the same role logic (base/settle/snap)
+  - Still declare ease explicitly via defaults and overrides
+
+---
+
 ## 12. OUTPUT CONTRACT
 
 - Output ONLY raw GSAP JavaScript.
@@ -1853,6 +1958,14 @@ HARD CONSTRAINTS (MANDATORY):
 - Visibility changes must imply arrival or physical presence.
 - Passive appearance is forbidden.
 
+8. Ease Field (Flow Lock)
+- You MUST lock an EASE_FIELD of 3–5 eases (base/settle/snap/micro/overshoot optional)
+  from the provided CustomEase palette.
+- You MUST set timeline defaults to EASE_FIELD.base.
+- Do NOT choose new eases per tween; reuse EASE_FIELD for cohesion.
+- Text (SplitText units) may only use base or settle (no overshoot/recoil).
+- If easing variety breaks flow, collapse to EASE_FIELD and vary only timing/duration.
+
 INPUT:
 TOPIC: {topic}
 ARTIFACT MODE: {artifact_mode}
@@ -1868,4 +1981,3 @@ Return ONLY a raw <script> tag with GSAP code.
 No markdown.
 No explanations.
 `;
-

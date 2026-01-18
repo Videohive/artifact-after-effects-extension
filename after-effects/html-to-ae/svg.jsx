@@ -293,10 +293,69 @@
     }
 
     applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform);
+    applyPatternClipMask(layer, svgData, localBBox, extraTransform);
     applySvgInternalGroupAnchors(layer, svgData);
     setLayerTopLeft(layer, localBBox);
     setLayerAnchorCenter(layer);
     return layer;
+  }
+
+  function applyPatternClipMask(layer, svgData, localBBox, extraTransform) {
+    if (!layer || !svgData || !svgData.patternClipRects || svgData.patternClipRects.length !== 1) return;
+    if (!svgData.elements || svgData.elements.length !== 1) return;
+    if (svgData.elements[0].tag !== "rect") return;
+    var rect = svgData.patternClipRects[0];
+    if (!rect || rect.w <= 0 || rect.h <= 0) return;
+    var scaleData = getSvgScaleData(svgData, localBBox);
+    var p1 = mapSvgPoint(rect.x, rect.y, svgData, localBBox, scaleData);
+    var p2 = mapSvgPoint(rect.x + rect.w, rect.y + rect.h, svgData, localBBox, scaleData);
+    if (extraTransform && extraTransform.length >= 6) {
+      var tx = extraTransform[4] || 0;
+      var ty = extraTransform[5] || 0;
+      if (tx !== 0 || ty !== 0) {
+        if (scaleData.useNonUniformScale) {
+          p1.x += tx * scaleData.scaleX;
+          p1.y += ty * scaleData.scaleY;
+          p2.x += tx * scaleData.scaleX;
+          p2.y += ty * scaleData.scaleY;
+        } else {
+          p1.x += tx * scaleData.scale;
+          p1.y += ty * scaleData.scale;
+          p2.x += tx * scaleData.scale;
+          p2.y += ty * scaleData.scale;
+        }
+      }
+    }
+    var left = Math.min(p1.x, p2.x);
+    var right = Math.max(p1.x, p2.x);
+    var top = Math.min(p1.y, p2.y);
+    var bottom = Math.max(p1.y, p2.y);
+    var masks = layer.property("ADBE Mask Parade") || layer.property("Masks");
+    if (!masks) return;
+    var mask = masks.addProperty("ADBE Mask Atom") || masks.addProperty("Mask");
+    if (!mask) return;
+    var shape = new Shape();
+    shape.vertices = [
+      [left, top],
+      [right, top],
+      [right, bottom],
+      [left, bottom]
+    ];
+    shape.inTangents = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0]
+    ];
+    shape.outTangents = [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0]
+    ];
+    shape.closed = true;
+    var maskShape = mask.property("ADBE Mask Shape") || mask.property("Mask Path");
+    if (maskShape) maskShape.setValue(shape);
   }
 
   function applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform) {
@@ -672,9 +731,30 @@
       baseY = rect.y + baseY;
     }
 
-    var start = getPatternStart(baseX, baseY, tileW, tileH, rect);
-    var copiesX = Math.ceil((rect.x + rect.w - start.x) / tileW);
-    var copiesY = Math.ceil((rect.y + rect.h - start.y) / tileH);
+    var patternRect = rect;
+    var start = null;
+    var copiesX = 1;
+    var copiesY = 1;
+    var repVecX = [tileW, 0];
+    var repVecY = [0, tileH];
+    if (pattern.transform) {
+      var inv = invertSvgMatrix(pattern.transform);
+      if (inv) {
+        var p1 = applySvgMatrixToPoint([rect.x, rect.y], inv);
+        var p2 = applySvgMatrixToPoint([rect.x + rect.w, rect.y], inv);
+        var p3 = applySvgMatrixToPoint([rect.x, rect.y + rect.h], inv);
+        var p4 = applySvgMatrixToPoint([rect.x + rect.w, rect.y + rect.h], inv);
+        var minX = Math.min(p1[0], p2[0], p3[0], p4[0]);
+        var maxX = Math.max(p1[0], p2[0], p3[0], p4[0]);
+        var minY = Math.min(p1[1], p2[1], p3[1], p4[1]);
+        var maxY = Math.max(p1[1], p2[1], p3[1], p4[1]);
+        patternRect = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      }
+    }
+
+    start = getPatternStart(baseX, baseY, tileW, tileH, patternRect);
+    copiesX = Math.ceil((patternRect.x + patternRect.w - start.x) / tileW);
+    copiesY = Math.ceil((patternRect.y + patternRect.h - start.y) / tileH);
     if (!isFinite(copiesX) || copiesX < 1) copiesX = 1;
     if (!isFinite(copiesY) || copiesY < 1) copiesY = 1;
     copiesX += 1;
@@ -716,10 +796,12 @@
         0
       ];
       applySvgMatrixToGroupTransform(patternGroup, linear);
-      patternStart = {
-        x: start.x + (pattern.transform[4] || 0),
-        y: start.y + (pattern.transform[5] || 0)
-      };
+      var startPt = applySvgMatrixToPoint([start.x, start.y], pattern.transform);
+      patternStart = { x: startPt[0], y: startPt[1] };
+      repVecX = applySvgMatrixToVector([tileW, 0], pattern.transform);
+      repVecY = applySvgMatrixToVector([0, tileH], pattern.transform);
+      svgData.patternClipRects = svgData.patternClipRects || [];
+      svgData.patternClipRects.push({ x: rect.x, y: rect.y, w: rect.w, h: rect.h });
     }
 
     var tileTr = tileGroup.property("Transform");
@@ -732,13 +814,13 @@
     repX.name = "PatternRepeatX";
     repX.property("Copies").setValue(copiesX);
     var repXTr = repX.property("Transform") || repX.property("ADBE Vector Repeater Transform");
-    if (repXTr) repXTr.property("Position").setValue([tileW, 0]);
+    if (repXTr) repXTr.property("Position").setValue(repVecX);
 
     var repY = grpContents.addProperty("ADBE Vector Filter - Repeater");
     repY.name = "PatternRepeatY";
     repY.property("Copies").setValue(copiesY);
     var repYTr = repY.property("Transform") || repY.property("ADBE Vector Repeater Transform");
-    if (repYTr) repYTr.property("Position").setValue([0, tileH]);
+    if (repYTr) repYTr.property("Position").setValue(repVecY);
 
     return true;
   }
@@ -2557,6 +2639,20 @@
       a[0] * b[4] + a[2] * b[5] + a[4],
       a[1] * b[4] + a[3] * b[5] + a[5]
     ];
+  }
+
+  function invertSvgMatrix(m) {
+    if (!m || m.length < 6) return null;
+    var det = m[0] * m[3] - m[1] * m[2];
+    if (!isFinite(det) || det === 0) return null;
+    var invDet = 1 / det;
+    var a = m[3] * invDet;
+    var b = -m[1] * invDet;
+    var c = -m[2] * invDet;
+    var d = m[0] * invDet;
+    var e = (m[2] * m[5] - m[3] * m[4]) * invDet;
+    var f = (m[1] * m[4] - m[0] * m[5]) * invDet;
+    return [a, b, c, d, e, f];
   }
 
   function applySvgMatrixToPoint(p, m) {

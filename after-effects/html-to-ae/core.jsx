@@ -469,6 +469,15 @@
         h: childComp.height,
       };
       createSvgShapeLayers(childComp, node, childBBox, rootData);
+      if (node.children && node.children.length) {
+        var svgChildOrigin = {
+          x: node.bbox.x,
+          y: node.bbox.y,
+        };
+        for (var sc = 0; sc < node.children.length; sc++) {
+          buildNode(node.children[sc], childComp, null, svgChildOrigin, rootData, node.style);
+        }
+      }
       if (typeof compHasDirectText === "function" && compHasDirectText(childComp)) {
         layer.collapseTransformation = true;
       }

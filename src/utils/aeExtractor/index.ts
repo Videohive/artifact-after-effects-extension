@@ -1459,6 +1459,21 @@ export const extractSlideLayout = async (
     let handledTextUrl = false;
     const children: AENode[] = [];
 
+    if (el.tagName.toLowerCase() === 'svg') {
+      const foreignObjects = Array.from(el.querySelectorAll('foreignObject'));
+      const seen = new Set<Element>();
+      for (const foreignObject of foreignObjects) {
+        const foChildren = Array.from(foreignObject.children || []);
+        for (const child of foChildren) {
+          if (!isHTMLElement(child, win)) continue;
+          if (seen.has(child)) continue;
+          seen.add(child);
+          const foreignNode = process(child);
+          if (foreignNode) children.push(foreignNode);
+        }
+      }
+    }
+
     const bgUrl = safeBgUrl(style.backgroundImage);
     if (bgUrl) {
       children.push({

@@ -1175,6 +1175,25 @@
     applyMotionTransformOrigin(layer, motionList, bbox);
     ensureSplitTextAnimator(layer, motionList, bbox);
 
+    // Filter blur -> Gaussian Blur (add effect before any controls)
+    var blurSegments = buildFilterBlurSegments(motionList, 0);
+    var blurEffectIndex = null;
+    if (blurSegments.length) {
+      var blurEffect = ensureGaussianBlurEffect(layer);
+      if (blurEffect) {
+        blurEffectIndex = blurEffect.propertyIndex;
+        var repeatProp =
+          blurEffect.property("Repeat Edge Pixels") ||
+          blurEffect.property("ADBE Gaussian Blur-0003") ||
+          blurEffect.property("Repeat Edge Pixels");
+        if (repeatProp) {
+          try {
+            repeatProp.setValue(1);
+          } catch (e) {}
+        }
+      }
+    }
+
     // Opacity (0..1 -> 0..100)
     var opacityProp = layer.property("Transform").property("Opacity");
     var baseOpacity = opacityProp.value;
@@ -1337,28 +1356,43 @@
       }
     }
 
-    // Filter blur -> Gaussian Blur
-    var blurSegments = buildFilterBlurSegments(motionList, 0);
-    if (blurSegments.length) {
-      var blurEffect = ensureGaussianBlurEffect(layer);
-      if (blurEffect) {
-        var blurProp = blurEffect.property("Blurriness") || blurEffect.property("Blur") || blurEffect.property("ADBE Gaussian Blur-0001");
-        var repeatProp =
-          blurEffect.property("Repeat Edge Pixels") ||
-          blurEffect.property("ADBE Gaussian Blur-0003") ||
-          blurEffect.property("Repeat Edge Pixels");
-        if (repeatProp) repeatProp.setValue(1);
-        attachMotionControls(blurSegments, layer, "Blur", null);
+    // Filter blur -> Gaussian Blur (attach controls after all effects)
+    if (blurSegments.length && blurEffectIndex !== null) {
+      attachMotionControls(blurSegments, layer, "Blur", null);
+      var effects = layer.property("Effects");
+      var blurEffectFinal = effects ? effects.property(blurEffectIndex) : null;
+      if (blurEffectFinal) {
+        var blurProp =
+          blurEffectFinal.property("Blurriness") ||
+          blurEffectFinal.property("Blur") ||
+          blurEffectFinal.property("ADBE Gaussian Blur-0001");
         if (blurProp) {
-          var baseBlur = blurProp.value;
-          if (blurProp.canSetExpression) {
-            blurProp.expression = buildSegmentedScalarExpression(blurSegments, baseBlur);
-          } else {
-            for (var b = 0; b < blurSegments.length; b++) {
-              blurProp.setValueAtTime(blurSegments[b].t0, blurSegments[b].v0);
-              blurProp.setValueAtTime(blurSegments[b].t1, blurSegments[b].v1);
+          try {
+            var baseBlur = 0;
+            try {
+              baseBlur = blurProp.value;
+            } catch (e) {
+              baseBlur = 0;
             }
-          }
+            var canExpr = false;
+            try {
+              canExpr = blurProp.canSetExpression;
+            } catch (e) {
+              canExpr = false;
+            }
+            if (canExpr) {
+              try {
+                blurProp.expression = buildSegmentedScalarExpression(blurSegments, baseBlur);
+              } catch (e) {}
+            } else {
+              for (var b = 0; b < blurSegments.length; b++) {
+                try {
+                  blurProp.setValueAtTime(blurSegments[b].t0, blurSegments[b].v0);
+                  blurProp.setValueAtTime(blurSegments[b].t1, blurSegments[b].v1);
+                } catch (e) {}
+              }
+            }
+          } catch (e) {}
         }
       }
     }

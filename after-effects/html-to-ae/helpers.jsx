@@ -856,6 +856,88 @@
     );
   }
 
+  function parseFilterBlurValue(value) {
+    if (value === null || typeof value === "undefined") return null;
+    if (typeof value === "number") return isFinite(value) ? value : null;
+    var s = String(value);
+    if (!s) return null;
+    var blurMatch = s.match(/blur\(([-\d.]+)\s*(px)?\)/i);
+    if (blurMatch && blurMatch[1]) {
+      var n = parseFloat(blurMatch[1]);
+      return isFinite(n) ? n : null;
+    }
+    var raw = parseFloat(s);
+    return isFinite(raw) ? raw : null;
+  }
+
+  function buildFilterBlurSegments(motionList, baseValue) {
+    var entries = collectMotionSegments(motionList, "filter", null);
+    if (!entries.length) return [];
+    entries.sort(function (a, b) {
+      var ta = getMotionStart(a.tween);
+      var tb = getMotionStart(b.tween);
+      if (ta < tb) return -1;
+      if (ta > tb) return 1;
+      return a.index - b.index;
+    });
+
+    var segments = [];
+    var prev = baseValue;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i].tween;
+      var props = entry.props && entry.props.filter ? entry.props.filter : null;
+      var fromMeta = props && props.from ? props.from : null;
+      var toMeta = props && props.to ? props.to : null;
+      var fromVal = fromMeta ? parseFilterBlurValue(fromMeta.value) : null;
+      var toVal = toMeta ? parseFilterBlurValue(toMeta.value) : null;
+      if (fromVal === null) fromVal = prev;
+      if (toVal === null) {
+        if (toMeta && toMeta.type === "function") {
+          toVal = prev;
+        } else {
+          toVal = fromVal;
+        }
+      }
+      if (!isFinite(fromVal)) fromVal = 0;
+      if (!isFinite(toVal)) toVal = fromVal;
+
+      var t0 = getMotionStart(entry);
+      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+      var seg = {
+        t0: t0,
+        t1: t1,
+        v0: fromVal,
+        v1: toVal,
+        ease: entry.time && entry.time.ease ? entry.time.ease : null,
+      };
+      var last = segments.length ? segments[segments.length - 1] : null;
+      if (
+        !last ||
+        last.t0 !== seg.t0 ||
+        last.t1 !== seg.t1 ||
+        last.v0 !== seg.v0 ||
+        last.v1 !== seg.v1 ||
+        String(last.ease || "") !== String(seg.ease || "")
+      ) {
+        segments.push(seg);
+      }
+      prev = toVal;
+    }
+    return segments;
+  }
+
+  function ensureGaussianBlurEffect(layer) {
+    if (!layer) return null;
+    var effects = layer.property("Effects");
+    if (!effects) return null;
+    var existing = effects.property("Gaussian Blur") || effects.property("ADBE Gaussian Blur") || effects.property("ADBE Gaussian Blur 2");
+    if (existing) return existing;
+    var effect = effects.addProperty("ADBE Gaussian Blur 2");
+    if (!effect) effect = effects.addProperty("ADBE Gaussian Blur");
+    if (effect) effect.name = "Gaussian Blur";
+    return effect;
+  }
+
   function mapSplitBasedOn(type) {
     if (type === "words") return 3;
     if (type === "lines") return 4;
@@ -1252,6 +1334,32 @@
       attachMotionControls(useRotSegments, layer, "Rotation", null);
       if (rotationProp.canSetExpression) {
         rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
+      }
+    }
+
+    // Filter blur -> Gaussian Blur
+    var blurSegments = buildFilterBlurSegments(motionList, 0);
+    if (blurSegments.length) {
+      var blurEffect = ensureGaussianBlurEffect(layer);
+      if (blurEffect) {
+        var blurProp = blurEffect.property("Blurriness") || blurEffect.property("Blur") || blurEffect.property("ADBE Gaussian Blur-0001");
+        var repeatProp =
+          blurEffect.property("Repeat Edge Pixels") ||
+          blurEffect.property("ADBE Gaussian Blur-0003") ||
+          blurEffect.property("Repeat Edge Pixels");
+        if (repeatProp) repeatProp.setValue(1);
+        attachMotionControls(blurSegments, layer, "Blur", null);
+        if (blurProp) {
+          var baseBlur = blurProp.value;
+          if (blurProp.canSetExpression) {
+            blurProp.expression = buildSegmentedScalarExpression(blurSegments, baseBlur);
+          } else {
+            for (var b = 0; b < blurSegments.length; b++) {
+              blurProp.setValueAtTime(blurSegments[b].t0, blurSegments[b].v0);
+              blurProp.setValueAtTime(blurSegments[b].t1, blurSegments[b].v1);
+            }
+          }
+        }
       }
     }
 

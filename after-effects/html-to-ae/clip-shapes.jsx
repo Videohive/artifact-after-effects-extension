@@ -224,11 +224,28 @@
     r.br.ry = clampRadius(r.br.ry, h);
     r.bl.ry = clampRadius(r.bl.ry, h);
 
-    // Normalize per side so sums don't exceed box
-    normalizePair(r.tl, r.tr, "rx", w);
-    normalizePair(r.bl, r.br, "rx", w);
-    normalizePair(r.tl, r.bl, "ry", h);
-    normalizePair(r.tr, r.br, "ry", h);
+    // CSS-like uniform scale so all corners fit within box.
+    var scale = 1;
+    var sumTop = r.tl.rx + r.tr.rx;
+    var sumBottom = r.bl.rx + r.br.rx;
+    var sumLeft = r.tl.ry + r.bl.ry;
+    var sumRight = r.tr.ry + r.br.ry;
+
+    if (sumTop > w && sumTop > 0) scale = Math.min(scale, w / sumTop);
+    if (sumBottom > w && sumBottom > 0) scale = Math.min(scale, w / sumBottom);
+    if (sumLeft > h && sumLeft > 0) scale = Math.min(scale, h / sumLeft);
+    if (sumRight > h && sumRight > 0) scale = Math.min(scale, h / sumRight);
+
+    if (scale < 1) {
+      r.tl.rx *= scale;
+      r.tr.rx *= scale;
+      r.br.rx *= scale;
+      r.bl.rx *= scale;
+      r.tl.ry *= scale;
+      r.tr.ry *= scale;
+      r.br.ry *= scale;
+      r.bl.ry *= scale;
+    }
   }
 
   function normalizePair(a, b, key, limit) {

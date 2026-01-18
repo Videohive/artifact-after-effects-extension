@@ -340,6 +340,14 @@
       return true;
     }
 
+    function clampUniformRoundness(value, w, h) {
+      var v = Number(value);
+      if (!isFinite(v) || v <= 0) return 0;
+      var max = Math.min(Number(w) || 0, Number(h) || 0) / 2;
+      if (!isFinite(max) || max <= 0) return v;
+      return Math.min(v, max);
+    }
+
     function offsetShapeVertices(shape, dx, dy) {
       if (!shape || !shape.vertices) return shape;
       for (var i = 0; i < shape.vertices.length; i++) {
@@ -520,17 +528,34 @@
 
       var grpContents = grp.property("Contents");
       var radiusObj = border.radius || (border.radiusPx ? buildUniformRadius(border.radiusPx) : null);
-      var pathShape = radiusObj
-        ? buildRoundedBorderShapeTopLeft(localBBox.w, localBBox.h, radiusObj, inset)
-        : null;
-      var rectPath = grpContents.addProperty("ADBE Vector Shape - Group");
-      if (pathShape) {
-        rectPath.property("Path").setValue(pathShape);
+      var radiusPx = 0;
+      if (isFinite(Number(border.radiusPx)) && Number(border.radiusPx) > 0) {
+        radiusPx = Number(border.radiusPx);
+      } else if (radiusObj && isUniformRadius(radiusObj)) {
+        radiusPx = Number(radiusObj.topLeft && radiusObj.topLeft.x) || 0;
+      }
+      var innerW = Math.max(0, localBBox.w - inset);
+      var innerH = Math.max(0, localBBox.h - inset);
+      var roundness = clampUniformRoundness(Math.max(0, radiusPx - inset / 2), innerW, innerH);
+
+      if (radiusPx > 0 && (!border.radius || isUniformRadius(border.radius))) {
+        var rectPath = grpContents.addProperty("ADBE Vector Shape - Rect");
+        rectPath.property("Size").setValue([innerW, innerH]);
+        rectPath.property("Position").setValue([localBBox.w / 2, localBBox.h / 2]);
+        if (roundness > 0) rectPath.property("Roundness").setValue(roundness);
       } else {
-        var fallbackRect = rectPath.property("Path");
-        var rawRect = rectShape(Math.max(0, localBBox.w - inset), Math.max(0, localBBox.h - inset));
-        if (rawRect) {
-          fallbackRect.setValue(offsetShapeVertices(rawRect, inset / 2, inset / 2));
+        var pathShape = radiusObj
+          ? buildRoundedBorderShapeTopLeft(localBBox.w, localBBox.h, radiusObj, inset)
+          : null;
+        var rectGroupPath = grpContents.addProperty("ADBE Vector Shape - Group");
+        if (pathShape) {
+          rectGroupPath.property("Path").setValue(pathShape);
+        } else {
+          var fallbackRect = rectGroupPath.property("Path");
+          var rawRect = rectShape(innerW, innerH);
+          if (rawRect) {
+            fallbackRect.setValue(offsetShapeVertices(rawRect, inset / 2, inset / 2));
+          }
         }
       }
 

@@ -3,6 +3,8 @@
   // ============================================================
 
   var AE2_DEBUG = typeof AE2_DEBUG !== "undefined" ? AE2_DEBUG : false;
+  var AE2_MOTION_TIME_OFFSET = 0;
+  var AE2_COMP_TIME_OFFSET = 0;
   var COLOR_CONTROL_REGISTRY = COLOR_CONTROL_REGISTRY || {};
   var CONTROLS_COMP_NAME = CONTROLS_COMP_NAME || null;
   var CONTROLS_LAYER_NAME = CONTROLS_LAYER_NAME || "Controls";
@@ -392,6 +394,7 @@
         var item = data.artifacts[i];
         if (!item) continue;
         if (!item.settings && rootSettings) item.settings = rootSettings;
+        item._ae2ArtifactIndex = i;
         list.push(item);
       }
       return list;
@@ -540,7 +543,62 @@
     if (!entry || !entry.time) return 0;
     var start = isFinite(entry.time.start) ? entry.time.start : 0;
     var delay = isFinite(entry.time.delay) ? entry.time.delay : 0;
-    return start + delay;
+    var offset = isFinite(AE2_MOTION_TIME_OFFSET) ? AE2_MOTION_TIME_OFFSET : 0;
+    var compOffset = isFinite(AE2_COMP_TIME_OFFSET) ? AE2_COMP_TIME_OFFSET : 0;
+    return start + delay - offset - compOffset;
+  }
+
+  function getMotionStartOffset(motionList) {
+    if (!motionList || !motionList.length) return 0;
+    var compOffset = isFinite(AE2_COMP_TIME_OFFSET) ? AE2_COMP_TIME_OFFSET : 0;
+    var minStart = null;
+    for (var i = 0; i < motionList.length; i++) {
+      var entry = motionList[i];
+      if (!entry || !entry.time) {
+        minStart = minStart === null ? 0 : Math.min(minStart, 0);
+        continue;
+      }
+      var start = isFinite(entry.time.start) ? entry.time.start : 0;
+      var delay = isFinite(entry.time.delay) ? entry.time.delay : 0;
+      var t = start + delay - compOffset;
+      if (minStart === null || t < minStart) minStart = t;
+    }
+    if (minStart === null) return 0;
+    return minStart > 0 ? minStart : 0;
+  }
+
+  function withMotionTimeOffset(offset, fn) {
+    var prev = AE2_MOTION_TIME_OFFSET;
+    AE2_MOTION_TIME_OFFSET = isFinite(offset) ? offset : 0;
+    try {
+      return fn();
+    } finally {
+      AE2_MOTION_TIME_OFFSET = prev;
+    }
+  }
+
+  function withCompTimeOffset(offset, fn) {
+    var prev = AE2_COMP_TIME_OFFSET;
+    AE2_COMP_TIME_OFFSET = isFinite(offset) ? offset : 0;
+    try {
+      return fn();
+    } finally {
+      AE2_COMP_TIME_OFFSET = prev;
+    }
+  }
+
+  function getCompTimeOffset() {
+    return isFinite(AE2_COMP_TIME_OFFSET) ? AE2_COMP_TIME_OFFSET : 0;
+  }
+
+  function applyLayerMotionOffset(layer, offset) {
+    if (!layer || !isFinite(offset) || offset <= 0) return;
+    try {
+      layer.startTime = layer.startTime + offset;
+    } catch (e) {}
+    try {
+      layer.inPoint = layer.startTime;
+    } catch (e2) {}
   }
 
   function buildMotionSegments(motionList, propName, baseValue, scale, convertFn, filterFn) {
@@ -1169,234 +1227,241 @@
 
   }
 
-  function applyMotion(layer, node, bbox) {
-    if (!layer || !node || !node.motion || !node.motion.length) return;
+  function applyMotion(layer, node, bbox, motionStartOffset) {
+    if (!layer || !node || !node.motion || !node.motion.length) return 0;
     var motionList = node.motion;
-    applyMotionTransformOrigin(layer, motionList, bbox);
-    ensureSplitTextAnimator(layer, motionList, bbox);
+    var startOffset = isFinite(motionStartOffset) ? motionStartOffset : getMotionStartOffset(motionList);
+    if (startOffset > 0) applyLayerMotionOffset(layer, startOffset);
 
-    // Filter blur -> Gaussian Blur (add effect before any controls)
-    var blurSegments = buildFilterBlurSegments(motionList, 0);
-    var blurEffectIndex = null;
-    if (blurSegments.length) {
-      var blurEffect = ensureGaussianBlurEffect(layer);
-      if (blurEffect) {
-        blurEffectIndex = blurEffect.propertyIndex;
-        var repeatProp =
-          blurEffect.property("Repeat Edge Pixels") ||
-          blurEffect.property("ADBE Gaussian Blur-0003") ||
-          blurEffect.property("Repeat Edge Pixels");
-        if (repeatProp) {
-          try {
-            repeatProp.setValue(1);
-          } catch (e) {}
-        }
-      }
-    }
+    withMotionTimeOffset(startOffset, function () {
+      applyMotionTransformOrigin(layer, motionList, bbox);
+      ensureSplitTextAnimator(layer, motionList, bbox);
 
-    // Opacity (0..1 -> 0..100)
-    var opacityProp = layer.property("Transform").property("Opacity");
-    var baseOpacity = opacityProp.value;
-    var opacitySegments = buildMotionSegments(motionList, "opacity", baseOpacity / 100, 100, null);
-    attachMotionControls(opacitySegments, layer, "Opacity", null);
-    if (opacitySegments.length) {
-      if (opacityProp.canSetExpression) {
-        opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
-      }
-    }
-
-    // Position (x/y offsets)
-    var basePos = layer.property("Transform").property("Position").value;
-    var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
-    var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
-    var xSegments = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
-      return !isPercentMotionEntry(entry, "x");
-    });
-    var ySegments = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
-      return !isPercentMotionEntry(entry, "y");
-    });
-    var xPercentSegments = buildMotionSegments(motionList, "xPercent", 0, 1, null);
-    var yPercentSegments = buildMotionSegments(motionList, "yPercent", 0, 1, null);
-    var xPercentFromX = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
-      return isPercentMotionEntry(entry, "x");
-    });
-    var yPercentFromY = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
-      return isPercentMotionEntry(entry, "y");
-    });
-    xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
-    yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
-    attachMotionControls(xSegments, layer, "Position X", null);
-    attachMotionControls(ySegments, layer, "Position Y", null);
-    attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {
-      return "(" + expr + "/100)*" + axisW;
-    });
-    attachMotionControls(yPercentSegments, layer, "Position Y Percent", function (expr) {
-      return "(" + expr + "/100)*" + axisH;
-    });
-    if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
-      var expr =
-        "var base=value;\n" +
-        buildExprTimeVar() +
-        buildSegmentedVarExpr(xSegments, "tx", 0) +
-        buildSegmentedVarExpr(ySegments, "ty", 0) +
-        buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
-        buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
-        "[base[0]+tx+txp, base[1]+ty+typ];";
-      var posProp = layer.property("Transform").property("Position");
-      if (posProp.canSetExpression) posProp.expression = expr;
-    }
-
-    // Scale
-    var scaleProp = layer.property("Transform").property("Scale");
-    var baseScale = scaleProp.value;
-    var scaleSegments = buildMotionSegments(motionList, "scale", baseScale[0] / 100, 100, null);
-    var sxSegments = buildMotionSegments(motionList, "scaleX", baseScale[0] / 100, 100, null);
-    var sySegments = buildMotionSegments(motionList, "scaleY", baseScale[1] / 100, 100, null);
-    var widthSegments = [];
-    var heightSegments = [];
-    if (axisW > 0) {
-      var widthAbsSegments = buildMotionSegments(
-        motionList,
-        "width",
-        axisW * (baseScale[0] / 100),
-        1,
-        function (v) {
-          return (v / axisW) * 100;
-        },
-        function (entry) {
-          return !isPercentMotionEntry(entry, "width");
-        }
-      );
-      var widthPercentSegments = buildMotionSegments(
-        motionList,
-        "width",
-        baseScale[0],
-        1,
-        function (v) {
-          return v;
-        },
-        function (entry) {
-          return isPercentMotionEntry(entry, "width");
-        }
-      );
-      widthSegments = mergeMotionSegments(widthAbsSegments, widthPercentSegments);
-    }
-    if (axisH > 0) {
-      var heightAbsSegments = buildMotionSegments(
-        motionList,
-        "height",
-        axisH * (baseScale[1] / 100),
-        1,
-        function (v) {
-          return (v / axisH) * 100;
-        },
-        function (entry) {
-          return !isPercentMotionEntry(entry, "height");
-        }
-      );
-      var heightPercentSegments = buildMotionSegments(
-        motionList,
-        "height",
-        baseScale[1],
-        1,
-        function (v) {
-          return v;
-        },
-        function (entry) {
-          return isPercentMotionEntry(entry, "height");
-        }
-      );
-      heightSegments = mergeMotionSegments(heightAbsSegments, heightPercentSegments);
-    }
-    attachMotionControls(scaleSegments, layer, "Scale", null);
-    attachMotionControls(sxSegments, layer, "Scale X", null);
-    attachMotionControls(sySegments, layer, "Scale Y", null);
-    attachMotionControls(widthSegments, layer, "Width", null);
-    attachMotionControls(heightSegments, layer, "Height", null);
-    if (
-      scaleSegments.length ||
-      sxSegments.length ||
-      sySegments.length ||
-      widthSegments.length ||
-      heightSegments.length
-    ) {
-      var expr =
-        "var base=value;\n" +
-        buildExprTimeVar() +
-        "var sx=base[0]; var sy=base[1];\n" +
-        "var s=" +
-        baseScale[0] +
-        ";\n" +
-        (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", baseScale[0]) + "sx=s; sy=s;\n" : "") +
-        (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", baseScale[0]) : "") +
-        (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", baseScale[1]) : "") +
-        (widthSegments.length ? buildSegmentedVarExpr(widthSegments, "sx", baseScale[0]) : "") +
-        (heightSegments.length ? buildSegmentedVarExpr(heightSegments, "sy", baseScale[1]) : "") +
-        "[sx, sy];";
-      if (scaleProp.canSetExpression) scaleProp.expression = expr;
-    }
-
-    // Rotation
-    var rotSegments = buildMotionSegments(motionList, "rotation", 0, 1, null);
-    var rotateSegments = buildMotionSegments(motionList, "rotate", 0, 1, null);
-    var rotationProp = layer.property("Transform").property("Rotation");
-    var baseRot = rotationProp.value;
-    var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
-    if (useRotSegments.length) {
-      if (!rotSegments.length && rotateSegments.length) {
-        // If only "rotate" segments are provided, treat them as rotation.
-        useRotSegments = rotateSegments;
-      }
-      // Rebuild with base values for rotation if missing in segments.
-      var motionKey = rotSegments.length ? "rotation" : "rotate";
-      useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
-      attachMotionControls(useRotSegments, layer, "Rotation", null);
-      if (rotationProp.canSetExpression) {
-        rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
-      }
-    }
-
-    // Filter blur -> Gaussian Blur (attach controls after all effects)
-    if (blurSegments.length && blurEffectIndex !== null) {
-      attachMotionControls(blurSegments, layer, "Blur", null);
-      var effects = layer.property("Effects");
-      var blurEffectFinal = effects ? effects.property(blurEffectIndex) : null;
-      if (blurEffectFinal) {
-        var blurProp =
-          blurEffectFinal.property("Blurriness") ||
-          blurEffectFinal.property("Blur") ||
-          blurEffectFinal.property("ADBE Gaussian Blur-0001");
-        if (blurProp) {
-          try {
-            var baseBlur = 0;
+      // Filter blur -> Gaussian Blur (add effect before any controls)
+      var blurSegments = buildFilterBlurSegments(motionList, 0);
+      var blurEffectIndex = null;
+      if (blurSegments.length) {
+        var blurEffect = ensureGaussianBlurEffect(layer);
+        if (blurEffect) {
+          blurEffectIndex = blurEffect.propertyIndex;
+          var repeatProp =
+            blurEffect.property("Repeat Edge Pixels") ||
+            blurEffect.property("ADBE Gaussian Blur-0003") ||
+            blurEffect.property("Repeat Edge Pixels");
+          if (repeatProp) {
             try {
-              baseBlur = blurProp.value;
-            } catch (e) {
-              baseBlur = 0;
-            }
-            var canExpr = false;
+              repeatProp.setValue(1);
+            } catch (e) {}
+          }
+        }
+      }
+
+      // Opacity (0..1 -> 0..100)
+      var opacityProp = layer.property("Transform").property("Opacity");
+      var baseOpacity = opacityProp.value;
+      var opacitySegments = buildMotionSegments(motionList, "opacity", baseOpacity / 100, 100, null);
+      attachMotionControls(opacitySegments, layer, "Opacity", null);
+      if (opacitySegments.length) {
+        if (opacityProp.canSetExpression) {
+          opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
+        }
+      }
+
+      // Position (x/y offsets)
+      var basePos = layer.property("Transform").property("Position").value;
+      var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
+      var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
+      var xSegments = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
+        return !isPercentMotionEntry(entry, "x");
+      });
+      var ySegments = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
+        return !isPercentMotionEntry(entry, "y");
+      });
+      var xPercentSegments = buildMotionSegments(motionList, "xPercent", 0, 1, null);
+      var yPercentSegments = buildMotionSegments(motionList, "yPercent", 0, 1, null);
+      var xPercentFromX = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
+        return isPercentMotionEntry(entry, "x");
+      });
+      var yPercentFromY = buildMotionSegments(motionList, "y", 0, 1, null, function (entry) {
+        return isPercentMotionEntry(entry, "y");
+      });
+      xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
+      yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
+      attachMotionControls(xSegments, layer, "Position X", null);
+      attachMotionControls(ySegments, layer, "Position Y", null);
+      attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {
+        return "(" + expr + "/100)*" + axisW;
+      });
+      attachMotionControls(yPercentSegments, layer, "Position Y Percent", function (expr) {
+        return "(" + expr + "/100)*" + axisH;
+      });
+      if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
+        var expr =
+          "var base=value;\n" +
+          buildExprTimeVar() +
+          buildSegmentedVarExpr(xSegments, "tx", 0) +
+          buildSegmentedVarExpr(ySegments, "ty", 0) +
+          buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
+          buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
+          "[base[0]+tx+txp, base[1]+ty+typ];";
+        var posProp = layer.property("Transform").property("Position");
+        if (posProp.canSetExpression) posProp.expression = expr;
+      }
+
+      // Scale
+      var scaleProp = layer.property("Transform").property("Scale");
+      var baseScale = scaleProp.value;
+      var scaleSegments = buildMotionSegments(motionList, "scale", baseScale[0] / 100, 100, null);
+      var sxSegments = buildMotionSegments(motionList, "scaleX", baseScale[0] / 100, 100, null);
+      var sySegments = buildMotionSegments(motionList, "scaleY", baseScale[1] / 100, 100, null);
+      var widthSegments = [];
+      var heightSegments = [];
+      if (axisW > 0) {
+        var widthAbsSegments = buildMotionSegments(
+          motionList,
+          "width",
+          axisW * (baseScale[0] / 100),
+          1,
+          function (v) {
+            return (v / axisW) * 100;
+          },
+          function (entry) {
+            return !isPercentMotionEntry(entry, "width");
+          }
+        );
+        var widthPercentSegments = buildMotionSegments(
+          motionList,
+          "width",
+          baseScale[0],
+          1,
+          function (v) {
+            return v;
+          },
+          function (entry) {
+            return isPercentMotionEntry(entry, "width");
+          }
+        );
+        widthSegments = mergeMotionSegments(widthAbsSegments, widthPercentSegments);
+      }
+      if (axisH > 0) {
+        var heightAbsSegments = buildMotionSegments(
+          motionList,
+          "height",
+          axisH * (baseScale[1] / 100),
+          1,
+          function (v) {
+            return (v / axisH) * 100;
+          },
+          function (entry) {
+            return !isPercentMotionEntry(entry, "height");
+          }
+        );
+        var heightPercentSegments = buildMotionSegments(
+          motionList,
+          "height",
+          baseScale[1],
+          1,
+          function (v) {
+            return v;
+          },
+          function (entry) {
+            return isPercentMotionEntry(entry, "height");
+          }
+        );
+        heightSegments = mergeMotionSegments(heightAbsSegments, heightPercentSegments);
+      }
+      attachMotionControls(scaleSegments, layer, "Scale", null);
+      attachMotionControls(sxSegments, layer, "Scale X", null);
+      attachMotionControls(sySegments, layer, "Scale Y", null);
+      attachMotionControls(widthSegments, layer, "Width", null);
+      attachMotionControls(heightSegments, layer, "Height", null);
+      if (
+        scaleSegments.length ||
+        sxSegments.length ||
+        sySegments.length ||
+        widthSegments.length ||
+        heightSegments.length
+      ) {
+        var expr =
+          "var base=value;\n" +
+          buildExprTimeVar() +
+          "var sx=base[0]; var sy=base[1];\n" +
+          "var s=" +
+          baseScale[0] +
+          ";\n" +
+          (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", baseScale[0]) + "sx=s; sy=s;\n" : "") +
+          (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", baseScale[0]) : "") +
+          (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", baseScale[1]) : "") +
+          (widthSegments.length ? buildSegmentedVarExpr(widthSegments, "sx", baseScale[0]) : "") +
+          (heightSegments.length ? buildSegmentedVarExpr(heightSegments, "sy", baseScale[1]) : "") +
+          "[sx, sy];";
+        if (scaleProp.canSetExpression) scaleProp.expression = expr;
+      }
+
+      // Rotation
+      var rotSegments = buildMotionSegments(motionList, "rotation", 0, 1, null);
+      var rotateSegments = buildMotionSegments(motionList, "rotate", 0, 1, null);
+      var rotationProp = layer.property("Transform").property("Rotation");
+      var baseRot = rotationProp.value;
+      var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
+      if (useRotSegments.length) {
+        if (!rotSegments.length && rotateSegments.length) {
+          // If only "rotate" segments are provided, treat them as rotation.
+          useRotSegments = rotateSegments;
+        }
+        // Rebuild with base values for rotation if missing in segments.
+        var motionKey = rotSegments.length ? "rotation" : "rotate";
+        useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
+        attachMotionControls(useRotSegments, layer, "Rotation", null);
+        if (rotationProp.canSetExpression) {
+          rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
+        }
+      }
+
+      // Filter blur -> Gaussian Blur (attach controls after all effects)
+      if (blurSegments.length && blurEffectIndex !== null) {
+        attachMotionControls(blurSegments, layer, "Blur", null);
+        var effects = layer.property("Effects");
+        var blurEffectFinal = effects ? effects.property(blurEffectIndex) : null;
+        if (blurEffectFinal) {
+          var blurProp =
+            blurEffectFinal.property("Blurriness") ||
+            blurEffectFinal.property("Blur") ||
+            blurEffectFinal.property("ADBE Gaussian Blur-0001");
+          if (blurProp) {
             try {
-              canExpr = blurProp.canSetExpression;
-            } catch (e) {
-              canExpr = false;
-            }
-            if (canExpr) {
+              var baseBlur = 0;
               try {
-                blurProp.expression = buildSegmentedScalarExpression(blurSegments, baseBlur);
-              } catch (e) {}
-            } else {
-              for (var b = 0; b < blurSegments.length; b++) {
-                try {
-                  blurProp.setValueAtTime(blurSegments[b].t0, blurSegments[b].v0);
-                  blurProp.setValueAtTime(blurSegments[b].t1, blurSegments[b].v1);
-                } catch (e) {}
+                baseBlur = blurProp.value;
+              } catch (e) {
+                baseBlur = 0;
               }
-            }
-          } catch (e) {}
+              var canExpr = false;
+              try {
+                canExpr = blurProp.canSetExpression;
+              } catch (e) {
+                canExpr = false;
+              }
+              if (canExpr) {
+                try {
+                  blurProp.expression = buildSegmentedScalarExpression(blurSegments, baseBlur);
+                } catch (e) {}
+              } else {
+                var layerOffset = layer ? layer.inPoint : 0;
+                for (var b = 0; b < blurSegments.length; b++) {
+                  try {
+                    blurProp.setValueAtTime(blurSegments[b].t0 + layerOffset, blurSegments[b].v0);
+                    blurProp.setValueAtTime(blurSegments[b].t1 + layerOffset, blurSegments[b].v1);
+                  } catch (e) {}
+                }
+              }
+            } catch (e) {}
+          }
         }
       }
-    }
+    });
 
+    return startOffset;
   }
 
   function collectClipPathSegments(motionList) {
@@ -1754,100 +1819,106 @@
     var segments = collectClipPathSegments(node.motion);
     if (!segments.length) return;
 
-    if (pathProp.canSetExpression) {
-      var mode = detectClipPathType(node.motion, bbox);
-      if (mode === "polygon") {
-        var polySegs = buildClipPathPolygonSegments(node.motion, bbox);
-        if (polySegs.count) {
-          var exprPoly = buildExprTimeVar();
-          var ptsExpr = "[";
-          for (var p = 0; p < polySegs.count; p++) {
-            exprPoly += buildSegmentedVarExpr(polySegs.points[p].x, "px" + p, 0);
-            exprPoly += buildSegmentedVarExpr(polySegs.points[p].y, "py" + p, 0);
-            if (p > 0) ptsExpr += ",";
-            ptsExpr += "[px" + p + ",py" + p + "]";
+    var startOffset = getMotionStartOffset(node.motion);
+    withMotionTimeOffset(startOffset, function () {
+      if (pathProp.canSetExpression) {
+        var mode = detectClipPathType(node.motion, bbox);
+        if (mode === "polygon") {
+          var polySegs = buildClipPathPolygonSegments(node.motion, bbox);
+          if (polySegs.count) {
+            var exprPoly = buildExprTimeVar();
+            var ptsExpr = "[";
+            for (var p = 0; p < polySegs.count; p++) {
+              exprPoly += buildSegmentedVarExpr(polySegs.points[p].x, "px" + p, 0);
+              exprPoly += buildSegmentedVarExpr(polySegs.points[p].y, "py" + p, 0);
+              if (p > 0) ptsExpr += ",";
+              ptsExpr += "[px" + p + ",py" + p + "]";
+            }
+            ptsExpr += "]";
+            var zeros = [];
+            for (var z = 0; z < polySegs.count; z++) zeros.push("[0,0]");
+            exprPoly +=
+              "var pts=" + ptsExpr + ";\n" +
+              "createPath(pts," +
+              "[" + zeros.join(",") + "]," +
+              "[" + zeros.join(",") + "],true);";
+            pathProp.expression = exprPoly;
+            return;
           }
-          ptsExpr += "]";
-          var zeros = [];
-          for (var z = 0; z < polySegs.count; z++) zeros.push("[0,0]");
-          exprPoly +=
-            "var pts=" + ptsExpr + ";\n" +
-            "createPath(pts," +
-            "[" + zeros.join(",") + "]," +
-            "[" + zeros.join(",") + "],true);";
-          pathProp.expression = exprPoly;
-          return;
         }
+
+        var insetSegs = buildClipPathInsetSegments(node.motion, bbox);
+        var expr =
+          buildExprTimeVar() +
+          "var top=0; var right=0; var bottom=0; var left=0; var rx=0; var ry=0;\n" +
+          buildSegmentedVarExpr(insetSegs.top, "top", 0) +
+          buildSegmentedVarExpr(insetSegs.right, "right", 0) +
+          buildSegmentedVarExpr(insetSegs.bottom, "bottom", 0) +
+          buildSegmentedVarExpr(insetSegs.left, "left", 0) +
+          buildSegmentedVarExpr(insetSegs.rx, "rx", 0) +
+          buildSegmentedVarExpr(insetSegs.ry, "ry", 0) +
+          "var w=Math.max(0," + bbox.w + "-left-right);\n" +
+          "var h=Math.max(0," + bbox.h + "-top-bottom);\n" +
+          "var x0=left; var y0=top; var x1=left+w; var y1=top+h;\n" +
+          "rx=Math.min(Math.max(0,rx),w/2); ry=Math.min(Math.max(0,ry),h/2);\n" +
+          "var hasRound=(rx>0 && ry>0);\n" +
+          "var k=0.5522847498307936;\n" +
+          "var rxk=hasRound?rx*k:0; var ryk=hasRound?ry*k:0;\n" +
+          "var pts=[[x0+rx,y0],[x1-rx,y0],[x1,y0+ry],[x1,y1-ry],[x1-rx,y1],[x0+rx,y1],[x0,y1-ry],[x0,y0+ry]];\n" +
+          "var inT=[[-rxk,0],[0,0],[-rxk,0],[0,0],[rxk,0],[0,0],[0,ryk],[0,0]];\n" +
+          "var outT=[[0,0],[0,ryk],[0,0],[0,ryk],[0,0],[-rxk,0],[0,0],[0,-ryk]];\n" +
+          "createPath(pts,inT,outT,true);";
+        pathProp.expression = expr;
+        return;
       }
 
-      var insetSegs = buildClipPathInsetSegments(node.motion, bbox);
-      var expr =
-        buildExprTimeVar() +
-        "var top=0; var right=0; var bottom=0; var left=0; var rx=0; var ry=0;\n" +
-        buildSegmentedVarExpr(insetSegs.top, "top", 0) +
-        buildSegmentedVarExpr(insetSegs.right, "right", 0) +
-        buildSegmentedVarExpr(insetSegs.bottom, "bottom", 0) +
-        buildSegmentedVarExpr(insetSegs.left, "left", 0) +
-        buildSegmentedVarExpr(insetSegs.rx, "rx", 0) +
-        buildSegmentedVarExpr(insetSegs.ry, "ry", 0) +
-        "var w=Math.max(0," + bbox.w + "-left-right);\n" +
-        "var h=Math.max(0," + bbox.h + "-top-bottom);\n" +
-        "var x0=left; var y0=top; var x1=left+w; var y1=top+h;\n" +
-        "rx=Math.min(Math.max(0,rx),w/2); ry=Math.min(Math.max(0,ry),h/2);\n" +
-        "var hasRound=(rx>0 && ry>0);\n" +
-        "var k=0.5522847498307936;\n" +
-        "var rxk=hasRound?rx*k:0; var ryk=hasRound?ry*k:0;\n" +
-        "var pts=[[x0+rx,y0],[x1-rx,y0],[x1,y0+ry],[x1,y1-ry],[x1-rx,y1],[x0+rx,y1],[x0,y1-ry],[x0,y0+ry]];\n" +
-        "var inT=[[-rxk,0],[0,0],[-rxk,0],[0,0],[rxk,0],[0,0],[0,ryk],[0,0]];\n" +
-        "var outT=[[0,0],[0,ryk],[0,0],[0,ryk],[0,0],[-rxk,0],[0,0],[0,-ryk]];\n" +
-        "createPath(pts,inT,outT,true);";
-      pathProp.expression = expr;
-      return;
-    }
+      var fallbackMode = detectClipPathType(node.motion, bbox);
+      var layerOffset = layer ? layer.inPoint : 0;
+      for (var i = 0; i < segments.length; i++) {
+        var entry = segments[i];
+        var props = entry.props || {};
+        var clip = props.clipPath || {};
+        var fromVal = clip.from && clip.from.value !== undefined ? clip.from.value : null;
+        var toVal = clip.to && clip.to.value !== undefined ? clip.to.value : null;
+        if (fromVal === null && toVal === null) continue;
+        if (fromVal === null) fromVal = toVal;
+        if (toVal === null) toVal = fromVal;
 
-    var fallbackMode = detectClipPathType(node.motion, bbox);
-    for (var i = 0; i < segments.length; i++) {
-      var entry = segments[i];
-      var props = entry.props || {};
-      var clip = props.clipPath || {};
-      var fromVal = clip.from && clip.from.value !== undefined ? clip.from.value : null;
-      var toVal = clip.to && clip.to.value !== undefined ? clip.to.value : null;
-      if (fromVal === null && toVal === null) continue;
-      if (fromVal === null) fromVal = toVal;
-      if (toVal === null) toVal = fromVal;
+        var t0 = getMotionStart(entry);
+        var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+        t0 += layerOffset;
+        t1 += layerOffset;
 
-      var t0 = getMotionStart(entry);
-      var t1 = t0 + (entry.time && isFinite(entry.time.duration) ? entry.time.duration : 0);
+        if (fallbackMode === "polygon") {
+          var polyFrom = parsePolygonPoints(fromVal, bbox);
+          var polyTo = parsePolygonPoints(toVal, bbox);
+          if (!polyFrom && !polyTo) continue;
+          if (!polyFrom) polyFrom = polyTo;
+          if (!polyTo) polyTo = polyFrom;
+          var normPoly = normalizePolygonPoints(polyFrom, polyTo);
+          if (!normPoly.count) continue;
+          var shapeFromPoly = buildPolygonShape(normPoly.a);
+          var shapeToPoly = buildPolygonShape(normPoly.b);
+          if (!shapeFromPoly || !shapeToPoly) continue;
+          pathProp.setValueAtTime(t0, shapeFromPoly);
+          pathProp.setValueAtTime(t1, shapeToPoly);
+          continue;
+        }
 
-      if (fallbackMode === "polygon") {
-        var polyFrom = parsePolygonPoints(fromVal, bbox);
-        var polyTo = parsePolygonPoints(toVal, bbox);
-        if (!polyFrom && !polyTo) continue;
-        if (!polyFrom) polyFrom = polyTo;
-        if (!polyTo) polyTo = polyFrom;
-        var normPoly = normalizePolygonPoints(polyFrom, polyTo);
-        if (!normPoly.count) continue;
-        var shapeFromPoly = buildPolygonShape(normPoly.a);
-        var shapeToPoly = buildPolygonShape(normPoly.b);
-        if (!shapeFromPoly || !shapeToPoly) continue;
-        pathProp.setValueAtTime(t0, shapeFromPoly);
-        pathProp.setValueAtTime(t1, shapeToPoly);
-        continue;
+        var insetFrom = parseInsetValues(fromVal, bbox);
+        var insetTo = parseInsetValues(toVal, bbox);
+        if (!insetFrom && !insetTo) continue;
+        if (!insetFrom) insetFrom = insetTo;
+        if (!insetTo) insetTo = insetFrom;
+
+        var shapeFrom = buildInsetShape(insetFrom, bbox);
+        var shapeTo = buildInsetShape(insetTo, bbox);
+        if (!shapeFrom || !shapeTo) continue;
+
+        pathProp.setValueAtTime(t0, shapeFrom);
+        pathProp.setValueAtTime(t1, shapeTo);
       }
-
-      var insetFrom = parseInsetValues(fromVal, bbox);
-      var insetTo = parseInsetValues(toVal, bbox);
-      if (!insetFrom && !insetTo) continue;
-      if (!insetFrom) insetFrom = insetTo;
-      if (!insetTo) insetTo = insetFrom;
-
-      var shapeFrom = buildInsetShape(insetFrom, bbox);
-      var shapeTo = buildInsetShape(insetTo, bbox);
-      if (!shapeFrom || !shapeTo) continue;
-
-      pathProp.setValueAtTime(t0, shapeFrom);
-      pathProp.setValueAtTime(t1, shapeTo);
-    }
+    });
   }
 
   function findMotionTransformOrigin(motionList) {

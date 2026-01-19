@@ -282,9 +282,12 @@
         // 6. ����
         if (node.children && node.children.length) {
           var orderedChildren = orderChildrenByZIndex(node.children);
-          for (var i = 0; i < orderedChildren.length; i++) {
-            buildNode(orderedChildren[i], childComp, null, childOrigin, rootData, node.style);
-          }
+          var nestedOffset = layer && isFinite(layer.startTime) ? layer.startTime : 0;
+          withCompTimeOffset(getCompTimeOffset() + nestedOffset, function () {
+            for (var i = 0; i < orderedChildren.length; i++) {
+              buildNode(orderedChildren[i], childComp, null, childOrigin, rootData, node.style);
+            }
+          });
         }
 
         if (typeof compHasDirectText === "function" && compHasDirectText(childComp)) {
@@ -468,16 +471,19 @@
         w: childComp.width,
         h: childComp.height,
       };
-      createSvgShapeLayers(childComp, node, childBBox, rootData);
-      if (node.children && node.children.length) {
-        var svgChildOrigin = {
-          x: node.bbox.x,
-          y: node.bbox.y,
-        };
-        for (var sc = 0; sc < node.children.length; sc++) {
-          buildNode(node.children[sc], childComp, null, svgChildOrigin, rootData, node.style);
+      var nestedSvgOffset = layer && isFinite(layer.startTime) ? layer.startTime : 0;
+      withCompTimeOffset(getCompTimeOffset() + nestedSvgOffset, function () {
+        createSvgShapeLayers(childComp, node, childBBox, rootData);
+        if (node.children && node.children.length) {
+          var svgChildOrigin = {
+            x: node.bbox.x,
+            y: node.bbox.y,
+          };
+          for (var sc = 0; sc < node.children.length; sc++) {
+            buildNode(node.children[sc], childComp, null, svgChildOrigin, rootData, node.style);
+          }
         }
-      }
+      });
       if (typeof compHasDirectText === "function" && compHasDirectText(childComp)) {
         layer.collapseTransformation = true;
       }

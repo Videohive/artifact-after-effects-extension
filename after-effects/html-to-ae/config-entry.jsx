@@ -156,6 +156,8 @@
 
   var slideComps = [];
   var slideHasText = [];
+  var slideTimeOffset = 0;
+  var currentArtifactIndex = null;
 
   for (var s = 0; s < slides.length; s++) {
     var slideData = slides[s];
@@ -165,9 +167,16 @@
     }
 
     var slideParentFolder = projectFolder;
+    if (isProjectJson && slideData && slideData._ae2ArtifactIndex !== currentArtifactIndex) {
+      currentArtifactIndex = slideData._ae2ArtifactIndex;
+      slideTimeOffset = 0;
+    }
+
     var slideComp = createSlideComp(slideData, slideParentFolder);
     // originOffset: where (0,0) of current comp sits in global slide coords
-    buildNode(slideData.root, slideComp, null, { x: 0, y: 0 }, slideData, null);
+    withCompTimeOffset(slideTimeOffset, function () {
+      buildNode(slideData.root, slideComp, null, { x: 0, y: 0 }, slideData, null);
+    });
     var controlsLayer = slideComp.layer("Controls");
     if (controlsLayer) {
       controlsLayer.moveToBeginning();
@@ -176,6 +185,7 @@
     slideComps.push(slideComp);
     var hasDirectText = typeof compHasDirectText === "function" ? compHasDirectText(slideComp) : nodeContainsText(slideData.root);
     slideHasText.push(hasDirectText);
+    slideTimeOffset += slideComp.duration;
   }
 
   if (slideComps.length > 1) {

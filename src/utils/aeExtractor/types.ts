@@ -140,6 +140,7 @@ export interface AENode {
   name: string;
   bbox: AEBounds;
   bboxSpace?: 'global';
+  startTime?: number;
   style: Record<string, any>;
   renderHints: AERenderHints;
   children?: AENode[];

@@ -178,6 +178,98 @@ const PREVIEW_EDITOR_STYLE = `
   }
 `;
 
+const START_TIME_CAPTURE_SCRIPT = `
+  (function () {
+    if (window.__ae2StartCaptureInstalled) return;
+    window.__ae2StartCaptureInstalled = true;
+
+    var base = (window.performance && performance.now) ? performance.now() : Date.now();
+    window.__ae2StartCaptureBase = base;
+    var scanScheduled = false;
+
+    function now() {
+      return (window.performance && performance.now) ? performance.now() : Date.now();
+    }
+
+    function getRoot() {
+      return document.querySelector('.artifact') || document.querySelector('.slide') || document.body;
+    }
+
+    function mark(el) {
+      if (!el || el.nodeType !== 1) return;
+      if (el.hasAttribute('data-ae2-start')) return;
+      var r = el.getBoundingClientRect();
+      if (r && r.width > 0 && r.height > 0) {
+        var t = (now() - base) / 1000;
+        el.setAttribute('data-ae2-start', String(t));
+      }
+    }
+
+    function markTree(root) {
+      if (!root) return;
+      mark(root);
+      var list = root.querySelectorAll ? root.querySelectorAll('*') : [];
+      for (var i = 0; i < list.length; i += 1) {
+        mark(list[i]);
+      }
+    }
+
+    function scheduleScan(root) {
+      if (scanScheduled) return;
+      scanScheduled = true;
+      requestAnimationFrame(function () {
+        scanScheduled = false;
+        markTree(root);
+      });
+    }
+
+    var rootEl = getRoot();
+    if (!rootEl) return;
+
+    function onReady() {
+      markTree(rootEl);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        requestAnimationFrame(onReady);
+      });
+    } else {
+      requestAnimationFrame(onReady);
+    }
+
+    var observer = new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i += 1) {
+        var mutation = mutations[i];
+        var nodes = mutation.addedNodes || [];
+        for (var j = 0; j < nodes.length; j += 1) {
+          var node = nodes[j];
+          if (!node || node.nodeType !== 1) continue;
+          mark(node);
+          if (node.querySelectorAll) {
+            var nested = node.querySelectorAll('*');
+            for (var k = 0; k < nested.length; k += 1) {
+              mark(nested[k]);
+            }
+          }
+        }
+      }
+      scheduleScan(rootEl);
+    });
+
+    observer.observe(rootEl, { childList: true, subtree: true });
+
+    var start = now();
+    function loop() {
+      markTree(rootEl);
+      if (now() - start < 2000) {
+        requestAnimationFrame(loop);
+      }
+    }
+    requestAnimationFrame(loop);
+  })();
+`;
+
 const MOTION_CAPTURE_SCRIPT = `
   (function () {
     if (window.__ae2MotionCaptureInstalled) return;
@@ -3267,6 +3359,20 @@ const injectMotionCaptureIntoHead = (headHtml: string) => {
   return doc.head.innerHTML;
 };
 
+const injectStartTimeCaptureIntoHead = (headHtml: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<html><head>${headHtml}</head><body></body></html>`, 'text/html');
+  const capture = doc.createElement('script');
+  capture.setAttribute('data-ae2-runtime', 'true');
+  capture.textContent = START_TIME_CAPTURE_SCRIPT;
+  if (doc.head.firstChild) {
+    doc.head.insertBefore(capture, doc.head.firstChild);
+  } else {
+    doc.head.appendChild(capture);
+  }
+  return doc.head.innerHTML;
+};
+
 const keepBodyScripts = (bodyHtml: string) => bodyHtml;
 
 const normalizeHex = (value: string) => {
@@ -5122,9 +5228,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
 
       iframe.addEventListener('load', handleLoad);
       const capture = options && options.capture;
-      const exportHeadHtml = capture
+      const exportHeadBase = capture
         ? injectMotionCaptureIntoHead(getHeadHtml())
         : stripScriptsFromHead(getHeadHtml());
+      const exportHeadHtml = injectStartTimeCaptureIntoHead(exportHeadBase);
       const exportArtifactHtml = capture
         ? keepBodyScripts(artifacts[index])
         : stripScriptsFromBody(artifacts[index]);

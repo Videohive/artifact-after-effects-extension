@@ -43,6 +43,14 @@ import {
 const isHTMLElement = (el: Element, win: Window): el is HTMLElement =>
   el instanceof (win as Window & typeof globalThis).HTMLElement;
 
+const getNodeStartTime = (el: Element): number | undefined => {
+  if (!el) return undefined;
+  const raw = el.getAttribute('data-ae2-start');
+  if (!raw) return undefined;
+  const value = parseFloat(raw);
+  return Number.isFinite(value) ? value : undefined;
+};
+
 const parseMatrixTransform = (
   value: string
 ): { a: number; b: number; c: number; d: number; e: number; f: number } | null => {
@@ -1391,6 +1399,7 @@ export const extractSlideLayout = async (
 
     const rect = el.getBoundingClientRect();
     if (!isVisible(style, rect)) return finalize(null);
+    const elementStartTime = getNodeStartTime(el);
 
     const rawBBox: AEBounds = {
       x: rect.left - coordRootRect.left,
@@ -1481,6 +1490,7 @@ export const extractSlideLayout = async (
         name: 'Background Image',
         bbox: { ...bbox },
         bboxSpace: 'global',
+        startTime: elementStartTime,
         style: {},
         renderHints: {
           needsPrecomp: false,
@@ -1551,6 +1561,7 @@ export const extractSlideLayout = async (
         name: `${getName(el)}${which}`,
         bbox: pseudoBBox,
         bboxSpace: 'global',
+        startTime: elementStartTime,
         style: {
           backgroundColor: pseudoStyle.backgroundColor,
           backgroundGradients: extractBackgroundGradients(pseudoStyle.backgroundImage) || undefined,
@@ -1584,6 +1595,7 @@ export const extractSlideLayout = async (
           name: `${getName(el)}${which}__bg`,
           bbox: { ...pseudoBBox },
           bboxSpace: 'global',
+          startTime: elementStartTime,
           style: {},
           renderHints: {
             needsPrecomp: false,
@@ -1634,6 +1646,7 @@ export const extractSlideLayout = async (
               name: `${getName(el)}${which}__text`,
               bbox: { ...pseudoBBox },
               bboxSpace: 'global',
+              startTime: elementStartTime,
               style: {},
               renderHints: {
                 needsPrecomp: false,
@@ -1711,6 +1724,7 @@ export const extractSlideLayout = async (
             name: 'Image',
             bbox: { ...bbox },
             bboxSpace: 'global',
+            startTime: elementStartTime,
             style: {},
             renderHints: {
               needsPrecomp: false,
@@ -1834,6 +1848,7 @@ export const extractSlideLayout = async (
           name: `${getName(el)}__text`,
           bbox: { ...bbox },
           bboxSpace: 'global',
+          startTime: elementStartTime,
           style: textChildTransform
             ? {
                 transform: textChildTransform,
@@ -1877,6 +1892,7 @@ export const extractSlideLayout = async (
           name: `${getName(el)}__text`,
           bbox: { ...bbox },
           bboxSpace: 'global',
+          startTime: elementStartTime,
           style: {},
           renderHints: {
             needsPrecomp: false,
@@ -1934,6 +1950,7 @@ export const extractSlideLayout = async (
       name: getName(el),
       bbox: finalBBox,
       bboxSpace: 'global',
+      startTime: elementStartTime,
       style: {
         backgroundColor: style.backgroundColor,
         backgroundGradients: extractBackgroundGradients(style.backgroundImage) || undefined,

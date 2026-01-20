@@ -45,6 +45,8 @@ const LAST_ARTIFACT_INDEX_KEY = 'ae2:lastArtifactIndex';
 const AUTO_REFINE_KEY = 'ae2:autoRefine';
 const TIMELINE_PLAY_KEY = 'ae2:timelinePlay';
 const TIMELINE_DURATION_KEY = 'ae2:timelineDuration';
+const EXPORT_RESOLUTION_KEY = 'ae2:exportResolution';
+const EXPORT_FPS_KEY = 'ae2:exportFps';
 
 const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: '1080p', label: 'Full HD (1920x1080)', width: 1920, height: 1080 },
@@ -3688,8 +3690,20 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const includeSlideClass = artifactMode === 'slides' || artifactMode === 'mixed';
   const [codeDraft, setCodeDraft] = useState('');
   const [isCodeDirty, setIsCodeDirty] = useState(false);
-  const [exportResolution, setExportResolution] = useState(RESOLUTION_OPTIONS[2]);
-  const [exportFps, setExportFps] = useState<number>(30);
+  const [exportResolution, setExportResolution] = useState(() => {
+    if (typeof window === 'undefined') return RESOLUTION_OPTIONS[2];
+    const stored = window.localStorage.getItem(EXPORT_RESOLUTION_KEY);
+    const matched = stored
+      ? RESOLUTION_OPTIONS.find(option => option.id === stored)
+      : null;
+    return matched || RESOLUTION_OPTIONS[2];
+  });
+  const [exportFps, setExportFps] = useState<number>(() => {
+    if (typeof window === 'undefined') return 30;
+    const stored = window.localStorage.getItem(EXPORT_FPS_KEY);
+    const value = stored ? Number(stored) : NaN;
+    return Number.isFinite(value) && value > 0 ? value : 30;
+  });
   const [exportDuration, setExportDuration] = useState<number>(() => {
     if (typeof window === 'undefined') return 10;
     const stored = window.localStorage.getItem(TIMELINE_DURATION_KEY);
@@ -5538,6 +5552,16 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(TIMELINE_DURATION_KEY, String(exportDuration));
   }, [exportDuration]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(EXPORT_RESOLUTION_KEY, exportResolution.id);
+  }, [exportResolution]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(EXPORT_FPS_KEY, String(exportFps));
+  }, [exportFps]);
 
   useEffect(() => {
     if (viewMode !== 'preview') return;

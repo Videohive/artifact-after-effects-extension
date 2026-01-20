@@ -130,8 +130,11 @@
     return;
   }
 
+  jsonFile.encoding = "UTF-8";
   jsonFile.open("r");
-  var data = JSON.parse(jsonFile.read());
+  var jsonText = jsonFile.read();
+  if (jsonText && jsonText.charCodeAt(0) === 0xfeff) jsonText = jsonText.substring(1);
+  var data = JSON.parse(jsonText);
   jsonFile.close();
 
   var existingItemIds = collectExistingItemIds();

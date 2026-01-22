@@ -14,7 +14,7 @@ import {
   MediaKind,
   ArtifactMode
 } from '../services/aiService';
-import { extractSlideLayout as extractArtifactLayout } from '../utils/aeExtractor/index';
+import { extractSlideLayout as extractArtifactLayout, extractFontData } from '../utils/aeExtractor/index';
 import { ArtifactPreview } from './artifact-generator/ArtifactPreview';
 import { ArtifactToolbar } from './artifact-generator/ArtifactToolbar';
 import { AnimationPanel } from './artifact-generator/AnimationPanel';
@@ -36,6 +36,11 @@ import { getAuthToken } from '../services/authService';
 type PreviewLayer = {
   id: string;
   children: PreviewLayer[];
+};
+
+type FontUsageEntry = {
+  name: string;
+  styles: string[];
 };
 
 const URL_TEXT_RE = /^https?:\/\/\S+$/i;
@@ -3713,6 +3718,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const [projectTitle, setProjectTitle] = useState('');
   const [projectTags, setProjectTags] = useState('');
   const [projectDescription, setProjectDescription] = useState('');
+  const [projectFonts, setProjectFonts] = useState<FontUsageEntry[]>([]);
+  const [projectFontsLoading, setProjectFontsLoading] = useState(false);
+  const projectFontsRequestRef = useRef(0);
+  const exportInProgressRef = useRef(false);
 
   useEffect(() => {
     animationsEnabledRef.current = animationsEnabled;
@@ -3765,6 +3774,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const exportIframeRef = useRef<HTMLIFrameElement>(null);
+  const fontsIframeRef = useRef<HTMLIFrameElement>(null);
   const previewStageRef = useRef<HTMLDivElement>(null);
   const prevViewModeRef = useRef<ViewMode>(viewMode);
   const suppressPreviewReloadRef = useRef(false);
@@ -5217,6 +5227,31 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     return buildArtifactHtml(getHeadHtml(), artifacts[index]);
   };
 
+  const loadHtmlIntoFontsIframe = (html: string) => {
+    return new Promise<Window>((resolve, reject) => {
+      const iframe = fontsIframeRef.current;
+      if (!iframe) {
+        reject(new Error('Missing fonts iframe.'));
+        return;
+      }
+
+      const handleLoad = () => {
+        iframe.removeEventListener('load', handleLoad);
+        if (!iframe.contentWindow) {
+          reject(new Error('Missing iframe contentWindow.'));
+          return;
+        }
+
+        requestAnimationFrame(() => {
+          resolve(iframe.contentWindow as Window);
+        });
+      };
+
+      iframe.addEventListener('load', handleLoad);
+      iframe.srcdoc = html;
+    });
+  };
+
   const loadArtifactIntoExportIframe = (
     index: number,
     options?: { capture?: boolean }
@@ -5258,9 +5293,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
           </body>
         </html>
       `;
-      iframe.srcdoc = html;
-    });
-  };
+        iframe.srcdoc = html;
+      });
+    };
 
   const stabilizeLayout = async (win: Window) => {
     const doc = win.document as Document & { fonts?: FontFaceSet };
@@ -5385,6 +5420,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (artifacts.length === 0) return;
     
     setAnimationsEnabledForExport(false);
+    exportInProgressRef.current = true;
     try {
       const captureWin = await loadArtifactIntoExportIframe(currentArtifactIndex, { capture: true });
       const motionCapture = await waitForMotionCapture(captureWin);
@@ -5409,6 +5445,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setErrorMsg("Failed to export JSON structure.");
     } finally {
       setAnimationsEnabledForExport(true);
+      exportInProgressRef.current = false;
     }
   };
 
@@ -5416,6 +5453,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (artifacts.length === 0) return;
 
     setAnimationsEnabledForExport(false);
+    exportInProgressRef.current = true;
     try {
       const results: Array<{ jsonStructure: any; pallete: ScenePaletteEntry[] }> = [];
       for (let i = 0; i < artifacts.length; i += 1) {
@@ -5478,6 +5516,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       setErrorMsg("Failed to export JSON project.");
     } finally {
       setAnimationsEnabledForExport(true);
+      exportInProgressRef.current = false;
     }
   };
 
@@ -5506,6 +5545,79 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
   const getAllArtifactsHtml = (headOverride = headContent) => {
     return buildAllArtifactsHtml(headOverride, artifacts);
   };
+
+  const normalizeFontEntries = (entries: Array<{ name: string; styles: string[] }>): FontUsageEntry[] => {
+    const fontMap = new Map<string, Set<string>>();
+    entries.forEach(entry => {
+      if (!entry || !entry.name) return;
+      const name = entry.name.trim();
+      if (!name) return;
+      if (!fontMap.has(name)) fontMap.set(name, new Set<string>());
+      const styles = entry.styles || [];
+      styles.forEach(style => {
+        const cleaned = String(style || '').trim();
+        if (cleaned) {
+          fontMap.get(name)!.add(cleaned);
+        }
+      });
+    });
+    return Array.from(fontMap.entries())
+      .map(([name, styles]) => ({
+        name,
+        styles: Array.from(styles).sort((a, b) => a.localeCompare(b))
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const buildFontsExtractionHtml = () => {
+    const cleanHead = stripScriptsFromHead(getHeadHtml());
+    const cleanBody = artifacts.map(artifact => stripScriptsFromBody(artifact)).join('\n');
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>${cleanHead}</head>
+        <body>
+          ${cleanBody}
+        </body>
+      </html>
+    `;
+  };
+
+  useEffect(() => {
+    if (artifacts.length === 0) {
+      setProjectFonts([]);
+      setProjectFontsLoading(false);
+      return;
+    }
+    if (exportInProgressRef.current) return;
+
+    const requestId = projectFontsRequestRef.current + 1;
+    projectFontsRequestRef.current = requestId;
+    let cancelled = false;
+
+    const run = async () => {
+      setProjectFontsLoading(true);
+      try {
+        const html = buildFontsExtractionHtml();
+        const win = await loadHtmlIntoFontsIframe(html);
+        await stabilizeLayout(win);
+        const fonts = extractFontData(win.document, win);
+        if (cancelled || projectFontsRequestRef.current !== requestId) return;
+        setProjectFonts(normalizeFontEntries(fonts.postNames || []));
+      } catch (err) {
+        if (cancelled || projectFontsRequestRef.current !== requestId) return;
+        setProjectFonts([]);
+      } finally {
+        if (cancelled || projectFontsRequestRef.current !== requestId) return;
+        setProjectFontsLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [artifacts, headContent]);
 
   useEffect(() => {
     if (viewMode !== 'code') return;
@@ -6162,6 +6274,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                 projectDescription={projectDescription}
                 mediaPlaceholderCount={placeholderCounts.media}
                 textPlaceholderCount={placeholderCounts.text}
+                fontEntries={projectFonts}
+                fontsLoading={projectFontsLoading}
                 editingTitle={editingTitle}
                 editingTags={editingTags}
                 editingDescription={editingDescription}
@@ -6400,6 +6514,12 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         ref={exportIframeRef}
         title="AE Export Frame"
         className="absolute -left-[10000px] top-0 w-[1280px] h-[720px] opacity-0 pointer-events-none"
+        sandbox="allow-scripts allow-same-origin"
+      />
+      <iframe
+        ref={fontsIframeRef}
+        title="AE Fonts Frame"
+        className="absolute -left-[11000px] top-0 w-[1280px] h-[720px] opacity-0 pointer-events-none"
         sandbox="allow-scripts allow-same-origin"
       />
 

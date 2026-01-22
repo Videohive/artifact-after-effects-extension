@@ -1125,7 +1125,7 @@ const createPseudoTextElement = (
   };
 };
 
-const extractFontData = (
+export const extractFontData = (
   doc: Document,
   win: Window
 ): { urls: string[]; postNames: Array<{ name: string; styles: string[] }> } => {

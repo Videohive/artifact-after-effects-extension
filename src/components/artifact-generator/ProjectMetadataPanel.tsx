@@ -7,6 +7,8 @@ type ProjectMetadataPanelProps = {
   projectDescription: string;
   mediaPlaceholderCount: number;
   textPlaceholderCount: number;
+  fontEntries: Array<{ name: string; styles: string[] }>;
+  fontsLoading: boolean;
   editingTitle: boolean;
   editingTags: boolean;
   editingDescription: boolean;
@@ -34,6 +36,8 @@ export const ProjectMetadataPanel: React.FC<ProjectMetadataPanelProps> = ({
   projectDescription,
   mediaPlaceholderCount,
   textPlaceholderCount,
+  fontEntries,
+  fontsLoading,
   editingTitle,
   editingTags,
   editingDescription,
@@ -142,6 +146,25 @@ export const ProjectMetadataPanel: React.FC<ProjectMetadataPanelProps> = ({
             >
               {projectTags || 'Add tags'}
             </button>
+          )}
+        </div>
+        <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Fonts</div>
+        <div className="mt-1 text-sm text-neutral-300">
+          {fontsLoading ? (
+            <div className="text-neutral-500">Loading fonts...</div>
+          ) : fontEntries.length ? (
+            <div className="flex flex-col gap-1">
+              {fontEntries.map((font) => {
+                const styles = font.styles && font.styles.length ? font.styles.join(', ') : 'Regular';
+                return (
+                  <div key={font.name}>
+                    {font.name} - {styles}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-neutral-500">No fonts detected</div>
           )}
         </div>
       </div>

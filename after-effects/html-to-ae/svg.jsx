@@ -2213,8 +2213,13 @@
       var baseRot = rotationProp.value;
       var rotSegments = buildMotionSegments(motionList, "rotation", baseRot, 1, null);
       var rotateSegments = buildMotionSegments(motionList, "rotate", baseRot, 1, null);
+      var rotateZSegments = buildMotionSegments(motionList, "rotateZ", baseRot, 1, null);
       var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
+      if (!useRotSegments.length && rotateZSegments.length) useRotSegments = rotateZSegments;
       if (useRotSegments.length) {
+        if (!rotSegments.length && !rotateSegments.length && rotateZSegments.length) {
+          useRotSegments = rotateZSegments;
+        }
         if (useExpr && rotationProp.canSetExpression) {
           if (useExpr) attachMotionControls(useRotSegments, layer, "Rotation", null);
           rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);

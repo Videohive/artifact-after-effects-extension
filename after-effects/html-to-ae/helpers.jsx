@@ -1142,6 +1142,7 @@
       props.scaleY ||
       props.rotation ||
       props.rotate ||
+      props.rotateZ ||
       props.rotateX ||
       props.rotateY ||
       props.skewY
@@ -1242,7 +1243,7 @@
       if (props.opacity) hasOpacity = true;
       if (props.x || props.y || props.xPercent || props.yPercent) hasPosition = true;
       if (props.scale || props.scaleX || props.scaleY) hasScale = true;
-      if (props.rotation || props.rotate) hasRotation = true;
+      if (props.rotation || props.rotate || props.rotateZ) hasRotation = true;
       if (props.rotateX || props.rotateY) hasRotation3d = true;
       if (props.skewY) hasSkewY = true;
     }
@@ -1308,7 +1309,8 @@
         var rotationProp = animatorProps.addProperty("ADBE Text Rotation");
         if (rotationProp && firstSplitProps) {
           var rotStart = getSplitStartValue(firstSplitProps, "rotation", null);
-          if (rotStart === null) rotStart = getSplitStartValue(firstSplitProps, "rotate", 0);
+          if (rotStart === null) rotStart = getSplitStartValue(firstSplitProps, "rotate", null);
+          if (rotStart === null) rotStart = getSplitStartValue(firstSplitProps, "rotateZ", 0);
           if (rotStart !== null) rotationProp.setValue(rotStart);
         }
       }
@@ -1586,16 +1588,22 @@
       // Rotation
       var rotSegments = buildMotionSegments(motionList, "rotation", 0, 1, null);
       var rotateSegments = buildMotionSegments(motionList, "rotate", 0, 1, null);
+      var rotateZSegments = buildMotionSegments(motionList, "rotateZ", 0, 1, null);
       var rotationProp = layer.property("Transform").property("Rotation");
       var baseRot = rotationProp.value;
       var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
+      if (!useRotSegments.length && rotateZSegments.length) useRotSegments = rotateZSegments;
       if (useRotSegments.length) {
         if (!rotSegments.length && rotateSegments.length) {
           // If only "rotate" segments are provided, treat them as rotation.
           useRotSegments = rotateSegments;
         }
+        if (!rotSegments.length && !rotateSegments.length && rotateZSegments.length) {
+          // If only "rotateZ" segments are provided, treat them as rotation.
+          useRotSegments = rotateZSegments;
+        }
         // Rebuild with base values for rotation if missing in segments.
-        var motionKey = rotSegments.length ? "rotation" : "rotate";
+        var motionKey = rotSegments.length ? "rotation" : rotateSegments.length ? "rotate" : "rotateZ";
         useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
         if (useExpr && rotationProp.canSetExpression) {
           if (useExpr) attachMotionControls(useRotSegments, layer, "Rotation", null);

@@ -1355,10 +1355,22 @@
         offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
       } else if (isAnimationEnabled()) {
         var layerOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
-        try {
-          offsetProp.setValueAtTime(t0 + layerOffset, 0);
-          offsetProp.setValueAtTime(t1 + layerOffset, 100);
-        } catch (e) {}
+        var samples = parseCustomEaseSamples(ease);
+        if (samples && samples.length >= 2 && isFinite(t0) && isFinite(t1) && t1 > t0) {
+          for (var s = 0; s < samples.length; s++) {
+            var p = samples.length === 1 ? 0 : s / (samples.length - 1);
+            var tt = t0 + (t1 - t0) * p + layerOffset;
+            var v = samples[s] * 100;
+            try {
+              offsetProp.setValueAtTime(tt, v);
+            } catch (e1) {}
+          }
+        } else {
+          try {
+            offsetProp.setValueAtTime(t0 + layerOffset, 0);
+            offsetProp.setValueAtTime(t1 + layerOffset, 100);
+          } catch (e2) {}
+        }
       }
     }
 

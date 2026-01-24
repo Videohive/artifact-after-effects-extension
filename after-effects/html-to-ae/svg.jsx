@@ -2077,8 +2077,11 @@
     posProp.setValue([pos[0] + dx, pos[1] + dy]);
   }
 
-  function applyVectorGroupMotion(group, motionList, bbox) {
+  function applyVectorGroupMotion(group, motionList, bbox, layer) {
     if (!group || !motionList || !motionList.length) return;
+    if (!isAnimationEnabled()) return;
+    var useExpr = useExpressionAnimation();
+    var layerOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
     var tr = group.property("ADBE Vector Transform Group") || group.property("Transform");
     if (!tr) return;
     applyVectorGroupTransformOrigin(group, motionList, bbox);
@@ -2090,8 +2093,13 @@
     if (opacityProp) {
       var baseOpacity = opacityProp.value;
       var opacitySegments = buildMotionSegments(motionList, "opacity", baseOpacity / 100, 100, null);
-      if (opacitySegments.length && opacityProp.canSetExpression) {
-        opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
+      if (opacitySegments.length) {
+        if (useExpr && opacityProp.canSetExpression) {
+          if (useExpr) attachMotionControls(opacitySegments, layer, "Opacity", null);
+          opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
+        } else {
+          applyScalarSegmentsKeyframes(opacityProp, opacitySegments, baseOpacity, layerOffset);
+        }
       }
     }
 
@@ -2115,15 +2123,44 @@
       xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
       yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
       if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
-        var expr =
-          "var base=value;\n" +
-          buildExprTimeVar() +
-          buildSegmentedVarExpr(xSegments, "tx", 0) +
-          buildSegmentedVarExpr(ySegments, "ty", 0) +
-          buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
-          buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
-          "[base[0]+tx+txp, base[1]+ty+typ];";
-        if (posProp.canSetExpression) posProp.expression = expr;
+        if (useExpr && posProp.canSetExpression) {
+          if (useExpr) {
+            attachMotionControls(xSegments, layer, "Position X", null);
+            attachMotionControls(ySegments, layer, "Position Y", null);
+            attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {
+              return "(" + expr + "/100)*" + axisW;
+            });
+            attachMotionControls(yPercentSegments, layer, "Position Y Percent", function (expr) {
+              return "(" + expr + "/100)*" + axisH;
+            });
+          }
+          var expr =
+            "var base=value;\n" +
+            buildExprTimeVar() +
+            buildSegmentedVarExpr(xSegments, "tx", 0) +
+            buildSegmentedVarExpr(ySegments, "ty", 0) +
+            buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
+            buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
+            "[base[0]+tx+txp, base[1]+ty+typ];";
+          posProp.expression = expr;
+        } else if (posProp) {
+          applyVectorSegmentsKeyframes(
+            posProp,
+            [xSegments, ySegments, xPercentSegments, yPercentSegments],
+            function (t) {
+              var x =
+                basePos[0] +
+                evalSegmentedValueAtTime(xSegments, t, 0) +
+                (axisW ? (evalSegmentedValueAtTime(xPercentSegments, t, 0) / 100) * axisW : 0);
+              var y =
+                basePos[1] +
+                evalSegmentedValueAtTime(ySegments, t, 0) +
+                (axisH ? (evalSegmentedValueAtTime(yPercentSegments, t, 0) / 100) * axisH : 0);
+              return [x, y];
+            },
+            layerOffset
+          );
+        }
       }
     }
 
@@ -2133,16 +2170,41 @@
       var sxSegments = buildMotionSegments(motionList, "scaleX", 1, 1, null);
       var sySegments = buildMotionSegments(motionList, "scaleY", 1, 1, null);
       if (scaleSegments.length || sxSegments.length || sySegments.length) {
-        var exprScale =
-          "var base=value;\n" +
-          buildExprTimeVar() +
-          "var sx=1; var sy=1;\n" +
-          "var s=1;\n" +
-          (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", 1) + "sx=s; sy=s;\n" : "") +
-          (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", 1) : "") +
-          (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", 1) : "") +
-          "[base[0]*sx, base[1]*sy];";
-        if (scaleProp.canSetExpression) scaleProp.expression = exprScale;
+        if (useExpr && scaleProp.canSetExpression) {
+          if (useExpr) {
+            attachMotionControls(scaleSegments, layer, "Scale", null);
+            attachMotionControls(sxSegments, layer, "Scale X", null);
+            attachMotionControls(sySegments, layer, "Scale Y", null);
+          }
+          var exprScale =
+            "var base=value;\n" +
+            buildExprTimeVar() +
+            "var sx=1; var sy=1;\n" +
+            "var s=1;\n" +
+            (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", 1) + "sx=s; sy=s;\n" : "") +
+            (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", 1) : "") +
+            (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", 1) : "") +
+            "[base[0]*sx, base[1]*sy];";
+          scaleProp.expression = exprScale;
+        } else if (scaleProp) {
+          applyVectorSegmentsKeyframes(
+            scaleProp,
+            [scaleSegments, sxSegments, sySegments],
+            function (t) {
+              var sx = 1;
+              var sy = 1;
+              if (scaleSegments.length) {
+                var s = evalSegmentedValueAtTime(scaleSegments, t, 1);
+                sx = s;
+                sy = s;
+              }
+              if (sxSegments.length) sx = evalSegmentedValueAtTime(sxSegments, t, 1);
+              if (sySegments.length) sy = evalSegmentedValueAtTime(sySegments, t, 1);
+              return [baseScale[0] * sx, baseScale[1] * sy];
+            },
+            layerOffset
+          );
+        }
       }
     }
 
@@ -2152,8 +2214,13 @@
       var rotSegments = buildMotionSegments(motionList, "rotation", baseRot, 1, null);
       var rotateSegments = buildMotionSegments(motionList, "rotate", baseRot, 1, null);
       var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
-      if (useRotSegments.length && rotationProp.canSetExpression) {
-        rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
+      if (useRotSegments.length) {
+        if (useExpr && rotationProp.canSetExpression) {
+          if (useExpr) attachMotionControls(useRotSegments, layer, "Rotation", null);
+          rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
+        } else {
+          applyScalarSegmentsKeyframes(rotationProp, useRotSegments, baseRot, layerOffset);
+        }
       }
     }
   }
@@ -2171,10 +2238,12 @@
     return null;
   }
 
-  function applySvgEllipseSizeMotion(group, motionList, svgEl) {
+  function applySvgEllipseSizeMotion(group, motionList, svgEl, layer) {
     if (!group || !motionList || !motionList.length || !svgEl) return;
+    if (!isAnimationEnabled()) return;
     var sizeProp = getVectorEllipseSizeProp(group);
-    if (!sizeProp || !sizeProp.canSetExpression) return;
+    if (!sizeProp) return;
+    var useExpr = useExpressionAnimation();
     var baseSize = sizeProp.value;
     if (!baseSize || baseSize.length < 2) return;
 
@@ -2202,11 +2271,31 @@
       expr += "var w=rx*2; var h=ry*2;\n[w,h];";
     }
 
-    sizeProp.expression = expr;
+    if (useExpr && sizeProp.canSetExpression) {
+      sizeProp.expression = expr;
+    } else {
+      var layerOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
+      applyVectorSegmentsKeyframes(
+        sizeProp,
+        [rSegments, rxSegments, rySegments],
+        function (t) {
+          if (useUniform) {
+            var r = evalSegmentedValueAtTime(rSegments, t, baseRx);
+            var d = r * 2;
+            return [d, d];
+          }
+          var rx = hasRx ? evalSegmentedValueAtTime(rxSegments, t, baseRx) : baseRx;
+          var ry = hasRy ? evalSegmentedValueAtTime(rySegments, t, baseRy) : baseRy;
+          return [rx * 2, ry * 2];
+        },
+        layerOffset
+      );
+    }
   }
 
   function applySvgInternalMotion(layer, svgData, motionList, skipGroupName, motionStartOffset) {
     if (!layer || !svgData || !motionList || !motionList.length) return;
+    if (!isAnimationEnabled()) return;
     var startOffset = isFinite(motionStartOffset) ? motionStartOffset : 0;
     withMotionTimeOffset(startOffset, function () {
       var contents = layer.property("Contents");
@@ -2227,12 +2316,12 @@
           normalizeSvgGroupOpacityForMotion(group, svgEl);
         }
         if (skipGroup) {
-          if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl);
+          if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl, layer);
           continue;
         }
         var bbox = svgEl ? getSvgElementBounds(svgEl, svgData) : null;
-        applyVectorGroupMotion(group, groupMotion, bbox || null);
-        if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl);
+        applyVectorGroupMotion(group, groupMotion, bbox || null, layer);
+        if (svgEl) applySvgEllipseSizeMotion(group, groupMotion, svgEl, layer);
       }
     });
   }
@@ -2447,10 +2536,12 @@
 
   function applySvgStrokeDashMotion(layers, motionList) {
     if (!layers || !layers.length || !motionList || !motionList.length) return;
+    if (!isAnimationEnabled()) return;
     for (var i = 0; i < layers.length; i++) {
       var layer = layers[i];
       if (!layer) continue;
       var startOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
+      var useExpr = useExpressionAnimation();
       withMotionTimeOffset(startOffset, function () {
         var layerMotion = filterMotionForLayer(motionList, layer.name);
         if (!layerMotion.length) return;
@@ -2469,19 +2560,27 @@
           var baseStart = startProp ? startProp.value : 0;
           var baseEnd = endProp ? endProp.value : 100;
           var usePercent = hasPercentMotionProp(layerMotion, "drawSVG");
-          if (startProp && startProp.canSetExpression) {
+          if (startProp) {
             var startSegments = buildDrawSvgSegments(layerMotion, baseStart, baseEnd, usePercent, "start");
-            attachMotionControls(startSegments, layer, "Trim Start", null);
             if (startSegments.length) {
-              startProp.expression = buildSegmentedScalarExpression(startSegments, baseStart);
+              if (useExpr && startProp.canSetExpression) {
+                if (useExpr) attachMotionControls(startSegments, layer, "Trim Start", null);
+                startProp.expression = buildSegmentedScalarExpression(startSegments, baseStart);
+              } else {
+                applyScalarSegmentsKeyframes(startProp, startSegments, baseStart, startOffset);
+              }
             }
           }
-          if (endProp && endProp.canSetExpression) {
+          if (endProp) {
             var baseEnd = endProp.value;
             var endSegments = buildDrawSvgSegments(layerMotion, baseStart, baseEnd, usePercent, "end");
-            attachMotionControls(endSegments, layer, "Trim End", null);
             if (endSegments.length) {
-              endProp.expression = buildSegmentedScalarExpression(endSegments, baseEnd);
+              if (useExpr && endProp.canSetExpression) {
+                if (useExpr) attachMotionControls(endSegments, layer, "Trim End", null);
+                endProp.expression = buildSegmentedScalarExpression(endSegments, baseEnd);
+              } else {
+                applyScalarSegmentsKeyframes(endProp, endSegments, baseEnd, startOffset);
+              }
             }
           }
           return;
@@ -2496,15 +2595,19 @@
           var trim = getOrAddTrimPaths(contents);
           if (!trim) return;
           var endProp = trim.property("ADBE Vector Trim End");
-          if (endProp && endProp.canSetExpression) {
+          if (endProp) {
             var convertFn = function (v) {
               return (1 - v / dashLen) * 100;
             };
             var endSegments = buildMotionSegments(animatedOffset, "strokeDashoffset", baseOffset, 1, convertFn);
             var baseEnd = convertFn(baseOffset);
-            attachMotionControls(endSegments, layer, "Trim End", null);
             if (endSegments.length) {
-              endProp.expression = buildSegmentedScalarExpression(endSegments, baseEnd);
+              if (useExpr && endProp.canSetExpression) {
+                if (useExpr) attachMotionControls(endSegments, layer, "Trim End", null);
+                endProp.expression = buildSegmentedScalarExpression(endSegments, baseEnd);
+              } else {
+                applyScalarSegmentsKeyframes(endProp, endSegments, baseEnd, startOffset);
+              }
             }
           }
           return;
@@ -2521,27 +2624,39 @@
           if (hasDashArray) {
             var dashProp = getOrAddDashProp(dashes, "ADBE Vector Stroke Dash 1");
             var gapProp = getOrAddDashProp(dashes, "ADBE Vector Stroke Gap 1");
-            if (dashProp && dashProp.canSetExpression) {
+            if (dashProp) {
               var baseDash = dashProp.value;
               var dashSegments = buildMotionSegments(layerMotion, "strokeDasharray", baseDash, 1, null);
-              attachMotionControls(dashSegments, layer, "Stroke Dash", null);
-              dashProp.expression = buildSegmentedScalarExpression(dashSegments, baseDash);
+              if (useExpr && dashProp.canSetExpression) {
+                if (useExpr) attachMotionControls(dashSegments, layer, "Stroke Dash", null);
+                dashProp.expression = buildSegmentedScalarExpression(dashSegments, baseDash);
+              } else {
+                applyScalarSegmentsKeyframes(dashProp, dashSegments, baseDash, startOffset);
+              }
             }
-            if (gapProp && gapProp.canSetExpression) {
+            if (gapProp) {
               var baseGap = gapProp.value;
               var gapSegments = buildMotionSegments(layerMotion, "strokeDasharray", baseGap, 1, null);
-              attachMotionControls(gapSegments, layer, "Stroke Gap", null);
-              gapProp.expression = buildSegmentedScalarExpression(gapSegments, baseGap);
+              if (useExpr && gapProp.canSetExpression) {
+                if (useExpr) attachMotionControls(gapSegments, layer, "Stroke Gap", null);
+                gapProp.expression = buildSegmentedScalarExpression(gapSegments, baseGap);
+              } else {
+                applyScalarSegmentsKeyframes(gapProp, gapSegments, baseGap, startOffset);
+              }
             }
           }
 
           if (hasDashOffset) {
             var offsetProp = dashes.property("ADBE Vector Stroke Offset");
-            if (offsetProp && offsetProp.canSetExpression) {
+            if (offsetProp) {
               var baseOffset = offsetProp.value;
               var offsetSegments = buildMotionSegments(layerMotion, "strokeDashoffset", baseOffset, 1, null);
-              attachMotionControls(offsetSegments, layer, "Stroke Offset", null);
-              offsetProp.expression = buildSegmentedScalarExpression(offsetSegments, baseOffset);
+              if (useExpr && offsetProp.canSetExpression) {
+                if (useExpr) attachMotionControls(offsetSegments, layer, "Stroke Offset", null);
+                offsetProp.expression = buildSegmentedScalarExpression(offsetSegments, baseOffset);
+              } else {
+                applyScalarSegmentsKeyframes(offsetProp, offsetSegments, baseOffset, startOffset);
+              }
             }
           }
         }

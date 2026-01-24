@@ -1,6 +1,9 @@
 function artifact() {
   // Enable verbose logs in the AE console.
   var AE2_DEBUG = true;
+  // Global animation switches.
+  var ANIMATION = true;
+  var ANIMATION_EXPRESSION = false;
   //@include "../Global Function/Modules/patch.array.js"
   //@include "../Global Function/Modules/patch.object.js"
   //@include "../Global Function/Modules/patch.string.js"

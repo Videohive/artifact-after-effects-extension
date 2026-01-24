@@ -3,11 +3,21 @@
   // ============================================================
 
   var AE2_DEBUG = typeof AE2_DEBUG !== "undefined" ? AE2_DEBUG : false;
+  var ANIMATION = typeof ANIMATION !== "undefined" ? ANIMATION : true;
+  var ANIMATION_EXPRESSION = typeof ANIMATION_EXPRESSION !== "undefined" ? ANIMATION_EXPRESSION : true;
   var AE2_MOTION_TIME_OFFSET = 0;
   var AE2_COMP_TIME_OFFSET = 0;
   var COLOR_CONTROL_REGISTRY = COLOR_CONTROL_REGISTRY || {};
   var CONTROLS_COMP_NAME = CONTROLS_COMP_NAME || null;
   var CONTROLS_LAYER_NAME = CONTROLS_LAYER_NAME || "Controls";
+
+  function isAnimationEnabled() {
+    return ANIMATION === true;
+  }
+
+  function useExpressionAnimation() {
+    return ANIMATION === true && ANIMATION_EXPRESSION === true;
+  }
 
   function debugLog(msg) {
     if (!AE2_DEBUG) return;
@@ -720,6 +730,123 @@
     return buildExprTimeVar() + "var base=value;\n" + buildSegmentedVarExpr(segments, "v", "base") + "v;";
   }
 
+  function parseCustomEaseSamples(easeStr) {
+    if (!easeStr) return null;
+    var raw = String(easeStr).trim();
+    var customPrefix = "ae2custom:";
+    if (raw.indexOf(customPrefix) !== 0) return null;
+    var data = raw.slice(customPrefix.length);
+    if (!data) return null;
+    var parts = data.split(",");
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var n = parseFloat(String(parts[i]).trim());
+      if (isFinite(n)) out.push(n);
+    }
+    return out.length >= 2 ? out : null;
+  }
+
+  function evalCustomEaseAt(samples, p) {
+    if (!samples || !samples.length) return p;
+    if (p <= 0) return samples[0];
+    if (p >= 1) return samples[samples.length - 1];
+    var idx = p * (samples.length - 1);
+    var i = Math.floor(idx);
+    var f = idx - i;
+    var v0 = samples[i];
+    var v1 = samples[i + 1 >= samples.length ? samples.length - 1 : i + 1];
+    return v0 + (v1 - v0) * f;
+  }
+
+  function collectSegmentTimes(segmentLists) {
+    var map = {};
+    var out = [];
+    if (!segmentLists || !segmentLists.length) return out;
+    for (var i = 0; i < segmentLists.length; i++) {
+      var list = segmentLists[i];
+      if (!list || !list.length) continue;
+      for (var j = 0; j < list.length; j++) {
+        var seg = list[j];
+        if (!seg) continue;
+        var samples = parseCustomEaseSamples(seg.ease);
+        if (isFinite(seg.t0) && !map[seg.t0]) {
+          map[seg.t0] = true;
+          out.push(seg.t0);
+        }
+        if (isFinite(seg.t1) && !map[seg.t1]) {
+          map[seg.t1] = true;
+          out.push(seg.t1);
+        }
+        if (samples && samples.length > 2 && isFinite(seg.t0) && isFinite(seg.t1) && seg.t1 > seg.t0) {
+          for (var s = 0; s < samples.length; s++) {
+            var p = samples.length === 1 ? 0 : s / (samples.length - 1);
+            var t = seg.t0 + (seg.t1 - seg.t0) * p;
+            if (!map[t]) {
+              map[t] = true;
+              out.push(t);
+            }
+          }
+        }
+      }
+    }
+    out.sort(function (a, b) {
+      return a - b;
+    });
+    return out;
+  }
+
+  function evalSegmentedValueAtTime(segments, t, baseValue) {
+    if (!segments || !segments.length) return baseValue;
+    var v = isFinite(segments[0].v0) ? segments[0].v0 : baseValue;
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      if (!seg) continue;
+      if (t < seg.t0) break;
+      var v0 = isFinite(seg.v0) ? seg.v0 : v;
+      var v1 = isFinite(seg.v1) ? seg.v1 : v0;
+      if (seg.t1 <= seg.t0) {
+        v = t <= seg.t0 ? v0 : v1;
+      } else if (t <= seg.t1) {
+        var p = (t - seg.t0) / (seg.t1 - seg.t0);
+        var samples = parseCustomEaseSamples(seg.ease);
+        var y = samples ? evalCustomEaseAt(samples, p) : p;
+        v = v0 + (v1 - v0) * y;
+      } else {
+        v = v1;
+      }
+    }
+    return v;
+  }
+
+  function applyScalarSegmentsKeyframes(prop, segments, baseValue, layerOffset) {
+    if (!prop || !segments || !segments.length) return;
+    var times = collectSegmentTimes([segments]);
+    if (!times.length) return;
+    var offset = isFinite(layerOffset) ? layerOffset : 0;
+    for (var i = 0; i < times.length; i++) {
+      var t = times[i];
+      var v = evalSegmentedValueAtTime(segments, t, baseValue);
+      try {
+        prop.setValueAtTime(t + offset, v);
+      } catch (e) {}
+    }
+  }
+
+  function applyVectorSegmentsKeyframes(prop, segmentLists, computeValue, layerOffset) {
+    if (!prop || !segmentLists || !segmentLists.length || !computeValue) return;
+    var times = collectSegmentTimes(segmentLists);
+    if (!times.length) return;
+    var offset = isFinite(layerOffset) ? layerOffset : 0;
+    for (var i = 0; i < times.length; i++) {
+      var t = times[i];
+      var value = computeValue(t);
+      if (!value) continue;
+      try {
+        prop.setValueAtTime(t + offset, value);
+      } catch (e) {}
+    }
+  }
+
   function buildEaseFunctionSource(easeStr) {
     if (!easeStr) return "function(t){return t;}";
     var raw = String(easeStr).trim();
@@ -1216,22 +1343,33 @@
 
     var offsetProp = selector.property("ADBE Text Percent Offset");
     var splitTween = findSplitTween(motionList, useImplicitSplit);
-    if (offsetProp && splitTween && offsetProp.canSetExpression) {
+    if (offsetProp && splitTween) {
       var t0 = getMotionStart(splitTween);
       var dur = splitTween.time && isFinite(splitTween.time.duration) ? splitTween.time.duration : 0;
       var stagger = splitTween.time && isFinite(splitTween.time.stagger) ? splitTween.time.stagger : 0;
       var t1 = t0 + dur + stagger;
       var ease = splitTween.time && splitTween.time.ease ? splitTween.time.ease : null;
-      offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
+      if (useExpressionAnimation() && offsetProp.canSetExpression) {
+        offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
+      } else if (isAnimationEnabled()) {
+        var layerOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
+        try {
+          offsetProp.setValueAtTime(t0 + layerOffset, 0);
+          offsetProp.setValueAtTime(t1 + layerOffset, 100);
+        } catch (e) {}
+      }
     }
 
   }
 
   function applyMotion(layer, node, bbox, motionStartOffset) {
     if (!layer || !node || !node.motion || !node.motion.length) return 0;
+    if (!isAnimationEnabled()) return 0;
     var motionList = node.motion;
     var startOffset = isFinite(motionStartOffset) ? motionStartOffset : getMotionStartOffset(motionList);
     if (startOffset > 0) applyLayerMotionOffset(layer, startOffset);
+    var useExpr = useExpressionAnimation();
+    var layerOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
 
     withMotionTimeOffset(startOffset, function () {
       applyMotionTransformOrigin(layer, motionList, bbox);
@@ -1260,10 +1398,12 @@
       var opacityProp = layer.property("Transform").property("Opacity");
       var baseOpacity = opacityProp.value;
       var opacitySegments = buildMotionSegments(motionList, "opacity", baseOpacity / 100, 100, null);
-      attachMotionControls(opacitySegments, layer, "Opacity", null);
       if (opacitySegments.length) {
-        if (opacityProp.canSetExpression) {
+        if (useExpr && opacityProp.canSetExpression) {
+          if (useExpr) attachMotionControls(opacitySegments, layer, "Opacity", null);
           opacityProp.expression = buildSegmentedScalarExpression(opacitySegments, baseOpacity);
+        } else {
+          applyScalarSegmentsKeyframes(opacityProp, opacitySegments, baseOpacity, layerOffset);
         }
       }
 
@@ -1287,25 +1427,46 @@
       });
       xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
       yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
-      attachMotionControls(xSegments, layer, "Position X", null);
-      attachMotionControls(ySegments, layer, "Position Y", null);
-      attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {
-        return "(" + expr + "/100)*" + axisW;
-      });
-      attachMotionControls(yPercentSegments, layer, "Position Y Percent", function (expr) {
-        return "(" + expr + "/100)*" + axisH;
-      });
       if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
-        var expr =
-          "var base=value;\n" +
-          buildExprTimeVar() +
-          buildSegmentedVarExpr(xSegments, "tx", 0) +
-          buildSegmentedVarExpr(ySegments, "ty", 0) +
-          buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
-          buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
-          "[base[0]+tx+txp, base[1]+ty+typ];";
         var posProp = layer.property("Transform").property("Position");
-        if (posProp.canSetExpression) posProp.expression = expr;
+        if (useExpr && posProp.canSetExpression) {
+          if (useExpr) {
+            attachMotionControls(xSegments, layer, "Position X", null);
+            attachMotionControls(ySegments, layer, "Position Y", null);
+            attachMotionControls(xPercentSegments, layer, "Position X Percent", function (expr) {
+              return "(" + expr + "/100)*" + axisW;
+            });
+            attachMotionControls(yPercentSegments, layer, "Position Y Percent", function (expr) {
+              return "(" + expr + "/100)*" + axisH;
+            });
+          }
+          var expr =
+            "var base=value;\n" +
+            buildExprTimeVar() +
+            buildSegmentedVarExpr(xSegments, "tx", 0) +
+            buildSegmentedVarExpr(ySegments, "ty", 0) +
+            buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
+            buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
+            "[base[0]+tx+txp, base[1]+ty+typ];";
+          posProp.expression = expr;
+        } else if (posProp) {
+          applyVectorSegmentsKeyframes(
+            posProp,
+            [xSegments, ySegments, xPercentSegments, yPercentSegments],
+            function (t) {
+              var x =
+                basePos[0] +
+                evalSegmentedValueAtTime(xSegments, t, 0) +
+                (axisW ? (evalSegmentedValueAtTime(xPercentSegments, t, 0) / 100) * axisW : 0);
+              var y =
+                basePos[1] +
+                evalSegmentedValueAtTime(ySegments, t, 0) +
+                (axisH ? (evalSegmentedValueAtTime(yPercentSegments, t, 0) / 100) * axisH : 0);
+              return [x, y];
+            },
+            layerOffset
+          );
+        }
       }
 
       // Scale
@@ -1370,11 +1531,6 @@
         );
         heightSegments = mergeMotionSegments(heightAbsSegments, heightPercentSegments);
       }
-      attachMotionControls(scaleSegments, layer, "Scale", null);
-      attachMotionControls(sxSegments, layer, "Scale X", null);
-      attachMotionControls(sySegments, layer, "Scale Y", null);
-      attachMotionControls(widthSegments, layer, "Width", null);
-      attachMotionControls(heightSegments, layer, "Height", null);
       if (
         scaleSegments.length ||
         sxSegments.length ||
@@ -1382,20 +1538,49 @@
         widthSegments.length ||
         heightSegments.length
       ) {
-        var expr =
-          "var base=value;\n" +
-          buildExprTimeVar() +
-          "var sx=base[0]; var sy=base[1];\n" +
-          "var s=" +
-          baseScale[0] +
-          ";\n" +
-          (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", baseScale[0]) + "sx=s; sy=s;\n" : "") +
-          (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", baseScale[0]) : "") +
-          (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", baseScale[1]) : "") +
-          (widthSegments.length ? buildSegmentedVarExpr(widthSegments, "sx", baseScale[0]) : "") +
-          (heightSegments.length ? buildSegmentedVarExpr(heightSegments, "sy", baseScale[1]) : "") +
-          "[sx, sy];";
-        if (scaleProp.canSetExpression) scaleProp.expression = expr;
+        if (useExpr && scaleProp.canSetExpression) {
+          if (useExpr) {
+            attachMotionControls(scaleSegments, layer, "Scale", null);
+            attachMotionControls(sxSegments, layer, "Scale X", null);
+            attachMotionControls(sySegments, layer, "Scale Y", null);
+            attachMotionControls(widthSegments, layer, "Width", null);
+            attachMotionControls(heightSegments, layer, "Height", null);
+          }
+          var expr =
+            "var base=value;\n" +
+            buildExprTimeVar() +
+            "var sx=base[0]; var sy=base[1];\n" +
+            "var s=" +
+            baseScale[0] +
+            ";\n" +
+            (scaleSegments.length ? buildSegmentedVarExpr(scaleSegments, "s", baseScale[0]) + "sx=s; sy=s;\n" : "") +
+            (sxSegments.length ? buildSegmentedVarExpr(sxSegments, "sx", baseScale[0]) : "") +
+            (sySegments.length ? buildSegmentedVarExpr(sySegments, "sy", baseScale[1]) : "") +
+            (widthSegments.length ? buildSegmentedVarExpr(widthSegments, "sx", baseScale[0]) : "") +
+            (heightSegments.length ? buildSegmentedVarExpr(heightSegments, "sy", baseScale[1]) : "") +
+            "[sx, sy];";
+          scaleProp.expression = expr;
+        } else if (scaleProp) {
+          applyVectorSegmentsKeyframes(
+            scaleProp,
+            [scaleSegments, sxSegments, sySegments, widthSegments, heightSegments],
+            function (t) {
+              var sx = baseScale[0];
+              var sy = baseScale[1];
+              if (scaleSegments.length) {
+                var s = evalSegmentedValueAtTime(scaleSegments, t, baseScale[0]);
+                sx = s;
+                sy = s;
+              }
+              if (sxSegments.length) sx = evalSegmentedValueAtTime(sxSegments, t, baseScale[0]);
+              if (sySegments.length) sy = evalSegmentedValueAtTime(sySegments, t, baseScale[1]);
+              if (widthSegments.length) sx = evalSegmentedValueAtTime(widthSegments, t, baseScale[0]);
+              if (heightSegments.length) sy = evalSegmentedValueAtTime(heightSegments, t, baseScale[1]);
+              return [sx, sy];
+            },
+            layerOffset
+          );
+        }
       }
 
       // Rotation
@@ -1412,15 +1597,17 @@
         // Rebuild with base values for rotation if missing in segments.
         var motionKey = rotSegments.length ? "rotation" : "rotate";
         useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
-        attachMotionControls(useRotSegments, layer, "Rotation", null);
-        if (rotationProp.canSetExpression) {
+        if (useExpr && rotationProp.canSetExpression) {
+          if (useExpr) attachMotionControls(useRotSegments, layer, "Rotation", null);
           rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
+        } else if (rotationProp) {
+          applyScalarSegmentsKeyframes(rotationProp, useRotSegments, baseRot, layerOffset);
         }
       }
 
       // Filter blur -> Gaussian Blur (attach controls after all effects)
       if (blurSegments.length && blurEffectIndex !== null) {
-        attachMotionControls(blurSegments, layer, "Blur", null);
+        if (useExpr) attachMotionControls(blurSegments, layer, "Blur", null);
         var effects = layer.property("Effects");
         var blurEffectFinal = effects ? effects.property(blurEffectIndex) : null;
         if (blurEffectFinal) {
@@ -1442,12 +1629,11 @@
               } catch (e) {
                 canExpr = false;
               }
-              if (canExpr) {
+              if (useExpr && canExpr) {
                 try {
                   blurProp.expression = buildSegmentedScalarExpression(blurSegments, baseBlur);
                 } catch (e) {}
               } else {
-                var layerOffset = layer ? layer.inPoint : 0;
                 for (var b = 0; b < blurSegments.length; b++) {
                   try {
                     blurProp.setValueAtTime(blurSegments[b].t0 + layerOffset, blurSegments[b].v0);
@@ -1814,14 +2000,16 @@
 
   function applyClipPathMotion(layer, node, bbox) {
     if (!layer || !node || !node.motion || !node.motion.length || !bbox) return;
+    if (!isAnimationEnabled()) return;
     var pathProp = findFirstShapePathProp(layer);
     if (!pathProp) return;
     var segments = collectClipPathSegments(node.motion);
     if (!segments.length) return;
+    var useExpr = useExpressionAnimation();
 
     var startOffset = getMotionStartOffset(node.motion);
     withMotionTimeOffset(startOffset, function () {
-      if (pathProp.canSetExpression) {
+      if (useExpr && pathProp.canSetExpression) {
         var mode = detectClipPathType(node.motion, bbox);
         if (mode === "polygon") {
           var polySegs = buildClipPathPolygonSegments(node.motion, bbox);

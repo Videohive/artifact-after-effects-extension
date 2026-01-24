@@ -3,7 +3,9 @@ function artifact() {
   var AE2_DEBUG = true;
   // Global animation switches.
   var ANIMATION = true;
-  var ANIMATION_EXPRESSION = false;
+  var ANIMATION_EXPRESSION = true;
+  // Global grouping switch (precomps for groups).
+  var GROUP = false;
   //@include "../Global Function/Modules/patch.array.js"
   //@include "../Global Function/Modules/patch.object.js"
   //@include "../Global Function/Modules/patch.string.js"

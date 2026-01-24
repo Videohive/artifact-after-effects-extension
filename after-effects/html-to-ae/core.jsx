@@ -2,6 +2,8 @@
   // CORE
   // ============================================================
 
+  var GROUP = typeof GROUP !== "undefined" ? GROUP : true;
+
   function createSlideComp(data, parentFolder) {
     var w = Math.round(data.viewport.width);
     var h = Math.round(data.viewport.height);
@@ -173,6 +175,10 @@
     var wantsPrecomp =
       (node.renderHints && node.renderHints.needsPrecomp === true) ||
       (node.clip && node.clip.enabled === true);
+    if (GROUP === false && node.type === "group") {
+      // Keep precomp only when a clip requires it.
+      wantsPrecomp = node.clip && node.clip.enabled === true;
+    }
     var allowRootPrecomp = false;
     if (isRoot && wantsPrecomp && node.bbox) {
       var rootW = Math.round(node.bbox.w);

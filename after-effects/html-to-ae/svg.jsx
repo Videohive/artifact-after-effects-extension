@@ -2166,6 +2166,7 @@
 
     var scaleProp = tr.property("Scale");
     if (scaleProp) {
+      var baseScale = scaleProp.value;
       var scaleSegments = buildMotionSegments(motionList, "scale", 1, 1, null);
       var sxSegments = buildMotionSegments(motionList, "scaleX", 1, 1, null);
       var sySegments = buildMotionSegments(motionList, "scaleY", 1, 1, null);

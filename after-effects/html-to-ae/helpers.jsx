@@ -1421,8 +1421,18 @@
         }
       }
 
-      // Position (x/y offsets)
+      // Position (x/y/z offsets)
+      var zSegments = buildMotionSegments(motionList, "z", 0, 1, null);
+      var rotXSegments = buildMotionSegments(motionList, "rotateX", 0, 1, null);
+      var rotYSegments = buildMotionSegments(motionList, "rotateY", 0, 1, null);
+      if ((zSegments && zSegments.length) || (rotXSegments && rotXSegments.length) || (rotYSegments && rotYSegments.length)) {
+        try {
+          layer.threeDLayer = true;
+        } catch (e) {}
+      }
+
       var basePos = layer.property("Transform").property("Position").value;
+      var basePosZ = basePos && basePos.length > 2 ? basePos[2] : 0;
       var axisW = bbox && isFinite(bbox.w) ? bbox.w : 0;
       var axisH = bbox && isFinite(bbox.h) ? bbox.h : 0;
       var xSegments = buildMotionSegments(motionList, "x", 0, 1, null, function (entry) {
@@ -1441,7 +1451,7 @@
       });
       xPercentSegments = mergeMotionSegments(xPercentSegments, xPercentFromX);
       yPercentSegments = mergeMotionSegments(yPercentSegments, yPercentFromY);
-      if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length) {
+      if (xSegments.length || ySegments.length || xPercentSegments.length || yPercentSegments.length || zSegments.length) {
         var posProp = layer.property("Transform").property("Position");
         if (useExpr && posProp.canSetExpression) {
           if (useExpr) {
@@ -1461,12 +1471,15 @@
             buildSegmentedVarExpr(ySegments, "ty", 0) +
             buildSegmentedVarExpr(xPercentSegments, "txp", 0) +
             buildSegmentedVarExpr(yPercentSegments, "typ", 0) +
-            "[base[0]+tx+txp, base[1]+ty+typ];";
+            (zSegments.length ? buildSegmentedVarExpr(zSegments, "tz", 0) : "var tz=0;\n") +
+            (layer.threeDLayer
+              ? "[base[0]+tx+txp, base[1]+ty+typ, (base.length>2?base[2]:0)+tz];"
+              : "[base[0]+tx+txp, base[1]+ty+typ];");
           posProp.expression = expr;
         } else if (posProp) {
           applyVectorSegmentsKeyframes(
             posProp,
-            [xSegments, ySegments, xPercentSegments, yPercentSegments],
+            [xSegments, ySegments, xPercentSegments, yPercentSegments, zSegments],
             function (t) {
               var x =
                 basePos[0] +
@@ -1476,7 +1489,8 @@
                 basePos[1] +
                 evalSegmentedValueAtTime(ySegments, t, 0) +
                 (axisH ? (evalSegmentedValueAtTime(yPercentSegments, t, 0) / 100) * axisH : 0);
-              return [x, y];
+              var z = basePosZ + evalSegmentedValueAtTime(zSegments, t, 0);
+              return layer.threeDLayer ? [x, y, z] : [x, y];
             },
             layerOffset
           );
@@ -1597,12 +1611,14 @@
         }
       }
 
-      // Rotation
+      // Rotation (Z)
       var rotSegments = buildMotionSegments(motionList, "rotation", 0, 1, null);
       var rotateSegments = buildMotionSegments(motionList, "rotate", 0, 1, null);
       var rotateZSegments = buildMotionSegments(motionList, "rotateZ", 0, 1, null);
-      var rotationProp = layer.property("Transform").property("Rotation");
-      var baseRot = rotationProp.value;
+      var rotationProp = layer.threeDLayer
+        ? layer.property("Transform").property("Z Rotation")
+        : layer.property("Transform").property("Rotation");
+      var baseRot = rotationProp ? rotationProp.value : 0;
       var useRotSegments = rotSegments.length ? rotSegments : rotateSegments;
       if (!useRotSegments.length && rotateZSegments.length) useRotSegments = rotateZSegments;
       if (useRotSegments.length) {
@@ -1617,11 +1633,35 @@
         // Rebuild with base values for rotation if missing in segments.
         var motionKey = rotSegments.length ? "rotation" : rotateSegments.length ? "rotate" : "rotateZ";
         useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
-        if (useExpr && rotationProp.canSetExpression) {
+        if (rotationProp && useExpr && rotationProp.canSetExpression) {
           if (useExpr) attachMotionControls(useRotSegments, layer, "Rotation", null);
           rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);
         } else if (rotationProp) {
           applyScalarSegmentsKeyframes(rotationProp, useRotSegments, baseRot, layerOffset);
+        }
+      }
+
+      // Rotation (X/Y)
+      if ((rotXSegments && rotXSegments.length) || (rotYSegments && rotYSegments.length)) {
+        var rotXProp = layer.property("Transform").property("X Rotation");
+        var rotYProp = layer.property("Transform").property("Y Rotation");
+        if (rotXProp && rotXSegments.length) {
+          var baseRotX = rotXProp.value;
+          if (useExpr && rotXProp.canSetExpression) {
+            if (useExpr) attachMotionControls(rotXSegments, layer, "Rotation X", null);
+            rotXProp.expression = buildSegmentedScalarExpression(rotXSegments, baseRotX);
+          } else {
+            applyScalarSegmentsKeyframes(rotXProp, rotXSegments, baseRotX, layerOffset);
+          }
+        }
+        if (rotYProp && rotYSegments.length) {
+          var baseRotY = rotYProp.value;
+          if (useExpr && rotYProp.canSetExpression) {
+            if (useExpr) attachMotionControls(rotYSegments, layer, "Rotation Y", null);
+            rotYProp.expression = buildSegmentedScalarExpression(rotYSegments, baseRotY);
+          } else {
+            applyScalarSegmentsKeyframes(rotYProp, rotYSegments, baseRotY, layerOffset);
+          }
         }
       }
 

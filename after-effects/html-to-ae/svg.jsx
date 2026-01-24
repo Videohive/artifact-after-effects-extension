@@ -66,6 +66,9 @@
       if (rootSvgData && rootSvgData.patterns) {
         svgData.patterns = mergeSvgPatterns(svgData.patterns, rootSvgData.patterns);
       }
+      if (rootSvgData && rootSvgData.filters) {
+        svgData.filters = mergeSvgFilters(svgData.filters, rootSvgData.filters);
+      }
       normalizeSvgData(svgData, localBBox, rootData, rootSvgData);
 
       var hasShapes = svgData && svgData.elements && svgData.elements.length;
@@ -298,6 +301,9 @@
     applySvgViewBoxTransformToContents(contents, svgData, localBBox, extraTransform);
     applyPatternClipMask(layer, svgData, localBBox, extraTransform);
     applySvgInternalGroupAnchors(layer, svgData);
+    if (svgData && svgData._roughEdgesFallback && !svgData._roughEdgesApplied) {
+      applyLayerRoughenEdges(layer, svgData._roughEdgesFallbackInfo || null, scaleData);
+    }
     setLayerTopLeft(layer, localBBox);
     setLayerAnchorCenter(layer);
     return layer;
@@ -414,6 +420,7 @@
       height: 0,
       elements: [],
       patterns: {},
+      filters: {},
       preserveAspectRatio: "",
       percentWidth: false,
       percentHeight: false
@@ -463,6 +470,7 @@
     }
 
     collectSvgPatterns(svg, out.patterns);
+    collectSvgFilters(svg, out.filters);
 
     var svgNoDefs = stripSvgDefs(svg);
     collectSvgElements(svgNoDefs, "circle", out.elements);
@@ -518,6 +526,47 @@
       collectSvgElements(inner, "path", pattern.elements);
 
       outPatterns[id] = pattern;
+    }
+  }
+
+  function collectSvgFilters(svg, outFilters) {
+    if (!svg || !outFilters) return;
+    var re = /<filter\b[\s\S]*?<\/filter>/gi;
+    var match = null;
+    while ((match = re.exec(svg)) !== null) {
+      var block = match[0];
+      var openMatch = block.match(/<filter\b[^>]*>/i);
+      var openTag = openMatch ? openMatch[0] : "<filter>";
+      var attrs = parseSvgAttributes(openTag);
+      var styledAttrs = parseSvgStyleAttributes(attrs);
+      var id = styledAttrs.id || attrs.id;
+      if (!id) continue;
+
+      var info = {
+        id: id,
+        kind: "filter",
+        displacementScale: NaN,
+        baseFrequency: NaN,
+        numOctaves: NaN,
+        seed: NaN
+      };
+
+      var turbMatch = block.match(/<feTurbulence\b[^>]*>/i);
+      if (turbMatch && turbMatch[0]) {
+        var turbAttrs = parseSvgStyleAttributes(parseSvgAttributes(turbMatch[0]));
+        info.baseFrequency = parseSvgNumberList(turbAttrs.baseFrequency, NaN);
+        info.numOctaves = parseNumber(turbAttrs.numOctaves, NaN);
+        info.seed = parseNumber(turbAttrs.seed, NaN);
+      }
+
+      var dispMatch = block.match(/<feDisplacementMap\b[^>]*>/i);
+      if (dispMatch && dispMatch[0]) {
+        var dispAttrs = parseSvgStyleAttributes(parseSvgAttributes(dispMatch[0]));
+        info.displacementScale = parseNumber(dispAttrs.scale, NaN);
+        info.kind = "rough-edge";
+      }
+
+      outFilters[id] = info;
     }
   }
 
@@ -591,6 +640,14 @@
     return isNaN(n) ? fallback : n;
   }
 
+  function parseSvgNumberList(value, fallback) {
+    if (value === undefined || value === null || value === "") return fallback;
+    var m = String(value).match(/-?\d*\.?\d+(?:e[-+]?\d+)?/i);
+    if (!m || !m[0]) return fallback;
+    var n = parseFloat(m[0]);
+    return isNaN(n) ? fallback : n;
+  }
+
   function addSvgCircle(parentContents, attrs, svgData, scaleData, compName) {
     var cx = parseSvgLength(attrs.cx, svgData.width, 0);
     var cy = parseSvgLength(attrs.cy, svgData.height, 0);
@@ -607,6 +664,7 @@
     ellipse.property("Position").setValue([cx, cy]);
 
     applySvgPaint(grpContents, attrs, false, compName);
+    applySvgFilterEffects(grpContents, attrs, svgData, scaleData);
   }
 
   function addSvgEllipse(parentContents, attrs, svgData, scaleData, compName) {
@@ -625,6 +683,7 @@
     ellipse.property("Position").setValue([cx, cy]);
 
     applySvgPaint(grpContents, attrs, false, compName);
+    applySvgFilterEffects(grpContents, attrs, svgData, scaleData);
   }
 
   function addSvgRect(parentContents, attrs, svgData, scaleData, compName) {
@@ -659,6 +718,7 @@
     if (r > 0) rect.property("Roundness").setValue(r);
 
     applySvgPaint(grpContents, attrs, true, compName);
+    applySvgFilterEffects(grpContents, attrs, svgData, scaleData);
   }
 
   function addSvgRectStrokeOnly(parentContents, attrs, svgData, compName, x, y, w, h) {
@@ -697,6 +757,110 @@
       for (var j in localPatterns) out[j] = localPatterns[j];
     }
     return out;
+  }
+
+  function mergeSvgFilters(localFilters, rootFilters) {
+    var out = {};
+    if (rootFilters) {
+      for (var k in rootFilters) out[k] = rootFilters[k];
+    }
+    if (localFilters) {
+      for (var j in localFilters) out[j] = localFilters[j];
+    }
+    return out;
+  }
+
+  function parseSvgFilterRef(value) {
+    if (!value) return null;
+    var s = String(value).trim();
+    var m = s.match(/^url\(\s*(['"])?#([^'")]+)\1\s*\)$/i);
+    return m && m[2] ? m[2] : null;
+  }
+
+  function getEffectPropByNames(effect, names) {
+    if (!effect || !names) return null;
+    for (var i = 0; i < names.length; i++) {
+      var prop = effect.property(names[i]);
+      if (prop) return prop;
+    }
+    return null;
+  }
+
+  function normalizeRoughenScale(scaleData) {
+    if (!scaleData) return 1;
+    var s = scaleData.useNonUniformScale ? (scaleData.scaleX + scaleData.scaleY) / 2 : scaleData.scale;
+    if (!isFinite(s) || s <= 0) return 1;
+    return s;
+  }
+
+  function applyRoughenProps(effect, filterInfo, scaleData) {
+    if (!effect || !filterInfo) return;
+    var amount = isFinite(filterInfo.displacementScale) ? filterInfo.displacementScale : NaN;
+    var baseFreq = isFinite(filterInfo.baseFrequency) ? filterInfo.baseFrequency : NaN;
+    var size = isFinite(baseFreq) && baseFreq > 0 ? 1 / baseFreq : NaN;
+    var scale = normalizeRoughenScale(scaleData);
+    if (isFinite(amount)) amount = amount * scale;
+    if (isFinite(size)) size = size * scale;
+    if (isFinite(amount)) amount = Math.min(1000, Math.max(0, amount));
+    if (isFinite(size)) size = Math.min(1000, Math.max(0, size));
+
+    var borderProp = getEffectPropByNames(effect, ["Border", "Edge", "Roughness", "ADBE Roughen Edges-0001"]);
+    if (borderProp) borderProp.setValue(15);
+
+    var scaleProp = getEffectPropByNames(effect, ["Scale", "Size", "ADBE Roughen Edges-0002"]);
+    if (scaleProp && isFinite(size)) scaleProp.setValue(size);
+
+    var complexityProp = getEffectPropByNames(effect, ["Complexity", "ADBE Roughen Edges-0003"]);
+    if (complexityProp) complexityProp.setValue(10);
+  }
+
+  function applySvgRoughenEdges(grpContents, filterInfo, scaleData) {
+    if (!grpContents || !filterInfo) return false;
+    var rough = null;
+    try {
+      rough = grpContents.addProperty("ADBE Vector Filter - Roughen Edges");
+    } catch (e) {
+      rough = null;
+    }
+    if (!rough) return false;
+    applyRoughenProps(rough, filterInfo, scaleData);
+    return true;
+  }
+
+  function applyLayerRoughenEdges(layer, filterInfo, scaleData) {
+    if (!layer || !filterInfo) return;
+    var effects = layer.property("Effects");
+    if (!effects) return;
+    var effect = null;
+    try {
+      effect = effects.addProperty("ADBE Roughen Edges");
+    } catch (e) {
+      effect = null;
+    }
+    if (!effect) return;
+    applyRoughenProps(effect, filterInfo, scaleData);
+  }
+
+  function applySvgFilterEffects(grpContents, attrs, svgData, scaleData) {
+    if (!grpContents || !attrs || !svgData || !svgData.filters) return;
+    if (typeof CFG !== "undefined" && CFG.enableRoughEdges === false) return;
+    var styled = parseSvgStyleAttributes(attrs || {});
+    var filterId = parseSvgFilterRef(styled.filter);
+    if (!filterId) return;
+    var filterInfo = svgData.filters[filterId];
+    if (!filterInfo || filterInfo.kind !== "rough-edge") return;
+
+    var useVector = typeof CFG !== "undefined" ? !!CFG.roughEdgesUseVector : false;
+    var applied = false;
+    if (useVector) {
+      applied = applySvgRoughenEdges(grpContents, filterInfo, scaleData);
+    }
+    if (applied) {
+      svgData._roughEdgesApplied = (svgData._roughEdgesApplied || 0) + 1;
+    } else {
+      svgData._roughEdgesFallback = true;
+      if (!svgData._roughEdgesFallbackInfo) svgData._roughEdgesFallbackInfo = filterInfo;
+    }
   }
 
   function normalizePatternUnits(units) {
@@ -910,6 +1074,7 @@
     pathProp.property("Path").setValue(shape);
 
     applySvgPaint(grpContents, attrs, false, compName);
+    applySvgFilterEffects(grpContents, attrs, svgData, scaleData);
   }
 
   function addSvgPolyline(parentContents, attrs, closed, svgData, scaleData, compName) {
@@ -929,6 +1094,7 @@
     pathProp.property("Path").setValue(shape);
 
     applySvgPaint(grpContents, attrs, closed, compName);
+    applySvgFilterEffects(grpContents, attrs, svgData, scaleData);
   }
 
   function addSvgPath(parentContents, attrs, svgData, scaleData, compName) {
@@ -977,6 +1143,7 @@
       pathProp.property("Path").setValue(shape);
 
       applySvgPaint(grpContents, attrs, sp.closed, compName);
+      applySvgFilterEffects(grpContents, attrs, svgData, scaleData);
     }
   }
 

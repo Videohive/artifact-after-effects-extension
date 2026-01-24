@@ -9,6 +9,8 @@
     makeShapeForGroupsWithBg: true,
     placeShapesBelowChildren: true,
     labelPrecomps: true,
+    enableRoughEdges: true,
+    roughEdgesUseVector: false,
   };
 
   function pickNumber(values, fallback) {

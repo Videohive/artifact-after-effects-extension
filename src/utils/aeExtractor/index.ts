@@ -912,6 +912,7 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
     const opacity = style.getPropertyValue('opacity') || style.opacity;
     const strokeOpacity = style.getPropertyValue('stroke-opacity') || (style as any).strokeOpacity;
     const fillOpacity = style.getPropertyValue('fill-opacity') || (style as any).fillOpacity;
+    const filter = style.getPropertyValue('filter') || (style as any).filter;
     const fontFamily = style.getPropertyValue('font-family') || style.fontFamily;
     const fontSize = style.getPropertyValue('font-size') || style.fontSize;
     const fontWeight = style.getPropertyValue('font-weight') || style.fontWeight;
@@ -940,6 +941,8 @@ const inlineSvgStyles = (svgEl: SVGElement, win: Window): string => {
       copy.setAttribute('stroke-opacity', strokeOpacity);
     if (!copy.getAttribute('fill-opacity') && fillOpacity)
       copy.setAttribute('fill-opacity', fillOpacity);
+    if (!copy.getAttribute('filter') && filter && filter !== 'none')
+      copy.setAttribute('filter', filter);
 
     const existingFamily = copy.getAttribute('font-family');
     if (

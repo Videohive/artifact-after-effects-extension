@@ -616,19 +616,41 @@ const MOTION_CAPTURE_SCRIPT = `
 
     function normalizeEaseValue(value) {
       if (value == null) return null;
-      if (typeof value === 'string') return value;
+
+      function sampleEase(fn) {
+        var steps = 60;
+        var samples = [];
+        for (var i = 0; i <= steps; i += 1) {
+          var p = i / steps;
+          var y = fn(p);
+          if (!isFinite(y)) y = 0;
+          samples.push(Math.round(y * 1000000) / 1000000);
+        }
+        return 'ae2custom:' + samples.join(',');
+      }
+
+      if (typeof value === 'string') {
+        var raw = value.trim();
+        if (raw.indexOf('ae2custom:') === 0) return raw;
+        if (window.gsap && typeof window.gsap.parseEase === 'function') {
+          try {
+            var parsed = window.gsap.parseEase(raw);
+            if (typeof parsed === 'function') return sampleEase(parsed);
+          } catch (e0) {}
+        }
+        return raw;
+      }
+      if (value && typeof value.getRatio === 'function') {
+        try {
+          return sampleEase(function (p) {
+            return value.getRatio(p);
+          });
+        } catch (e0) {}
+      }
       if (typeof value === 'function') {
         try {
           if (value.custom) {
-            var steps = 60;
-            var samples = [];
-            for (var i = 0; i <= steps; i += 1) {
-              var p = i / steps;
-              var y = value(p);
-              if (!isFinite(y)) y = 0;
-              samples.push(Math.round(y * 1000000) / 1000000);
-            }
-            return 'ae2custom:' + samples.join(',');
+            return sampleEase(value);
           }
         } catch (e1) {}
         try {

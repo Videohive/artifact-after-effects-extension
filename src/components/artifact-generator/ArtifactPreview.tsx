@@ -9,6 +9,7 @@ type ArtifactPreviewProps = {
   codeDraft: string;
   baseWidth: number;
   baseHeight: number;
+  previewKey: string;
   iframeRef: React.RefObject<HTMLIFrameElement>;
   getCurrentFullHtml: () => string;
   onCodeChange: (value: string) => void;
@@ -172,6 +173,7 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
   codeDraft,
   baseWidth,
   baseHeight,
+  previewKey,
   iframeRef,
   getCurrentFullHtml,
   onCodeChange,
@@ -298,6 +300,7 @@ export const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({
               }}
             >
               <iframe
+                key={previewKey}
                 ref={iframeRef}
                 srcDoc={getCurrentFullHtml()}
                 title={viewMode === 'grid' ? 'Artifact Grid' : 'Artifact Preview'}

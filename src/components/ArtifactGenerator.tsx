@@ -59,6 +59,7 @@ const RESOLUTION_OPTIONS: ResolutionOption[] = [
   { id: '4k', label: '4K (3840x2160)', width: 3840, height: 2160 }
 ];
 
+
 const IMAGE_PROVIDER_OPTIONS: ImageProviderOption[] = [
   { id: 'placeholder', label: 'Placeholder' },
   { id: 'random', label: 'Random (All)' },
@@ -2471,6 +2472,60 @@ const PREVIEW_EDITOR_SCRIPT = `
       return doc.querySelector('.artifact') || doc.querySelector('.slide') || body;
     }
 
+    var sizeObserver = null;
+    var sizeRaf = null;
+    var lastRootSize = { width: 0, height: 0 };
+
+    function readRootSize(root) {
+      if (!root || !root.getBoundingClientRect) return null;
+      var rect = root.getBoundingClientRect();
+      var width = rect ? rect.width : 0;
+      var height = rect ? rect.height : 0;
+      if (!width || !height) {
+        var el = root === body ? doc.documentElement : root;
+        var scrollW = el && el.scrollWidth ? el.scrollWidth : 0;
+        var scrollH = el && el.scrollHeight ? el.scrollHeight : 0;
+        width = Math.max(width, scrollW);
+        height = Math.max(height, scrollH);
+      }
+      if (!width || !height) return null;
+      return { width: Math.round(width), height: Math.round(height) };
+    }
+
+    function postRootSize(root) {
+      var size = readRootSize(root || getRoot());
+      if (!size) return;
+      if (size.width === lastRootSize.width && size.height === lastRootSize.height) return;
+      lastRootSize = size;
+      try {
+        window.parent.postMessage(
+          { source: 'ae2-preview-editor', type: 'size', width: size.width, height: size.height },
+          '*'
+        );
+      } catch (err) {}
+    }
+
+    function scheduleRootSize(root) {
+      if (sizeRaf != null) return;
+      sizeRaf = requestAnimationFrame(function () {
+        sizeRaf = null;
+        postRootSize(root);
+      });
+    }
+
+    function installRootSizeObserver(root) {
+      if (!root) return;
+      if (sizeObserver && sizeObserver.disconnect) sizeObserver.disconnect();
+      if (typeof ResizeObserver === 'undefined') {
+        sizeObserver = null;
+        return;
+      }
+      sizeObserver = new ResizeObserver(function () {
+        scheduleRootSize(root);
+      });
+      sizeObserver.observe(root);
+    }
+
     function getRootHtml(root) {
       return root === body ? body.innerHTML : root.outerHTML;
     }
@@ -2530,6 +2585,9 @@ const PREVIEW_EDITOR_SCRIPT = `
       setHoverOverlayVisible(false);
       postLayers();
       postSelection();
+      var nextRoot = getRoot();
+      installRootSizeObserver(nextRoot);
+      scheduleRootSize(nextRoot);
     }
 
     function getSvgContentsRect(svgEl) {
@@ -2646,6 +2704,10 @@ const PREVIEW_EDITOR_SCRIPT = `
         applyLayerState();
         return;
       }
+      if (payload.type === 'request-size') {
+        scheduleRootSize(getRoot());
+        return;
+      }
       if (payload.type === 'request-layers') {
         postLayers();
         return;
@@ -2667,6 +2729,9 @@ const PREVIEW_EDITOR_SCRIPT = `
     setOverlayVisible(false);
     setHoverOverlayVisible(false);
     pushHistory(getCleanHtml(getRoot()));
+    var initRoot = getRoot();
+    installRootSizeObserver(initRoot);
+    scheduleRootSize(initRoot);
 
     doc.addEventListener('mousedown', onMouseDown, true);
     doc.addEventListener('dblclick', onDoubleClick, true);
@@ -2677,6 +2742,12 @@ const PREVIEW_EDITOR_SCRIPT = `
     doc.addEventListener('mouseup', finishDrag, true);
     window.addEventListener('resize', updateOverlay);
     window.addEventListener('resize', updateHoverOverlay);
+    window.addEventListener('resize', function () {
+      scheduleRootSize(getRoot());
+    });
+    window.addEventListener('load', function () {
+      scheduleRootSize(getRoot());
+    });
     window.addEventListener('scroll', updateOverlay, true);
     window.addEventListener('scroll', updateHoverOverlay, true);
     window.addEventListener('message', onParentMessage);
@@ -3909,6 +3980,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     width: PREVIEW_BASE_WIDTH,
     height: PREVIEW_BASE_HEIGHT
   });
+  const [previewBaseSize, setPreviewBaseSize] = useState({
+    width: PREVIEW_BASE_WIDTH,
+    height: PREVIEW_BASE_HEIGHT
+  });
   const [previewScale, setPreviewScale] = useState(1);
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewRevision, setPreviewRevision] = useState(0);
@@ -3976,13 +4051,20 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     if (!container) return;
 
     const updateScale = () => {
-      const { width } = container.getBoundingClientRect();
+      const rect = container.getBoundingClientRect();
+      const width = rect.width;
       if (width <= 0) return;
-      const nextScale = Math.min(width / PREVIEW_BASE_WIDTH, 1);
+      const baseW = Math.max(1, Number(previewBaseSize.width) || PREVIEW_BASE_WIDTH);
+      const baseH = Math.max(1, Number(previewBaseSize.height) || PREVIEW_BASE_HEIGHT);
+      const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 0;
+      const availableHeight = windowHeight > 0 ? Math.max(160, windowHeight - rect.top - 24) : Infinity;
+      const scaleW = width / baseW;
+      const scaleH = availableHeight / baseH;
+      const nextScale = Math.min(scaleW, scaleH);
       setPreviewScale(nextScale);
       setPreviewSize({
-        width: PREVIEW_BASE_WIDTH * nextScale,
-        height: PREVIEW_BASE_HEIGHT * nextScale
+        width: baseW * nextScale,
+        height: baseH * nextScale
       });
     };
 
@@ -3990,7 +4072,8 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const observer = new ResizeObserver(updateScale);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [artifacts.length]);
+  }, [artifacts.length, previewBaseSize.width, previewBaseSize.height]);
+
 
   useEffect(() => {
     loadHistory();
@@ -4602,6 +4685,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       }
       historySkipCountRef.current = 3;
       setCurrentHistoryId(id);
+      suppressPreviewReloadRef.current = false;
+      setPreviewHtml('');
+      setPreviewRevision(prev => prev + 1);
+      setPreviewBaseSize({ width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT });
       historyRef.current = { past: [], future: [] };
       historyLastHashRef.current = null;
       setArtifactIdInUrl(id);
@@ -4639,6 +4726,10 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     stopHistoryPolling();
     suppressAutoSelectRef.current = true;
     setCurrentHistoryId(null);
+    suppressPreviewReloadRef.current = false;
+    setPreviewHtml('');
+    setPreviewRevision(prev => prev + 1);
+    setPreviewBaseSize({ width: PREVIEW_BASE_WIDTH, height: PREVIEW_BASE_HEIGHT });
     lastSavedHashRef.current = null;
     historyRef.current = { past: [], future: [] };
     historyLastHashRef.current = null;
@@ -5848,6 +5939,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({ source: 'ae2-layer-panel', type: 'request-layers' }, '*');
+    win.postMessage({ source: 'ae2-preview-editor', type: 'request-size' }, '*');
   }, [viewMode, previewHtml, currentArtifactIndex]);
 
   const clearPreviewLoop = () => {
@@ -5983,10 +6075,25 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
         layers?: PreviewLayer[];
         id?: string | null;
         ids?: string[];
+        width?: number;
+        height?: number;
       };
       if (!payload || payload.source !== 'ae2-preview-editor') return;
       if (payload.type === 'layers') {
         setPreviewLayers(Array.isArray(payload.layers) ? payload.layers : []);
+        return;
+      }
+      if (payload.type === 'size') {
+        const nextW = Number(payload.width) || 0;
+        const nextH = Number(payload.height) || 0;
+        if (nextW > 0 && nextH > 0) {
+          setPreviewBaseSize(prev => {
+            if (Math.abs(prev.width - nextW) < 1 && Math.abs(prev.height - nextH) < 1) {
+              return prev;
+            }
+            return { width: nextW, height: nextH };
+          });
+        }
         return;
       }
       if (payload.type === 'selection') {
@@ -6494,8 +6601,9 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
                   previewScale={previewScale}
                   viewMode={viewMode}
                   codeDraft={codeDraft}
-                  baseWidth={PREVIEW_BASE_WIDTH}
-                  baseHeight={PREVIEW_BASE_HEIGHT}
+                  baseWidth={previewBaseSize.width}
+                  baseHeight={previewBaseSize.height}
+                  previewKey={`${currentHistoryId || 'new'}:${previewRevision}:${previewBaseSize.width}x${previewBaseSize.height}:${currentArtifactIndex}:${viewMode}`}
                   iframeRef={iframeRef}
                   getCurrentFullHtml={getCurrentFullHtml}
                   onCodeChange={handleCodeChange}

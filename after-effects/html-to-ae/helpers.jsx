@@ -577,6 +577,39 @@
     return minStart > 0 ? minStart : 0;
   }
 
+  function getSubtreeMotionStartOffset(node) {
+    if (!node) return 0;
+    var compOffset = isFinite(AE2_COMP_TIME_OFFSET) ? AE2_COMP_TIME_OFFSET : 0;
+    var minStart = null;
+
+    function scanMotion(motionList) {
+      if (!motionList || !motionList.length) return;
+      for (var i = 0; i < motionList.length; i++) {
+        var entry = motionList[i];
+        if (!entry) continue;
+        var start = entry.time && isFinite(entry.time.start) ? entry.time.start : 0;
+        var delay = entry.time && isFinite(entry.time.delay) ? entry.time.delay : 0;
+        var t = start + delay - compOffset;
+        if (minStart === null || t < minStart) minStart = t;
+      }
+    }
+
+    function walk(n) {
+      if (!n) return;
+      scanMotion(n.motion);
+      if (n.children && n.children.length) {
+        for (var c = 0; c < n.children.length; c++) {
+          walk(n.children[c]);
+        }
+      }
+    }
+
+    walk(node);
+
+    if (minStart === null) return 0;
+    return minStart > 0 ? minStart : 0;
+  }
+
   function withMotionTimeOffset(offset, fn) {
     var prev = AE2_MOTION_TIME_OFFSET;
     AE2_MOTION_TIME_OFFSET = isFinite(offset) ? offset : 0;

@@ -253,7 +253,12 @@
         }
         applyTransform(layer, styleForTransform, preBBoxExpanded, null);
         applyDropShadow(layer, node.style);
-        applyMotion(layer, node, preBBox);
+        var subtreeStartOffset = getSubtreeMotionStartOffset(node);
+        if (node.motion && node.motion.length) {
+          applyMotion(layer, node, preBBox, subtreeStartOffset);
+        } else if (subtreeStartOffset > 0) {
+          applyLayerMotionOffset(layer, subtreeStartOffset);
+        }
 
         // 3. parent (���� ����)
         if (parentLayer) layer.parent = parentLayer;
@@ -304,7 +309,11 @@
         if (node.clip && node.clip.enabled) {
           var clipLayer = createClipShapeLayer(comp, node, preBBox, node.clip, parentLayer, layer);
           applyTransform(clipLayer, node.style, preBBox, null);
-          applyMotion(clipLayer, node, preBBox);
+          if (node.motion && node.motion.length) {
+            applyMotion(clipLayer, node, preBBox, subtreeStartOffset);
+          } else if (subtreeStartOffset > 0) {
+            applyLayerMotionOffset(clipLayer, subtreeStartOffset);
+          }
           applyClipPathMotion(clipLayer, node, preBBox);
         }
 
@@ -451,8 +460,10 @@
       applyBlendMode(layer, node.style);
       applyTransform(layer, node.style, svgBBox, null);
       applyDropShadow(layer, node.style);
+      var svgSubtreeOffset = getSubtreeMotionStartOffset(node);
+      var appliedSvgMotion = false;
+      var svgMotion = [];
       if (node.motion && node.motion.length) {
-        var svgMotion = [];
         for (var m = 0; m < node.motion.length; m++) {
           var entry = node.motion[m];
           if (!entry || !entry.targets || !entry.targets.length) continue;
@@ -466,8 +477,12 @@
           }
         }
         if (svgMotion.length) {
-          applyMotion(layer, { motion: svgMotion }, svgBBox);
+          applyMotion(layer, { motion: svgMotion }, svgBBox, svgSubtreeOffset);
+          appliedSvgMotion = true;
         }
+      }
+      if (!appliedSvgMotion && svgSubtreeOffset > 0) {
+        applyLayerMotionOffset(layer, svgSubtreeOffset);
       }
 
       var childComp = layer.source;

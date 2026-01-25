@@ -3347,6 +3347,152 @@ const tryParseMotionJson = (raw: string) => {
   }
 };
 
+const parseAe2CustomSamples = (raw: string): number[] | null => {
+  if (!raw || raw.indexOf('ae2custom:') !== 0) return null;
+  const data = raw.slice('ae2custom:'.length);
+  if (!data) return null;
+  const parts = data.split(',');
+  const out: number[] = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const n = parseFloat(String(parts[i]).trim());
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out.length >= 2 ? out : null;
+};
+
+const clamp01 = (v: number) => {
+  if (!Number.isFinite(v)) return 0;
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+};
+
+const cubicBezierX = (t: number, x1: number, x2: number) => {
+  const u = 1 - t;
+  return 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t;
+};
+
+const cubicBezierY = (t: number, y1: number, y2: number) => {
+  const u = 1 - t;
+  return 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t;
+};
+
+const cubicBezierXDeriv = (t: number, x1: number, x2: number) => {
+  const u = 1 - t;
+  return 3 * u * u * x1 + 6 * u * t * (x2 - x1) + 3 * t * t * (1 - x2);
+};
+
+const solveBezierTForX = (x: number, x1: number, x2: number) => {
+  let t = x;
+  for (let i = 0; i < 6; i += 1) {
+    const dx = cubicBezierX(t, x1, x2) - x;
+    const d = cubicBezierXDeriv(t, x1, x2);
+    if (Math.abs(dx) < 1e-5) return t;
+    if (Math.abs(d) < 1e-6) break;
+    t -= dx / d;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+  }
+  let t0 = 0;
+  let t1 = 1;
+  t = x;
+  for (let i = 0; i < 20; i += 1) {
+    const x2v = cubicBezierX(t, x1, x2);
+    if (Math.abs(x2v - x) < 1e-5) return t;
+    if (x2v < x) t0 = t;
+    else t1 = t;
+    t = (t0 + t1) / 2;
+  }
+  return t;
+};
+
+const bezierError = (samples: number[], x1: number, y1: number, x2: number, y2: number) => {
+  const n = samples.length;
+  let sum = 0;
+  let maxErr = 0;
+  for (let i = 0; i < n; i += 1) {
+    const x = n === 1 ? 0 : i / (n - 1);
+    const t = solveBezierTForX(x, x1, x2);
+    const y = cubicBezierY(t, y1, y2);
+    const err = y - samples[i];
+    const abs = Math.abs(err);
+    if (abs > maxErr) maxErr = abs;
+    sum += err * err;
+  }
+  return { rmse: Math.sqrt(sum / n), maxErr };
+};
+
+const fitCubicBezierFromSamples = (samples: number[]) => {
+  if (!samples || samples.length < 2) return null;
+  const n = samples.length;
+  const slopeStart = (samples[1] - samples[0]) * (n - 1);
+  const slopeEnd = (1 - samples[n - 2]) * (n - 1);
+  let x1 = 0.33;
+  let x2 = 0.67;
+  let y1 = clamp01(slopeStart * x1);
+  let y2 = clamp01(1 - slopeEnd * (1 - x2));
+  let best = { x1, y1, x2, y2 };
+  let bestErr = bezierError(samples, x1, y1, x2, y2);
+
+  const tryUpdate = (nx1: number, ny1: number, nx2: number, ny2: number) => {
+    const cx1 = clamp01(nx1);
+    const cy1 = clamp01(ny1);
+    const cx2 = clamp01(nx2);
+    const cy2 = clamp01(ny2);
+    const err = bezierError(samples, cx1, cy1, cx2, cy2);
+    if (err.rmse < bestErr.rmse) {
+      best = { x1: cx1, y1: cy1, x2: cx2, y2: cy2 };
+      bestErr = err;
+      return true;
+    }
+    return false;
+  };
+
+  const steps = [0.15, 0.08, 0.04, 0.02, 0.01];
+  for (let s = 0; s < steps.length; s += 1) {
+    const step = steps[s];
+    let improved = true;
+    while (improved) {
+      improved = false;
+      improved = tryUpdate(best.x1 + step, best.y1, best.x2, best.y2) || improved;
+      improved = tryUpdate(best.x1 - step, best.y1, best.x2, best.y2) || improved;
+      improved = tryUpdate(best.x1, best.y1 + step, best.x2, best.y2) || improved;
+      improved = tryUpdate(best.x1, best.y1 - step, best.x2, best.y2) || improved;
+      improved = tryUpdate(best.x1, best.y1, best.x2 + step, best.y2) || improved;
+      improved = tryUpdate(best.x1, best.y1, best.x2 - step, best.y2) || improved;
+      improved = tryUpdate(best.x1, best.y1, best.x2, best.y2 + step) || improved;
+      improved = tryUpdate(best.x1, best.y1, best.x2, best.y2 - step) || improved;
+    }
+  }
+
+  return { params: best, error: bestErr };
+};
+
+const convertAe2CustomEase = (ease: unknown) => {
+  if (typeof ease !== 'string') return ease;
+  if (ease.indexOf('ae2custom:') !== 0) return ease;
+  const samples = parseAe2CustomSamples(ease);
+  if (!samples) return ease;
+  const fit = fitCubicBezierFromSamples(samples);
+  if (!fit || !fit.error) return ease;
+  if (fit.error.rmse > 0.004 || fit.error.maxErr > 0.01) return ease;
+  const p = fit.params;
+  return `cubic-bezier(${p.x1.toFixed(4)},${p.y1.toFixed(4)},${p.x2.toFixed(4)},${p.y2.toFixed(4)})`;
+};
+
+const convertMotionCaptureEases = (tweens: any[]) => {
+  if (!Array.isArray(tweens) || tweens.length === 0) return tweens;
+  let changed = false;
+  const out = tweens.map(entry => {
+    if (!entry || !entry.time || !entry.time.ease) return entry;
+    const converted = convertAe2CustomEase(entry.time.ease);
+    if (converted === entry.time.ease) return entry;
+    changed = true;
+    return { ...entry, time: { ...entry.time, ease: converted } };
+  });
+  return changed ? out : tweens;
+};
+
 const stripScriptsFromHead = (headHtml: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(
@@ -5445,7 +5591,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
     exportInProgressRef.current = true;
     try {
       const captureWin = await loadArtifactIntoExportIframe(currentArtifactIndex, { capture: true });
-      const motionCapture = await waitForMotionCapture(captureWin);
+      const motionCapture = convertMotionCaptureEases(await waitForMotionCapture(captureWin));
       const win = await loadArtifactIntoExportIframe(currentArtifactIndex);
       const artifactElement = getArtifactElement(win.document);
       if (!artifactElement) {
@@ -5480,7 +5626,7 @@ export const ArtifactGenerator: React.FC<ArtifactGeneratorProps> = ({
       const results: Array<{ jsonStructure: any; pallete: ScenePaletteEntry[] }> = [];
       for (let i = 0; i < artifacts.length; i += 1) {
         const captureWin = await loadArtifactIntoExportIframe(i, { capture: true });
-        const motionCapture = await waitForMotionCapture(captureWin);
+        const motionCapture = convertMotionCaptureEases(await waitForMotionCapture(captureWin));
         const win = await loadArtifactIntoExportIframe(i);
         const artifactElement = getArtifactElement(win.document);
         if (!artifactElement) {

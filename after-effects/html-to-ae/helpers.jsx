@@ -746,6 +746,286 @@
     return out.length >= 2 ? out : null;
   }
 
+  function parseCubicBezierString(easeStr) {
+    if (!easeStr) return null;
+    var raw = String(easeStr).trim();
+    var m = raw.match(
+      /^(?:cubic-bezier|cubicbezier|bezier)\s*\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)\s*$/i
+    );
+    if (!m) return null;
+    var x1 = parseFloat(m[1]);
+    var y1 = parseFloat(m[2]);
+    var x2 = parseFloat(m[3]);
+    var y2 = parseFloat(m[4]);
+    if (!isFinite(x1) || !isFinite(y1) || !isFinite(x2) || !isFinite(y2)) return null;
+    return { x1: x1, y1: y1, x2: x2, y2: y2 };
+  }
+
+  function clamp01(value) {
+    var v = Number(value);
+    if (!isFinite(v)) return 0;
+    if (v < 0) return 0;
+    if (v > 1) return 1;
+    return v;
+  }
+
+  function cubicBezierX(t, x1, x2) {
+    var u = 1 - t;
+    return 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t;
+  }
+
+  function cubicBezierY(t, y1, y2) {
+    var u = 1 - t;
+    return 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t;
+  }
+
+  function cubicBezierXDeriv(t, x1, x2) {
+    var u = 1 - t;
+    return 3 * u * u * x1 + 6 * u * t * (x2 - x1) + 3 * t * t * (1 - x2);
+  }
+
+  function solveBezierTForX(x, x1, x2) {
+    var t = x;
+    for (var i = 0; i < 6; i++) {
+      var dx = cubicBezierX(t, x1, x2) - x;
+      var d = cubicBezierXDeriv(t, x1, x2);
+      if (Math.abs(dx) < 1e-5) return t;
+      if (Math.abs(d) < 1e-6) break;
+      t = t - dx / d;
+      if (t < 0) t = 0;
+      if (t > 1) t = 1;
+    }
+    var t0 = 0;
+    var t1 = 1;
+    t = x;
+    for (var j = 0; j < 20; j++) {
+      var x2v = cubicBezierX(t, x1, x2);
+      if (Math.abs(x2v - x) < 1e-5) return t;
+      if (x2v < x) t0 = t;
+      else t1 = t;
+      t = (t0 + t1) / 2;
+    }
+    return t;
+  }
+
+  function bezierError(samples, x1, y1, x2, y2) {
+    var n = samples.length;
+    var sum = 0;
+    var maxErr = 0;
+    for (var i = 0; i < n; i++) {
+      var x = n === 1 ? 0 : i / (n - 1);
+      var t = solveBezierTForX(x, x1, x2);
+      var y = cubicBezierY(t, y1, y2);
+      var err = y - samples[i];
+      var abs = Math.abs(err);
+      if (abs > maxErr) maxErr = abs;
+      sum += err * err;
+    }
+    return { rmse: Math.sqrt(sum / n), maxErr: maxErr };
+  }
+
+  function fitCubicBezierFromSamples(samples) {
+    if (!samples || samples.length < 2) return null;
+    var n = samples.length;
+    var slopeStart = (samples[1] - samples[0]) * (n - 1);
+    var slopeEnd = (1 - samples[n - 2]) * (n - 1);
+    var x1 = 0.33;
+    var x2 = 0.67;
+    var y1 = clamp01(slopeStart * x1);
+    var y2 = clamp01(1 - slopeEnd * (1 - x2));
+    var best = { x1: x1, y1: y1, x2: x2, y2: y2 };
+    var bestErr = bezierError(samples, x1, y1, x2, y2);
+
+    function tryUpdate(nx1, ny1, nx2, ny2) {
+      nx1 = clamp01(nx1);
+      ny1 = clamp01(ny1);
+      nx2 = clamp01(nx2);
+      ny2 = clamp01(ny2);
+      var err = bezierError(samples, nx1, ny1, nx2, ny2);
+      if (err.rmse < bestErr.rmse) {
+        best = { x1: nx1, y1: ny1, x2: nx2, y2: ny2 };
+        bestErr = err;
+        return true;
+      }
+      return false;
+    }
+
+    var steps = [0.15, 0.08, 0.04, 0.02, 0.01];
+    for (var s = 0; s < steps.length; s++) {
+      var step = steps[s];
+      var improved = true;
+      while (improved) {
+        improved = false;
+        improved = tryUpdate(best.x1 + step, best.y1, best.x2, best.y2) || improved;
+        improved = tryUpdate(best.x1 - step, best.y1, best.x2, best.y2) || improved;
+        improved = tryUpdate(best.x1, best.y1 + step, best.x2, best.y2) || improved;
+        improved = tryUpdate(best.x1, best.y1 - step, best.x2, best.y2) || improved;
+        improved = tryUpdate(best.x1, best.y1, best.x2 + step, best.y2) || improved;
+        improved = tryUpdate(best.x1, best.y1, best.x2 - step, best.y2) || improved;
+        improved = tryUpdate(best.x1, best.y1, best.x2, best.y2 + step) || improved;
+        improved = tryUpdate(best.x1, best.y1, best.x2, best.y2 - step) || improved;
+      }
+    }
+
+    return { params: best, error: bestErr };
+  }
+
+  function getBezierSlopes(params) {
+    var x1 = params && isFinite(params.x1) ? params.x1 : 0;
+    var y1 = params && isFinite(params.y1) ? params.y1 : 0;
+    var x2 = params && isFinite(params.x2) ? params.x2 : 1;
+    var y2 = params && isFinite(params.y2) ? params.y2 : 1;
+    var slopeStart = x1 === 0 ? 0 : y1 / x1;
+    var slopeEnd = x2 === 1 ? 0 : (1 - y2) / (1 - x2);
+    return { x1: x1, y1: y1, x2: x2, y2: y2, slopeStart: slopeStart, slopeEnd: slopeEnd };
+  }
+
+  function getEaseArrayLength(propRef, keyIndex) {
+    try {
+      var arr = propRef.keyInTemporalEase(keyIndex);
+      if (arr && arr.length) return arr.length;
+    } catch (e) {}
+    if (propRef.dimensionsSeparated === true) return 1;
+    var pvt = propRef.propertyValueType;
+    if (
+      pvt === PropertyValueType.TwoD ||
+      pvt === PropertyValueType.TwoD_SPATIAL ||
+      pvt === PropertyValueType.ThreeD ||
+      pvt === PropertyValueType.ThreeD_SPATIAL
+    ) {
+      return propRef.value && propRef.value.length ? propRef.value.length : 2;
+    }
+    return 1;
+  }
+
+  function safeKeyframeEase(speed, influence) {
+    var infl = Number(influence);
+    if (!isFinite(infl)) infl = 0.1;
+    if (infl < 0.1) infl = 0.1;
+    if (infl > 100) infl = 100;
+    var sp = Number(speed);
+    if (!isFinite(sp)) sp = 0;
+    return new KeyframeEase(sp, infl);
+  }
+
+  function buildEaseArraysFromParams(prop, keyIndex, fromVal, toVal, duration, params) {
+    if (typeof KeyframeEase !== "function") return null;
+    var bez = getBezierSlopes(params);
+    var inflOut = Math.max(0.1, Math.min(100, Math.round(bez.x1 * 100)));
+    var inflIn = Math.max(0.1, Math.min(100, Math.round((1 - bez.x2) * 100)));
+    var dims = getEaseArrayLength(prop, keyIndex);
+    var outArr = [];
+    var inArr = [];
+    for (var i = 0; i < dims; i++) {
+      var f = fromVal && fromVal.length !== undefined ? fromVal[i] : fromVal;
+      var t = toVal && toVal.length !== undefined ? toVal[i] : toVal;
+      var d = t - f;
+      var spOut = Math.abs(bez.slopeStart * (d / duration));
+      var spIn = Math.abs(bez.slopeEnd * (d / duration));
+      outArr.push(safeKeyframeEase(spOut, inflOut));
+      inArr.push(safeKeyframeEase(spIn, inflIn));
+    }
+    return { inArr: inArr, outArr: outArr };
+  }
+
+  function buildScalarEasesFromParams(params, delta, duration) {
+    if (!params || !isFinite(duration) || duration <= 0) return null;
+    var bez = getBezierSlopes(params);
+    var inflOut = Math.max(0.1, Math.min(100, Math.round(bez.x1 * 100)));
+    var inflIn = Math.max(0.1, Math.min(100, Math.round((1 - bez.x2) * 100)));
+    var spOut = Math.abs(bez.slopeStart * (delta / duration));
+    var spIn = Math.abs(bez.slopeEnd * (delta / duration));
+    return {
+      outEase: safeKeyframeEase(spOut, inflOut),
+      inEase: safeKeyframeEase(spIn, inflIn),
+    };
+  }
+
+  function resolveEaseParams(ease) {
+    if (!ease) return null;
+    var bez = parseCubicBezierString(ease);
+    if (bez) return bez;
+    var samples = parseCustomEaseSamples(ease);
+    if (!samples) return null;
+    var fit = fitCubicBezierFromSamples(samples);
+    return fit ? fit.params : null;
+  }
+
+  function findKeyIndexAtTime(prop, time, tol) {
+    if (!prop || !isFinite(time)) return -1;
+    var tolerance = isFinite(tol) ? tol : 1e-4;
+    var idx = -1;
+    try {
+      idx = prop.nearestKeyIndex(time);
+    } catch (e) {
+      return -1;
+    }
+    if (!idx || idx < 1) return -1;
+    try {
+      var kt = prop.keyTime(idx);
+      if (Math.abs(kt - time) <= tolerance) return idx;
+    } catch (e2) {}
+    return -1;
+  }
+
+  function getPropertyDimension(prop) {
+    try {
+      var v = prop.value;
+      if (v && v.length !== undefined) return v.length;
+    } catch (e) {}
+    return 1;
+  }
+
+  function getKeyTemporalEaseArray(prop, keyIndex, dimCount, isIn) {
+    var arr = null;
+    try {
+      arr = isIn ? prop.keyInTemporalEase(keyIndex) : prop.keyOutTemporalEase(keyIndex);
+    } catch (e) {
+      arr = null;
+    }
+    var count = isFinite(dimCount) && dimCount > 0 ? dimCount : 1;
+    if (!arr || arr.length < count) {
+      var fill = [];
+      for (var i = 0; i < count; i++) {
+        fill.push(arr && arr[i] ? arr[i] : safeKeyframeEase(0, 0.1));
+      }
+      arr = fill;
+    }
+    return arr;
+  }
+
+  function mergeEaseArrays(baseArr, overrideArr, dimCount) {
+    var count = isFinite(dimCount) && dimCount > 0 ? dimCount : 1;
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      var v = baseArr && baseArr[i] ? baseArr[i] : safeKeyframeEase(0, 0.1);
+      if (overrideArr && overrideArr[i]) v = overrideArr[i];
+      out.push(v);
+    }
+    return out;
+  }
+
+  function applyTemporalEaseAtKey(prop, keyIndex, inOverride, outOverride, dimCount) {
+    if (!prop || !keyIndex || keyIndex < 1) return;
+    var dims = isFinite(dimCount) && dimCount > 0 ? dimCount : 1;
+    var inBase = getKeyTemporalEaseArray(prop, keyIndex, dims, true);
+    var outBase = getKeyTemporalEaseArray(prop, keyIndex, dims, false);
+    var inEases = inOverride ? mergeEaseArrays(inBase, inOverride, dims) : inBase;
+    var outEases = outOverride ? mergeEaseArrays(outBase, outOverride, dims) : outBase;
+    try {
+      if (prop.setInterpolationTypeAtKey) {
+        prop.setInterpolationTypeAtKey(
+          keyIndex,
+          KeyframeInterpolationType.BEZIER,
+          KeyframeInterpolationType.BEZIER
+        );
+      }
+      prop.setTemporalEaseAtKey(keyIndex, inEases, outEases);
+      if (prop.setTemporalContinuousAtKey) prop.setTemporalContinuousAtKey(keyIndex, false);
+      if (prop.setTemporalAutoBezierAtKey) prop.setTemporalAutoBezierAtKey(keyIndex, false);
+    } catch (e) {}
+  }
+
   function evalCustomEaseAt(samples, p) {
     if (!samples || !samples.length) return p;
     if (p <= 0) return samples[0];
@@ -768,7 +1048,6 @@
       for (var j = 0; j < list.length; j++) {
         var seg = list[j];
         if (!seg) continue;
-        var samples = parseCustomEaseSamples(seg.ease);
         if (isFinite(seg.t0) && !map[seg.t0]) {
           map[seg.t0] = true;
           out.push(seg.t0);
@@ -777,16 +1056,7 @@
           map[seg.t1] = true;
           out.push(seg.t1);
         }
-        if (samples && samples.length > 2 && isFinite(seg.t0) && isFinite(seg.t1) && seg.t1 > seg.t0) {
-          for (var s = 0; s < samples.length; s++) {
-            var p = samples.length === 1 ? 0 : s / (samples.length - 1);
-            var t = seg.t0 + (seg.t1 - seg.t0) * p;
-            if (!map[t]) {
-              map[t] = true;
-              out.push(t);
-            }
-          }
-        }
+        // Do not bake custom eases into per-frame keys; keep only t0/t1.
       }
     }
     out.sort(function (a, b) {
@@ -830,6 +1100,7 @@
         prop.setValueAtTime(t + offset, v);
       } catch (e) {}
     }
+    applyScalarCustomEase(prop, segments, baseValue, offset);
   }
 
   function applyVectorSegmentsKeyframes(prop, segmentLists, computeValue, layerOffset) {
@@ -845,6 +1116,7 @@
         prop.setValueAtTime(t + offset, value);
       } catch (e) {}
     }
+    applyVectorCustomEase(prop, segmentLists, offset, computeValue);
   }
 
   function buildEaseFunctionSource(easeStr) {
@@ -997,6 +1269,93 @@
     }
 
     return "function(t){return t;}";
+  }
+
+  function applyScalarCustomEase(prop, segments, baseValue, layerOffset) {
+    if (!prop || !segments || !segments.length) return;
+    if (typeof KeyframeEase !== "function") return;
+    var offset = isFinite(layerOffset) ? layerOffset : 0;
+    var tol = 1e-4;
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      if (!seg || !seg.ease) continue;
+      var params = resolveEaseParams(seg.ease);
+      if (!params) continue;
+      if (!isFinite(seg.t0) || !isFinite(seg.t1) || seg.t1 <= seg.t0) continue;
+      var t0 = seg.t0 + offset;
+      var t1 = seg.t1 + offset;
+      var v0 = isFinite(seg.v0) ? seg.v0 : evalSegmentedValueAtTime(segments, seg.t0, baseValue);
+      var v1 = isFinite(seg.v1) ? seg.v1 : evalSegmentedValueAtTime(segments, seg.t1, baseValue);
+      var duration = seg.t1 - seg.t0;
+      var pack = buildScalarEasesFromParams(params, v1 - v0, duration);
+      if (!pack) continue;
+      var k0 = findKeyIndexAtTime(prop, t0, tol);
+      if (k0 > 0) applyTemporalEaseAtKey(prop, k0, null, [pack.outEase], 1);
+      var k1 = findKeyIndexAtTime(prop, t1, tol);
+      if (k1 > 0) applyTemporalEaseAtKey(prop, k1, [pack.inEase], null, 1);
+    }
+  }
+
+  function applyVectorCustomEase(prop, segmentLists, layerOffset, computeValue) {
+    if (!prop || !segmentLists || !segmentLists.length) return;
+    if (typeof KeyframeEase !== "function") return;
+    var offset = isFinite(layerOffset) ? layerOffset : 0;
+    var tol = 1e-4;
+    var propDims = getPropertyDimension(prop);
+    var dimCount = Math.max(segmentLists.length, propDims);
+    var inMap = {};
+    var outMap = {};
+    for (var d = 0; d < segmentLists.length; d++) {
+      var list = segmentLists[d];
+      if (!list || !list.length) continue;
+      for (var i = 0; i < list.length; i++) {
+        var seg = list[i];
+        if (!seg || !seg.ease) continue;
+        var params = resolveEaseParams(seg.ease);
+        if (!params) continue;
+        if (!isFinite(seg.t0) || !isFinite(seg.t1) || seg.t1 <= seg.t0) continue;
+        var duration = seg.t1 - seg.t0;
+        var t0 = seg.t0 + offset;
+        var t1 = seg.t1 + offset;
+        var k0 = String(t0);
+        var k1 = String(t1);
+        if (!outMap[k0]) outMap[k0] = [];
+        if (!inMap[k1]) inMap[k1] = [];
+
+        if (computeValue && propDims >= 1) {
+          var v0Arr = computeValue(seg.t0);
+          var v1Arr = computeValue(seg.t1);
+          var packVec = buildEaseArraysFromParams(prop, 1, v0Arr, v1Arr, duration, params);
+          if (packVec) {
+            outMap[k0] = packVec.outArr;
+            inMap[k1] = packVec.inArr;
+          }
+        } else {
+          var v0 = isFinite(seg.v0) ? seg.v0 : evalSegmentedValueAtTime(list, seg.t0, 0);
+          var v1 = isFinite(seg.v1) ? seg.v1 : evalSegmentedValueAtTime(list, seg.t1, v0);
+          var pack = buildScalarEasesFromParams(params, v1 - v0, duration);
+          if (!pack) continue;
+          outMap[k0][d] = pack.outEase;
+          inMap[k1][d] = pack.inEase;
+        }
+      }
+    }
+    var times = {};
+    for (var kIn in inMap) times[kIn] = true;
+    for (var kOut in outMap) times[kOut] = true;
+    for (var key in times) {
+      if (!times[key]) continue;
+      var t = parseFloat(key);
+      if (!isFinite(t)) continue;
+      var idx = findKeyIndexAtTime(prop, t, tol);
+      if (idx < 1) continue;
+      var inOverride = inMap[key] || null;
+      var outOverride = outMap[key] || null;
+      if (inOverride || outOverride) {
+        var overrideLen = (inOverride && inOverride.length) || (outOverride && outOverride.length) || propDims;
+        applyTemporalEaseAtKey(prop, idx, inOverride, outOverride, overrideLen);
+      }
+    }
   }
 
   function buildTweenExpression(t0, t1, v0, v1, easeStr, suffix) {
@@ -1355,21 +1714,20 @@
         offsetProp.expression = buildTweenExpression(t0, t1, 0, 100, ease, "v");
       } else if (isAnimationEnabled()) {
         var layerOffset = layer && isFinite(layer.inPoint) ? layer.inPoint : 0;
-        var samples = parseCustomEaseSamples(ease);
-        if (samples && samples.length >= 2 && isFinite(t0) && isFinite(t1) && t1 > t0) {
-          for (var s = 0; s < samples.length; s++) {
-            var p = samples.length === 1 ? 0 : s / (samples.length - 1);
-            var tt = t0 + (t1 - t0) * p + layerOffset;
-            var v = samples[s] * 100;
-            try {
-              offsetProp.setValueAtTime(tt, v);
-            } catch (e1) {}
+        try {
+          offsetProp.setValueAtTime(t0 + layerOffset, 0);
+          offsetProp.setValueAtTime(t1 + layerOffset, 100);
+        } catch (e2) {}
+        var params = resolveEaseParams(ease);
+        if (params && isFinite(t0) && isFinite(t1) && t1 > t0) {
+          var duration = t1 - t0;
+          var pack = buildScalarEasesFromParams(params, 100, duration);
+          if (pack) {
+            var k0 = findKeyIndexAtTime(offsetProp, t0 + layerOffset, 1e-4);
+            if (k0 > 0) applyTemporalEaseAtKey(offsetProp, k0, null, [pack.outEase], 1);
+            var k1 = findKeyIndexAtTime(offsetProp, t1 + layerOffset, 1e-4);
+            if (k1 > 0) applyTemporalEaseAtKey(offsetProp, k1, [pack.inEase], null, 1);
           }
-        } else {
-          try {
-            offsetProp.setValueAtTime(t0 + layerOffset, 0);
-            offsetProp.setValueAtTime(t1 + layerOffset, 100);
-          } catch (e2) {}
         }
       }
     }

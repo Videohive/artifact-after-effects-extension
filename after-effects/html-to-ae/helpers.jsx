@@ -1610,7 +1610,6 @@
     var hasPosition = false;
     var hasScale = false;
     var hasRotation = false;
-    var hasRotation3d = false;
     var hasSkewY = false;
     var firstSplitProps = null;
     var explicitSplit = false;
@@ -1636,25 +1635,11 @@
       if (props.x || props.y || props.xPercent || props.yPercent) hasPosition = true;
       if (props.scale || props.scaleX || props.scaleY) hasScale = true;
       if (props.rotation || props.rotate || props.rotateZ) hasRotation = true;
-      if (props.rotateX || props.rotateY) hasRotation3d = true;
       if (props.skewY) hasSkewY = true;
     }
     if (!firstSplitProps) return;
     if (splitType !== "lines" && splitType !== "words" && splitType !== "chars") {
       splitType = "chars";
-    }
-
-    if (hasRotation3d) {
-      try {
-        var moreOptions = textGroup.property("More Options");
-        if (moreOptions) {
-          var perChar3d = moreOptions.property("ADBE Text Enable Per-char 3D");
-          if (!perChar3d) {
-            perChar3d = moreOptions.property("ADBE Text Enable Per-character 3D");
-          }
-          if (perChar3d) perChar3d.setValue(1);
-        }
-      } catch (e) {}
     }
 
     var animators = textGroup.property("Animators");
@@ -1715,18 +1700,6 @@
           if (skewStart !== null) skewProp.setValue(skewStart);
         }
       }
-      if (hasRotation3d) {
-        var rotationXProp = animatorProps.addProperty("ADBE Text Rotation X");
-        if (rotationXProp && firstSplitProps) {
-          var rotXStart = getSplitStartValue(firstSplitProps, "rotateX", null);
-          if (rotXStart !== null) rotationXProp.setValue(rotXStart);
-        }
-        var rotationYProp = animatorProps.addProperty("ADBE Text Rotation Y");
-        if (rotationYProp && firstSplitProps) {
-          var rotYStart = getSplitStartValue(firstSplitProps, "rotateY", null);
-          if (rotYStart !== null) rotationYProp.setValue(rotYStart);
-        }
-      }
     }
     var selector = animator.property("Selectors").addProperty("ADBE Text Selector");
     var advanced = selector.property("ADBE Text Range Advanced");
@@ -1770,6 +1743,7 @@
   function applyMotion(layer, node, bbox, motionStartOffset) {
     if (!layer || !node || !node.motion || !node.motion.length) return 0;
     if (!isAnimationEnabled()) return 0;
+    var isTextLayer = node.type === "text";
     var motionList = node.motion;
     var startOffset = isFinite(motionStartOffset) ? motionStartOffset : getMotionStartOffset(motionList);
     if (startOffset > 0) applyLayerMotionOffset(layer, startOffset);
@@ -1814,9 +1788,9 @@
 
       // Position (x/y/z offsets)
       var zSegments = buildMotionSegments(motionList, "z", 0, 1, null);
-      var rotXSegments = buildMotionSegments(motionList, "rotateX", 0, 1, null);
-      var rotYSegments = buildMotionSegments(motionList, "rotateY", 0, 1, null);
-      if ((zSegments && zSegments.length) || (rotXSegments && rotXSegments.length) || (rotYSegments && rotYSegments.length)) {
+      var rotXSegments = isTextLayer ? [] : buildMotionSegments(motionList, "rotateX", 0, 1, null);
+      var rotYSegments = isTextLayer ? [] : buildMotionSegments(motionList, "rotateY", 0, 1, null);
+      if ((zSegments && zSegments.length) || (!isTextLayer && ((rotXSegments && rotXSegments.length) || (rotYSegments && rotYSegments.length)))) {
         try {
           layer.threeDLayer = true;
         } catch (e) {}
@@ -2033,7 +2007,7 @@
       }
 
       // Rotation (X/Y)
-      if ((rotXSegments && rotXSegments.length) || (rotYSegments && rotYSegments.length)) {
+      if (!isTextLayer && ((rotXSegments && rotXSegments.length) || (rotYSegments && rotYSegments.length))) {
         var rotXProp = layer.property("Transform").property("X Rotation");
         var rotYProp = layer.property("Transform").property("Y Rotation");
         if (rotXProp && rotXSegments.length) {

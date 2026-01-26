@@ -2097,7 +2097,8 @@
         }
         // Rebuild with base values for rotation if missing in segments.
         var motionKey = rotSegments.length ? "rotation" : rotateSegments.length ? "rotate" : "rotateZ";
-        useRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
+        var rebuiltRotSegments = buildMotionSegments(motionList, motionKey, baseRot, 1, null);
+        if (rebuiltRotSegments.length) useRotSegments = rebuiltRotSegments;
         if (rotationProp && useExpr && rotationProp.canSetExpression) {
           if (useExpr) attachMotionControls(useRotSegments, layer, "Rotation", null);
           rotationProp.expression = buildSegmentedScalarExpression(useRotSegments, baseRot);

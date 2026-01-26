@@ -1071,10 +1071,58 @@
     return v0 + (v1 - v0) * f;
   }
 
-  function collectSegmentTimes(segmentLists) {
+  function getOvershootInfo(samples) {
+    if (!samples || samples.length < 2) return null;
+    var eps = 1e-4;
+    for (var i = 1; i < samples.length; i++) {
+      var v = samples[i];
+      if (v > 1 + eps || v < 0 - eps) {
+        var pre = i - 1;
+        if (pre < 1) return null;
+        var p = pre / (samples.length - 1);
+        return { startIndex: i, preIndex: pre, preP: p, preValue: samples[pre] };
+      }
+    }
+    return null;
+  }
+
+  function normalizeSamplesPrefix(samples, endIndex) {
+    if (!samples || endIndex < 1 || endIndex >= samples.length) return null;
+    var endVal = samples[endIndex];
+    if (!isFinite(endVal) || endVal === 0) return null;
+    var out = [];
+    for (var i = 0; i <= endIndex; i++) {
+      out.push(samples[i] / endVal);
+    }
+    return out.length >= 2 ? out : null;
+  }
+
+  function resolveEaseParamsFromSamples(samples) {
+    if (!samples || samples.length < 2) return null;
+    var fit = fitCubicBezierFromSamples(samples);
+    return fit ? fit.params : null;
+  }
+
+  function getFrameDurationFromProp(prop, fallback) {
+    var fb = isFinite(fallback) && fallback > 0 ? fallback : 1 / 30;
+    if (!prop || !prop.propertyDepth) return fb;
+    try {
+      var layer = prop.propertyGroup(prop.propertyDepth);
+      if (layer && layer.containingComp) {
+        var fd = layer.containingComp.frameDuration;
+        if (isFinite(fd) && fd > 0) return fd;
+        var fr = layer.containingComp.frameRate;
+        if (isFinite(fr) && fr > 0) return 1 / fr;
+      }
+    } catch (e) {}
+    return fb;
+  }
+
+  function collectSegmentTimes(segmentLists, frameDuration) {
     var map = {};
     var out = [];
     if (!segmentLists || !segmentLists.length) return out;
+    var fd = isFinite(frameDuration) && frameDuration > 0 ? frameDuration : 1 / 30;
     for (var i = 0; i < segmentLists.length; i++) {
       var list = segmentLists[i];
       if (!list || !list.length) continue;
@@ -1089,7 +1137,30 @@
           map[seg.t1] = true;
           out.push(seg.t1);
         }
-        // Do not bake custom eases into per-frame keys; keep only t0/t1.
+        var samples = parseCustomEaseSamples(seg.ease);
+        if (
+          samples &&
+          samples.length > 2 &&
+          isFinite(seg.t0) &&
+          isFinite(seg.t1) &&
+          seg.t1 > seg.t0
+        ) {
+          var ov = getOvershootInfo(samples);
+          if (ov && isFinite(ov.preP)) {
+            var tOv = seg.t0 + (seg.t1 - seg.t0) * ov.preP;
+            if (!map[tOv]) {
+              map[tOv] = true;
+              out.push(tOv);
+            }
+            var tStart = tOv + fd;
+            for (var t = tStart; t <= seg.t1 + 1e-6; t += fd) {
+              if (!map[t]) {
+                map[t] = true;
+                out.push(t);
+              }
+            }
+          }
+        }
       }
     }
     out.sort(function (a, b) {
@@ -1123,7 +1194,8 @@
 
   function applyScalarSegmentsKeyframes(prop, segments, baseValue, layerOffset) {
     if (!prop || !segments || !segments.length) return;
-    var times = collectSegmentTimes([segments]);
+    var fd = getFrameDurationFromProp(prop, 1 / 30);
+    var times = collectSegmentTimes([segments], fd);
     if (!times.length) return;
     var offset = isFinite(layerOffset) ? layerOffset : 0;
     for (var i = 0; i < times.length; i++) {
@@ -1138,7 +1210,8 @@
 
   function applyVectorSegmentsKeyframes(prop, segmentLists, computeValue, layerOffset) {
     if (!prop || !segmentLists || !segmentLists.length || !computeValue) return;
-    var times = collectSegmentTimes(segmentLists);
+    var fd = getFrameDurationFromProp(prop, 1 / 30);
+    var times = collectSegmentTimes(segmentLists, fd);
     if (!times.length) return;
     var offset = isFinite(layerOffset) ? layerOffset : 0;
     for (var i = 0; i < times.length; i++) {
@@ -1313,18 +1386,32 @@
       var seg = segments[i];
       if (!seg || !seg.ease) continue;
       var params = resolveEaseParams(seg.ease);
+      var samples = parseCustomEaseSamples(seg.ease);
+      var ov = samples ? getOvershootInfo(samples) : null;
       if (!params) continue;
       if (!isFinite(seg.t0) || !isFinite(seg.t1) || seg.t1 <= seg.t0) continue;
       var t0 = seg.t0 + offset;
       var t1 = seg.t1 + offset;
+      var t1Ease = t1;
       var v0 = isFinite(seg.v0) ? seg.v0 : evalSegmentedValueAtTime(segments, seg.t0, baseValue);
       var v1 = isFinite(seg.v1) ? seg.v1 : evalSegmentedValueAtTime(segments, seg.t1, baseValue);
-      var duration = seg.t1 - seg.t0;
+      if (ov && isFinite(ov.preP)) {
+        var tOvLocal = seg.t0 + (seg.t1 - seg.t0) * ov.preP;
+        if (tOvLocal > seg.t0 && tOvLocal < seg.t1) {
+          var prefix = normalizeSamplesPrefix(samples, ov.preIndex);
+          var prefixParams = prefix ? resolveEaseParamsFromSamples(prefix) : null;
+          if (prefixParams) params = prefixParams;
+          t1Ease = tOvLocal + offset;
+          v1 = evalSegmentedValueAtTime(segments, tOvLocal, baseValue);
+        }
+      }
+      var duration = (t1Ease - t0) || (seg.t1 - seg.t0);
+      if (duration <= 0) continue;
       var pack = buildScalarEasesFromParams(params, v1 - v0, duration);
       if (!pack) continue;
       var k0 = findKeyIndexAtTime(prop, t0, tol);
       if (k0 > 0) applyTemporalEaseAtKey(prop, k0, null, [pack.outEase], 1);
-      var k1 = findKeyIndexAtTime(prop, t1, tol);
+      var k1 = findKeyIndexAtTime(prop, t1Ease, tol);
       if (k1 > 0) applyTemporalEaseAtKey(prop, k1, [pack.inEase], null, 1);
     }
   }
@@ -1345,11 +1432,24 @@
         var seg = list[i];
         if (!seg || !seg.ease) continue;
         var params = resolveEaseParams(seg.ease);
+        var samples = parseCustomEaseSamples(seg.ease);
+        var ov = samples ? getOvershootInfo(samples) : null;
         if (!params) continue;
         if (!isFinite(seg.t0) || !isFinite(seg.t1) || seg.t1 <= seg.t0) continue;
-        var duration = seg.t1 - seg.t0;
+        var t1Ease = seg.t1;
+        if (ov && isFinite(ov.preP)) {
+          var tOvLocal = seg.t0 + (seg.t1 - seg.t0) * ov.preP;
+          if (tOvLocal > seg.t0 && tOvLocal < seg.t1) {
+            var prefix = normalizeSamplesPrefix(samples, ov.preIndex);
+            var prefixParams = prefix ? resolveEaseParamsFromSamples(prefix) : null;
+            if (prefixParams) params = prefixParams;
+            t1Ease = tOvLocal;
+          }
+        }
+        var duration = t1Ease - seg.t0;
+        if (!isFinite(duration) || duration <= 0) continue;
         var t0 = seg.t0 + offset;
-        var t1 = seg.t1 + offset;
+        var t1 = t1Ease + offset;
         var k0 = String(t0);
         var k1 = String(t1);
         if (!outMap[k0]) outMap[k0] = [];
@@ -1357,7 +1457,7 @@
 
         if (computeValue && propDims >= 1) {
           var v0Arr = computeValue(seg.t0);
-          var v1Arr = computeValue(seg.t1);
+          var v1Arr = computeValue(t1Ease);
           var packVec = buildEaseArraysFromParams(prop, 1, v0Arr, v1Arr, duration, params);
           if (packVec) {
             outMap[k0] = packVec.outArr;

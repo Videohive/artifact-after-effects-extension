@@ -1914,7 +1914,6 @@ This context exists to enforce professional motion output.
 Deviation is not allowed.
 `;
 
-
 export const APPLY_MOTION_PROMPT = `
 Role: Senior Motion Designer & GSAP Engineer.
 

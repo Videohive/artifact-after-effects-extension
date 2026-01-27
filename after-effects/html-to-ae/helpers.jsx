@@ -636,6 +636,7 @@
 
   function applyLayerMotionOffset(layer, offset) {
     if (!layer || !isFinite(offset) || offset <= 0) return;
+    if (!isAnimationEnabled()) return;
     try {
       layer.startTime = layer.startTime + offset;
     } catch (e) {}

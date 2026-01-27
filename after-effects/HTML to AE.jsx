@@ -2,10 +2,10 @@ function artifact() {
   // Enable verbose logs in the AE console.
   var AE2_DEBUG = true;
   // Global animation switches.
-  var ANIMATION = true;
+  var ANIMATION = false;
   var ANIMATION_EXPRESSION = false;
   // Global grouping switch (precomps for groups).
-  var GROUP = true;
+  var GROUP = false;
   //@include "../Global Function/Modules/patch.array.js"
   //@include "../Global Function/Modules/patch.object.js"
   //@include "../Global Function/Modules/patch.string.js"
